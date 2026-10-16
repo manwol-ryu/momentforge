@@ -132,4 +132,211 @@ body {
   .facts dd {
     margin-bottom: var(--space-3);
   }
+  /* Every other time label, so they do not overlap on phones. */
+  .timeline-axis span:nth-child(even):not(:last-child) {
+    display: none;
+  }
+}
+
+/* Links and buttons */
+a {
+  color: var(--density);
+  text-underline-offset: 3px;
+}
+
+.back {
+  margin: 0 0 var(--space-5);
+}
+
+.actions {
+  margin: var(--space-4) 0 0;
+}
+
+.button {
+  display: inline-block;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button:hover {
+  background: transparent;
+  color: var(--ink);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Timeline: the one prominent element (docs/DESIGN-SYSTEM.md 4–5) */
+.timeline {
+  margin: 0;
+}
+
+.timeline-track {
+  position: relative;
+  height: 64px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.timeline-bars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.timeline-bars .bar {
+  fill: var(--density);
+}
+
+.timeline-bars .bar-invalid {
+  fill: var(--rule);
+}
+
+.timeline-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--marker) 16%, transparent);
+  pointer-events: none;
+}
+
+.timeline-band[data-selected] {
+  background: color-mix(in srgb, var(--marker) 28%, transparent);
+  box-shadow: inset 2px 0 0 var(--marker), inset -2px 0 0 var(--marker);
+}
+
+.timeline-markers {
+  position: relative;
+  height: 20px;
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 2px;
+  width: 16px;
+  height: 14px;
+  margin-left: -8px;
+  padding: 0;
+  border: 0;
+  background: var(--marker);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  cursor: pointer;
+}
+
+.timeline-marker[aria-pressed="true"] {
+  background: var(--ink);
+}
+
+.timeline-marker:focus-visible {
+  clip-path: none;
+  border-radius: var(--radius);
+}
+
+.timeline-axis {
+  position: relative;
+  height: 20px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.timeline-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.timeline-axis span:first-child {
+  transform: none;
+}
+
+.timeline-axis span:last-child {
+  transform: translateX(-100%);
+}
+
+/* Candidate list */
+.candidates {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.candidate {
+  padding: var(--space-3) 0 var(--space-3) var(--space-4);
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--rule);
+}
+
+.candidate[data-selected] {
+  border-left-color: var(--marker);
+}
+
+.candidate-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  align-items: baseline;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.candidate-time {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.candidate-reasons {
+  color: var(--ink);
+}
+
+.candidate-meta,
+.candidate-note {
+  margin: var(--space-1) 0 0;
+  max-width: var(--measure);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.evidence {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.evidence-title {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+}
+
+.evidence ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence li {
+  padding: 2px 0;
+}
+
+.evidence-text {
+  font-weight: 600;
+}
+
+.evidence-count,
+.evidence-first {
+  color: var(--muted);
 }

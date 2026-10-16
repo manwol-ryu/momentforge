@@ -21,6 +21,7 @@ const KeyHeader = "X-MomentForge-Key"
 // Core is the part of app.App the API uses.
 type Core interface {
 	Status(ctx context.Context) (app.Status, error)
+	Demo(ctx context.Context) (*app.Analysis, error)
 }
 
 // Config wires the HTTP handler.
@@ -52,6 +53,7 @@ func NewHandler(cfg Config) http.Handler {
 		r.Use(h.guard.sameOrigin, h.guard.accessKey)
 		r.Get("/status", h.status)
 		r.Get("/events", h.events)
+		r.Get("/demo", h.demo)
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "없는 API 경로입니다.")
 		})

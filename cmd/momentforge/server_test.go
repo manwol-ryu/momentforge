@@ -110,3 +110,19 @@ func TestRunVersionAndUnknownCommand(t *testing.T) {
 		t.Fatalf("unknown: %d %q", code, errOut.String())
 	}
 }
+
+func TestDemoEndpointUsesRegisteredRules(t *testing.T) {
+	dir := t.TempDir()
+	s := startTest(t, dir)
+	defer shutdown(t, s)
+	key, _ := os.ReadFile(filepath.Join(dir, "runtime", "access-key"))
+	code, body := get(t, s.URL+"/api/demo", string(key))
+	if code != 200 {
+		t.Fatalf("demo: %d %s", code, body)
+	}
+	for _, want := range []string{`"id":"m0003"`, "웃음 증가", "집단 반복", "감정 반응", `"rulesVersion":"1.0.0"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("demo response lacks %s", want)
+		}
+	}
+}

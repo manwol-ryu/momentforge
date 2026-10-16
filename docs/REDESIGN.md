@@ -57,7 +57,7 @@ claude-api는 Claude Code에 내장되어 있고 모델 변경에 맞춰 갱신�
 | 플랫폼 | 치지직 URL·응답 해석이 `transport`/`live_transport`/`comments`에 직접 포함 | 다른 플랫폼 추가 시 전체 수정 |
 | 탐지 | `detector.py`에 D1~D5 규칙과 임계값이 하드코딩 | 규칙 추가·민감도 조정이 코드 수정 |
 | LIVE | 동시에 1개 작업만 (`self.active`) | 다채널 동시 수집 불가 |
-| 성능 | `WindowRules.add`가 배치마다 전체 이벤트 재정렬, 평가마다 과거 90개 구간 통계 재계산 | 장시간 LIVE·긴 VOD에서 CPU 낭비 |
+| 성능 | `WindowRules.add`가 배치마다 전체 이벤트 재정렬, 창 통계 캐시는 최근 256개로 제한, 인터프리터 속도 | 장시간 LIVE에서 CPU 낭비 (1단계 측정: 5시간 분석 630ms, Go 109ms) |
 | 저장 | VOD·LIVE 저장소가 별도, JSON `body` 컬럼 중심 | 조회·통합 타임라인이 어렵고 중복 코드 |
 | AI | OpenAI Responses API 하나에 고정, 표준 라이브러리로 직접 HTTP 호출 | 제공자 교체·자동 분석·비용 관리 불가 |
 | UI | 바닐라 JS 3개 파일 + 폴링 | 상태 관리·실시간 갱신이 복잡 |
@@ -156,23 +156,27 @@ type ViewerSource interface { Viewers(ctx context.Context, t Target) (int, error
 - `domain.ChatEvent`는 플랫폼 중립: `{PlatformMsgID, AuthorID, Text, OffsetMs, ReceivedAt, Kind(chat/donation/...)}`. 어댑터는 원본 `AuthorID`를 담아 반환만 하고, `app`이 `privacy`로 세션별 가명 키(`AuthorKey`)를 만든 뒤 저장합니다. 원본 ID는 저장하지 않습니다.
 - 응답 형식 변경은 `ErrSchemaChanged`로 통일 (기존 `SCHEMA_CHANGED` 동작 유지).
 
-### 6.2 탐지 규칙 엔진
+### 6.2 탐지 규칙 엔진 (1단계 구현)
 
 ```go
-type Rule interface {
-    ID() string                         // "laugh" (기존 D1)
-    Name() string                       // "웃음 증가"
-    Keys(msg Prepared) []string         // 메시지별 반응 키 추출 (기존 reaction_keys 분해)
-    Evaluate(w Window, h History, p Params) (Signal, bool)
+type Rule interface { ID() string; Name() string }      // ID = 신호 키 또는 키 접두어
+type MessageRule interface {                              // 메시지마다 반응 키를 붙임
+    Rule
+    Keys(text string) []string                            // "laugh", "emotion:surprise", "repeat:<문장>"
+    Share(p Params) float64                               // 창 작성자 중 필요한 비율
+}
+type WindowRule interface {                               // 창 전체를 판정
+    Rule
+    Fires(cur WindowStats, base Baseline, p Params) bool  // "surge", "participants"
 }
 ```
 
-- 엔진은 **10초 창 / 5초 간격 / 과거 기준 학습 / 후보 병합·분할 / 앞뒤 문맥**을 담당하고, 규칙은 판정만 담당.
-- 임계값(비율 3배, z≥3, 비중 .30/.35, 증가폭 .15, 최소 n/u 등)을 `Params`로 분리 → **설정 파일(JSON)과 UI에서 조정**, 민감도 프리셋(기본/소규모 채널).
-- 성능 개선:
-  - 10초 구간(bin) 단위 **증분 통계**를 링버퍼로 유지 → 평가마다 과거 90개 구간 재계산 제거.
-  - 중앙값은 기준 창이 바뀔 때만 재계산 (O(90)), 이벤트 삽입은 시간순 가정 + 늦은 도착만 이진 삽입.
-- 기존 규칙 5종은 `detect/rules`에 그대로 이식해 **기능 동등 기준**으로 사용. 원본 동작은 `git show legacy-python:czzedit/detector.py`로 확인.
+- 엔진(`detect.Engine`, `detect.Grouper`, `detect.Analyze`)이 **10초 창 / 5초 간격 / 기준선 학습 / 공통 조건 / 메시지 규칙의 비율 판정 / 후보 병합·분할 / 편집 구간**을 맡고, 규칙은 판정만 합니다. 규칙 추가 절차는 `add-detection-rule` 스킬.
+- 모든 임계값은 `detect.Params`. `DefaultParams()`는 새 분석의 기본값이고, `CzzEditParams()`와 `rules.CzzEdit()`는 기존 결과 비교용으로 고정합니다.
+- 같은 엔진이 VOD(한 번에 분석)와 LIVE(`Add`, `Gap`, `Evaluate`, `Prune`로 증분 분석)를 처리합니다. 과거 10초 칸 통계는 한 번 계산해 재사용하고, 늦게 도착한 채팅이 들어오면 해당 칸만 다시 계산합니다.
+- **기능 동등 확인**: `internal/detect/rules/testdata/legacy/`의 4가지 경우(데모, 데모+민감도, 공백·명령·작성자 누락·자모 분리·180초 분할이 섞인 합성 데이터 2종)에서 후보와 5초 창의 모든 필드가 CzzEdit 0.3.2와 같습니다 (`TestMatchesLegacy`). 비교 데이터는 `gen_cases.py`로 다시 만들 수 있습니다.
+- **속도** (5시간, 채팅 52,114건, 같은 입력): CzzEdit 630ms → Go 109ms. 결과는 같습니다.
+- 시청자 수 보정(기준선 시작 시점 이동, 기준 전환 시 후보 마감)은 3단계에서 `Evaluate(t, baselineFrom)`과 `Grouper`에 연결합니다.
 
 ### 6.3 AI 제공자 (확장 1순위, claude-api 스킬 적용)
 
@@ -338,6 +342,7 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 |---|---|---|
 | `momentforge-architecture` | 이 저장소의 모든 코드 작성·수정·리팩토링·리뷰 | 작업 절차, 의존 방향 표, 등록 방식, 위치 규칙, 영역별 상세 규칙(`references/go.md`, `web.md`, `ai.md`, `privacy-security.md`), 검사 스크립트 `scripts/check_layers.py` |
 | `e2e-check` | 단계 완료·커밋 전, 동작 확인 요청, E2E 실패 진단·추가 | `make test` → `make e2e` → 스크린샷 점검 → 정해진 형식으로 보고 (0단계에서 작성) |
+| `add-detection-rule` | 탐지 규칙 추가·임계값 조정, 탐지 결과 설명 | 메시지/창 규칙 선택, Params, `rules.All()` 등록, RulesVersion, 고정된 기존 비교 유지 (1단계에서 작성) |
 | `port-legacy-module` | 기존 Python 기능을 새 구조로 옮길 때 | 기존 동작 목록 작성 → 새 위치 결정(`references/legacy-map.md`) → 구현 → 기존 결과와 비교 → 체크리스트 갱신 |
 
 예정 (해당 인터페이스가 실제로 생긴 뒤 작성):
@@ -345,7 +350,6 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | 스킬 | 만드는 시점 | 내용 |
 |---|---|---|
 | `add-platform` | 2단계 (치지직 어댑터 완성 후) | 새 플랫폼 어댑터 추가 절차: 인터페이스 구현, registry 등록, 응답 파일 기반 테스트, Capabilities 반영 |
-| `add-detection-rule` | 1단계 (규칙 5종 이식 후) | 새 규칙 추가 절차: Rule 구현, Params 기본값, 설정 UI 노출, 데모 데이터로 확인 |
 
 작성 규칙: `SKILL.md`는 500줄 이하, 자세한 자료는 `references/`, 반복 실행 코드는 `scripts/`. 설명(description)에 언제 써야 하는지를 구체적으로 적음.
 
@@ -356,7 +360,7 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | 단계 | 내용 | 적용 스킬 | 완료 기준 |
 |---|---|---|---|
 | **0. 골격** ✅ | Go 모듈, chi 서버, 보안 미들웨어, SQLite·마이그레이션, Vite 앱 embed, 빌드 스크립트, `e2e/` 기반, `docs/DESIGN-SYSTEM.md` | frontend-design, webapp-testing, skill-creator(`e2e-check`) | 단일 바이너리 실행 → 브라우저에 앱 표시, E2E 1개 통과 |
-| **1. 탐지 엔진** | 엔진 + 규칙 5종 + Params, 데모 데이터 | skill-creator(`add-detection-rule`) | 데모 데이터로 후보 생성, 기존 Python과 결과 비교 확인 |
+| **1. 탐지 엔진** ✅ | 엔진 + 규칙 5종 + Params, 데모 데이터 | skill-creator(`add-detection-rule`) | 데모 데이터로 후보 생성, 기존 Python과 결과 비교 확인 |
 | **2. VOD** | 치지직 VOD 메타·채팅 수집·이어받기, 분석, 후보 화면, HLS 재생·채팅 동기화, 내보내기 | frontend-design, webapp-testing, skill-creator(`add-platform`) | 실제 VOD URL로 수집 → 후보 클릭 → 해당 시각 재생 |
 | **3. LIVE** | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
@@ -366,9 +370,10 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
 
 - [ ] VOD 채팅 페이지 수집·DB/TXT 저장·중단 위치 이어받기
-- [ ] 샘플로 먼저 체험(데모)
+- [x] 샘플로 먼저 체험(데모) — 분석·타임라인·후보·근거 표시 (1단계). 저장·내보내기는 2단계
 - [ ] 공개 LIVE 채팅 수집·전체 대화 보관·최근 300건 표시
-- [ ] 자동 후보 D1~D5, 임시 후보 표시, 소규모 채널 민감도
+- [x] 자동 후보 D1~D5 판정, 임시 후보 표시 (1단계, 기존 결과와 필드 단위 일치)
+- [ ] 소규모 채널 민감도 — 엔진 지원 완료, 화면 설정은 2단계
 - [ ] 영상 댓글 타임스탬프 추천(수집·직접 붙여넣기)
 - [ ] VOD 후보 클릭 → 재생 이동·재생 시각 채팅 따라가기
 - [ ] LIVE 후보 앞뒤 30초 채팅 문맥(최대 300건)
@@ -418,5 +423,11 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | 2026-10-16 | `go ./...`에서 `web/node_modules` 제외 (0단계) | `go.mod`의 `ignore ./web/node_modules` (Go 1.25 이상 기능) |
 | 2026-10-16 | 화면 서체 (0단계) | 운영체제 한글 서체 사용, 웹폰트 미포함 (사용자 확정, DESIGN-SYSTEM.md 3절) |
 | 2026-10-16 | 화면 색 | 사용자가 제공한 참고 이미지 기준의 흑백 테마. 라이트 = 흰 상의·은발, 다크 = 검은 가디건, 강조 = 눈동자 파랑·볼 홍조 (DESIGN-SYSTEM.md 2절) |
+| 2026-10-16 | 한글 정규화 (1단계) | NFC는 한글 자모 조합만 직접 구현. 외부 의존성(`golang.org/x/text`)을 피하기 위함이며, 탐지 규칙에 영향을 주는 범위는 한글뿐 |
+| 2026-10-16 | 규칙 키 이름 (1단계) | D1~D5 → `laugh`, `surge`, `repeat:<문장>`, `emotion:<종류>`, `participants`. 화면의 이유 이름은 그대로 |
+| 2026-10-16 | 기존 비교 고정 (1단계) | `detect.CzzEditParams()`와 `rules.CzzEdit()`를 고정값으로 두고 비교 테스트가 이것을 씀. 새 규칙·기본값 조정은 `rules.All()`·`DefaultParams()`에서 |
+| 2026-10-16 | 근거 채팅 미리보기 (1단계) | 판정 근거는 기존과 같게 두고, 화면 미리보기만 같은 문장끼리 묶어 많이 나온 순서로 표시 (급증 신호의 근거에 평소 대화가 섞여 반응 문장이 가려지던 문제) |
+| 2026-10-16 | 데모 저장 (1단계) | 1단계 데모는 요청마다 분석만 하고 저장하지 않음. 세션 저장·내보내기가 생기는 2단계에서 기존처럼 저장 |
+| 2026-10-16 | 3절 성능 진단 정정 (1단계) | 기존 코드도 최근 256개 창 통계를 캐시하고 있어 "평가마다 90개 구간 재계산"은 정확하지 않았음. 실측 비교로 대체 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

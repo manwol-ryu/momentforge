@@ -1,0 +1,15 @@
+{
+ "endMs": 1503337,
+ "gaps": [
+  [
+   600000,
+   640000
+  ]
+ ],
+ "config": {
+  "sensitive": true,
+  "reaction_delay_ms": 3000,
+  "pre_roll_ms": 20000,
+  "post_roll_ms": 45000
+ }
+}

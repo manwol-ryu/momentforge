@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "./api/client";
 import { EventsProvider } from "./shared/events";
+import { usePath } from "./shared/navigation";
 import { Home } from "./features/home/Home";
+import { DemoView } from "./features/demo/DemoView";
 import "./styles/app.css";
 
 const queryClient = new QueryClient({
@@ -17,11 +19,17 @@ const queryClient = new QueryClient({
   },
 });
 
+function App() {
+  const path = usePath();
+  if (path === "/demo") return <DemoView />;
+  return <Home />;
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <EventsProvider>
-        <Home />
+        <App />
       </EventsProvider>
     </QueryClientProvider>
   </StrictMode>,

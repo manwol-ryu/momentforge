@@ -69,8 +69,11 @@ python3 -I .claude/skills/momentforge-architecture/scripts/check_layers.py
 
 ```bash
 LEGACY=$(mktemp -d) && git archive legacy-python czzedit | tar -x -C "$LEGACY"
-# 기존 데모·분석을 실행해 후보를 JSON으로 저장한 뒤 새 구현 결과와 비교
+python3 -I .claude/skills/port-legacy-module/scripts/legacy_detect.py --legacy "$LEGACY" \
+    --events case.events.json --end 600000 [--config '{"sensitive": true}'] [--gaps '[[a, b]]']
 ```
+
+  `scripts/legacy_detect.py`는 기존 탐지기를 실행해 새 키 이름(laugh, surge…)으로 결과를 출력합니다. 탐지 비교 데이터와 생성기는 `internal/detect/rules/testdata/legacy/`에 있습니다 (`gen_cases.py`, `TestMatchesLegacy`).
 
   후보 시작·끝 시각, 규칙, 개수를 비교합니다. 차이가 있으면 원인(중앙값 계산, 반올림, 정렬 등)을 찾아 고치거나, 의도한 차이면 이유를 기록합니다.
 - 외부 서비스(치지직 실제 URL, AI API)가 필요한 확인은 사용자에게 알리고 진행합니다.

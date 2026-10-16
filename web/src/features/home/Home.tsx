@@ -1,7 +1,8 @@
-import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
+import { queryState, useAppState } from "../../shared/appState";
 import { useEvents, type ConnectionState } from "../../shared/events";
+import { Link } from "../../shared/navigation";
 
 const connectionText: Record<ConnectionState, string> = {
   connecting: "연결하는 중",
@@ -13,11 +14,7 @@ export function Home() {
   const status = useQuery({ queryKey: ["status"], queryFn: api.status });
   const { state } = useEvents();
 
-  // E2E and other tools wait for this instead of network idle (SSE stays open).
-  useEffect(() => {
-    if (status.isSuccess) document.body.dataset.appState = "ready";
-    else if (status.isError) document.body.dataset.appState = "error";
-  }, [status.isSuccess, status.isError]);
+  useAppState(queryState(status));
 
   return (
     <main className="page">
@@ -32,7 +29,12 @@ export function Home() {
         </h2>
         <p className="empty">
           아직 수집한 방송이 없습니다. 다시보기·라이브 주소로 채팅을 수집하는 기능은 다음 업데이트에서 이 자리에
-          추가됩니다.
+          추가됩니다. 그 전에 예시 채팅으로 편집 후보를 찾는 과정을 볼 수 있습니다.
+        </p>
+        <p className="actions">
+          <Link href="/demo" className="button">
+            샘플로 먼저 체험
+          </Link>
         </p>
       </section>
 

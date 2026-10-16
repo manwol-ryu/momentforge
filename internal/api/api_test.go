@@ -28,6 +28,19 @@ func (f fakeCore) Status(context.Context) (app.Status, error) {
 	return app.Status{Name: "MomentForge", Version: "test", SchemaVersion: 1}, f.err
 }
 
+func (f fakeCore) Demo(context.Context) (*app.Analysis, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	c := app.CandidateView{
+		Candidate:     domain.Candidate{ID: "m0001", Signals: []string{"laugh"}, Reasons: []string{"웃음 증가"}, EvidenceIDs: []string{"e1"}},
+		Evidence:      []app.EvidenceLine{{ChatEvent: domain.ChatEvent{ID: "e1", OffsetMs: 300000, AuthorKey: "user-1", Text: "ㅋㅋ"}, Count: 1}},
+		EvidenceTotal: 1,
+	}
+	return &app.Analysis{Title: "샘플", DurationMs: 600000, Windows: []domain.Window{{T: 10000, N: 3, U: 2, Valid: true, Signals: []string{}}},
+		Candidates: []app.CandidateView{c}}, nil
+}
+
 func newTestHandler(core Core, bus *events.Bus, assets fstest.MapFS) http.Handler {
 	cfg := Config{Core: core, Bus: bus, Port: testPort, AccessKey: testKey, Heartbeat: time.Hour}
 	if assets != nil {
@@ -196,5 +209,24 @@ func TestEventsStream(t *testing.T) {
 	bus.Close()
 	if got := next(); got != "" {
 		t.Fatalf("stream should end after bus close, got %q", got)
+	}
+}
+
+func TestDemoResponseShape(t *testing.T) {
+	rec := request(newTestHandler(fakeCore{}, nil, nil), "GET", "/api/demo", map[string]string{KeyHeader: testKey})
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	c := body["candidates"].([]any)[0].(map[string]any)
+	ev := c["evidence"].([]any)[0].(map[string]any)
+	if c["id"] != "m0001" || c["reasons"].([]any)[0] != "웃음 증가" || ev["author"] != "user-1" || ev["offsetMs"].(float64) != 300000 {
+		t.Fatalf("unexpected body: %s", rec.Body)
+	}
+	if _, leaked := body["windows"].([]any)[0].(map[string]any)["Evidence"]; leaked {
+		t.Fatal("window evidence ids must not be sent")
 	}
 }

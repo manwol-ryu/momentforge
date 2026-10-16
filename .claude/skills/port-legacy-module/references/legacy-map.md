@@ -7,14 +7,14 @@
 | `__main__.py` | 실행 명령, 인자 처리 | `cmd/momentforge` | 0 | 완료 |
 | `server.py` | HTTP 서버, 경로 분기, 로컬 키·Host·Origin 검사, 작업 상태 | `internal/api`, `internal/app` | 0, 2~4 | 진행 중 (보안·정적 파일·상태 완료) |
 | `ui.html` | 화면 전체 | `web/` | 0, 2~4 | 진행 중 (홈 골격) |
-| `common.py` | `Config`, `AppError`, `video_id`, `normalized` | `internal/domain`, `internal/detect` `Params`, `internal/platform/chzzk` | 1~2 | 대기 |
+| `common.py` | `Config`, `AppError`, `video_id`, `normalized` | `internal/domain`, `internal/detect` `Params`, `internal/platform/chzzk` | 1~2 | 진행 중 (`Config`→`Params`, `normalized`→`detect.Normalize`, `AppError`→`domain.UserError` 완료, `video_id`는 2단계) |
 | `records.py` | 스키마 버전, records·viewer_samples 테이블 | `internal/store/migrations` | 0, 2~3 | 진행 중 (마이그레이션 체계 완료, 테이블은 해당 기능 단계에서) |
-| `detector.py` | D1~D5 규칙, 창 통계, 후보 병합·분할 | `internal/detect`, `internal/detect/rules` | 1 | 대기 |
-| `live_analyzer.py` | LIVE 증분 평가 | `internal/detect` (같은 엔진) | 1, 3 | 대기 |
+| `detector.py` | D1~D5 규칙, 창 통계, 후보 병합·분할 | `internal/detect`, `internal/detect/rules` | 1 | 완료 (기존 결과와 필드 단위 일치, 시청자 수 보정 연결은 3단계) |
+| `live_analyzer.py` | LIVE 증분 평가 | `internal/detect` (같은 엔진) | 1, 3 | 진행 중 (엔진의 증분 API 완료, 대기·확정 상태 처리는 3단계) |
 | `transport.py` | VOD HTTP 조회, 재시도 간격 | `internal/platform/chzzk` (로그인 전송은 보류) | 2 | 대기 |
 | `collector.py` | VOD 채팅 페이지 수집·이어받기 | `internal/platform/chzzk` `VODSource`, `internal/app` | 2 | 대기 |
 | `store.py` | VOD 세션·페이지·이벤트·분석 저장, 작업 잠금 | `internal/store` | 2 | 대기 |
-| `service.py` | 수집·데모·재분석 흐름 | `internal/app` | 1~2 | 대기 |
+| `service.py` | 수집·데모·재분석 흐름 | `internal/app` | 1~2 | 진행 중 (`demo_rows`→`domain.DemoChat` 완료, 수집·재분석은 2단계) |
 | `exporter.py` | TXT·CSV·JSON 내보내기 | `internal/export` | 2 | 대기 |
 | `review.py` | 후보 문맥, 재생 시각 채팅 | `internal/app`, `internal/api` 채팅 조회 | 2 | 대기 |
 | `playback.py` | HLS 주소 | `internal/platform/chzzk` `PlaybackSource` | 2 | 대기 |

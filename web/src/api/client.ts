@@ -1,4 +1,4 @@
-import type { ApiErrorBody, Status } from "./types";
+import type { Analysis, ApiErrorBody, Status } from "./types";
 
 export const KEY_HEADER = "X-MomentForge-Key";
 
@@ -48,4 +48,5 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const api = {
   status: () => getJSON<Status>("/api/status"),
+  demo: () => getJSON<Analysis>("/api/demo"),
 };

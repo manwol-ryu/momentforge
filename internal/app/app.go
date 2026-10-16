@@ -7,6 +7,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/events"
 	"github.com/manwol-ryu/momentforge/internal/store"
 )
@@ -17,6 +18,8 @@ type Config struct {
 	DataDir string
 	Store   *store.Store
 	Bus     *events.Bus
+	Params  detect.Params // detection thresholds
+	Rules   []detect.Rule // registered detection rules (cmd/momentforge)
 }
 
 // App is the application core.

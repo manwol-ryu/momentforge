@@ -16,6 +16,8 @@ import (
 
 	"github.com/manwol-ryu/momentforge/internal/api"
 	"github.com/manwol-ryu/momentforge/internal/app"
+	"github.com/manwol-ryu/momentforge/internal/detect"
+	"github.com/manwol-ryu/momentforge/internal/detect/rules"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/events"
 	"github.com/manwol-ryu/momentforge/internal/store"
@@ -91,7 +93,10 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 	cleanup = append(cleanup, func() { st.Close() })
 
 	bus := events.NewBus(256)
-	core := app.New(app.Config{Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus})
+	core := app.New(app.Config{
+		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
+		Params: detect.DefaultParams(), Rules: rules.All(),
+	})
 	httpSrv := &http.Server{
 		Handler: api.NewHandler(api.Config{
 			Core: core, Bus: bus, Port: port, AccessKey: key, Assets: opt.Assets,
