@@ -4,8 +4,9 @@ Usage (normally via `make e2e`, which starts the server with with_server.py):
     e2e/.venv/bin/python e2e/run.py --base-url http://127.0.0.1:18765 [-k name]
 
 Each test gets a fresh browser context and page: fn(page, base_url).
-A test fails on an exception or on any browser console error. Failure
-screenshots go to e2e/.data/screenshots/.
+A test fails on an exception or on any browser console error, except ones
+containing a text listed in the test's `allow_console` attribute (for
+expected API error responses). Failure screenshots go to e2e/.data/screenshots/.
 """
 from __future__ import annotations
 
@@ -58,6 +59,8 @@ def main() -> int:
             started = time.monotonic()
             try:
                 fn(page, args.base_url)
+                allowed = getattr(fn, "allow_console", [])
+                console_errors = [e for e in console_errors if not any(a in e for a in allowed)]
                 if console_errors:
                     raise AssertionError("브라우저 콘솔 오류: " + " | ".join(console_errors))
                 print(f"통과  {name} ({time.monotonic() - started:.1f}s)")

@@ -1,4 +1,14 @@
-import type { Analysis, ApiErrorBody, Status } from "./types";
+import type {
+  Analysis,
+  ApiErrorBody,
+  CandidateChats,
+  ExportFile,
+  JobStatus,
+  Playback,
+  PlayheadChats,
+  Session,
+  Status,
+} from "./types";
 
 export const KEY_HEADER = "X-MomentForge-Key";
 
@@ -24,10 +34,12 @@ export class ApiError extends Error {
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set(KEY_HEADER, accessKey());
+  if (init.body) headers.set("Content-Type", "application/json");
   let res: Response;
   try {
     res = await fetch(path, { ...init, headers });
-  } catch {
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError(0, "OFFLINE", "서버에 연결할 수 없습니다. MomentForge를 실행한 터미널이 열려 있는지 확인하세요.");
   }
   if (!res.ok) {
@@ -46,7 +58,43 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function postJSON<T>(path: string, body: unknown = {}): Promise<T> {
+  const res = await apiFetch(path, { method: "POST", body: JSON.stringify(body) });
+  return (await res.json()) as T;
+}
+
+const enc = encodeURIComponent;
+
 export const api = {
   status: () => getJSON<Status>("/api/status"),
-  demo: () => getJSON<Analysis>("/api/demo"),
+  job: () => getJSON<JobStatus>("/api/job"),
+  cancelJob: () => postJSON<JobStatus>("/api/job/cancel"),
+  collect: (url: string, sensitive: boolean) => postJSON<JobStatus>("/api/collect", { url, sensitive }),
+  demo: (sensitive = false) => postJSON<Session>("/api/demo", { sensitive }),
+  sessions: () => getJSON<Session[]>("/api/sessions"),
+  session: (id: string) => getJSON<Session>(`/api/sessions/${enc(id)}`),
+  resume: (id: string, sensitive: boolean) => postJSON<JobStatus>(`/api/sessions/${enc(id)}/resume`, { sensitive }),
+  reanalyze: (id: string, sensitive: boolean) =>
+    postJSON<JobStatus>(`/api/sessions/${enc(id)}/analyses`, { sensitive }),
+  analysis: (id: string) => getJSON<Analysis>(`/api/analyses/${enc(id)}`),
+  candidateChats: (analysisId: string, candidateId: string, offset = 0) =>
+    getJSON<CandidateChats>(`/api/analyses/${enc(analysisId)}/candidates/${enc(candidateId)}/chats?offset=${offset}`),
+  chatsAt: (sessionId: string, atMs: number, analysisId?: string) =>
+    getJSON<PlayheadChats>(
+      `/api/sessions/${enc(sessionId)}/chats?at=${Math.floor(atMs)}${analysisId ? `&analysis=${enc(analysisId)}` : ""}`,
+    ),
+  playback: (sessionId: string) => getJSON<Playback>(`/api/sessions/${enc(sessionId)}/playback`),
+  files: (sessionId: string) => getJSON<ExportFile[]>(`/api/sessions/${enc(sessionId)}/files`),
+  /** Downloads through fetch so the access key stays in a header, not the URL. */
+  async download(sessionId: string, path: string) {
+    const res = await apiFetch(`/api/sessions/${enc(sessionId)}/files/${path.split("/").map(enc).join("/")}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = path.split("/").pop() ?? "download";
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
 };

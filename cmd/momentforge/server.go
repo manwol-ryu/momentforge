@@ -20,6 +20,8 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/detect/rules"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/events"
+	"github.com/manwol-ryu/momentforge/internal/platform"
+	"github.com/manwol-ryu/momentforge/internal/platform/chzzk"
 	"github.com/manwol-ryu/momentforge/internal/store"
 )
 
@@ -28,6 +30,8 @@ type options struct {
 	DataDir string
 	Version string
 	Assets  fs.FS
+	// Platforms overrides the registered adapters (tests use fakes).
+	Platforms []platform.Platform
 }
 
 // server is a running instance and everything it must release on shutdown.
@@ -37,6 +41,7 @@ type server struct {
 	DataDir string
 
 	http    *http.Server
+	core    *app.App
 	lock    *store.ServerLock
 	store   *store.Store
 	keyFile string
@@ -95,11 +100,11 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 	bus := events.NewBus(256)
 	core := app.New(app.Config{
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
-		Params: detect.DefaultParams(), Rules: rules.All(),
+		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
 	})
 	httpSrv := &http.Server{
 		Handler: api.NewHandler(api.Config{
-			Core: core, Bus: bus, Port: port, AccessKey: key, Assets: opt.Assets,
+			Core: core, Bus: bus, Port: port, AccessKey: key, Assets: opt.Assets, MediaOrigins: core.MediaOrigins(),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -111,6 +116,7 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 		Port:    port,
 		DataDir: dataDir,
 		http:    httpSrv,
+		core:    core,
 		lock:    lock,
 		store:   st,
 		keyFile: keyFile,
@@ -129,10 +135,22 @@ func (s *server) Failed() <-chan error { return s.failed }
 
 // Shutdown stops accepting requests, waits for active ones, and releases resources.
 func (s *server) Shutdown(ctx context.Context) error {
+	s.core.Shutdown(ctx) // pause a running collection at a safe point first
 	err := s.http.Shutdown(ctx)
 	err = errors.Join(err, s.store.Close())
 	os.Remove(s.keyFile)
 	return errors.Join(err, s.lock.Release())
+}
+
+// registerPlatforms is where adapters are registered (REDESIGN.md 4).
+func registerPlatforms(override []platform.Platform) *platform.Registry {
+	r := &platform.Registry{}
+	if override != nil {
+		r.Register(override...)
+		return r
+	}
+	r.Register(chzzk.New())
+	return r
 }
 
 func newAccessKey() (string, error) {

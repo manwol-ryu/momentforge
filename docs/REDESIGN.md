@@ -262,20 +262,24 @@ type JobManager interface {
 
 ## 8. HTTP API
 
-| 메서드·경로 | 용도 |
-|---|---|
-| `GET /api/status` | 버전·플랫폼 기능 목록 |
-| `POST /api/resolve` | URL → 플랫폼·대상·지원 기능 |
-| `GET/POST /api/sessions`, `GET/PATCH /api/sessions/{id}` | 세션 목록·생성·숨김/복원 |
-| `POST /api/sessions/{id}/capture`, `/stop`, `/resume` | VOD·LIVE 수집 제어 |
-| `GET /api/sessions/{id}/chats?from&to&limit` | 채팅 구간 조회 (재생 동기화·문맥) |
-| `POST /api/sessions/{id}/analyses`, `GET /api/analyses/{id}` | 분석·재분석·후보 |
-| `GET /api/sessions/{id}/timeline` | 자동 후보 + 시청자 추천 통합 |
-| `POST /api/sessions/{id}/exports` | 내보내기·checkpoint |
-| `GET /api/sessions/{id}/playback` | HLS 정보 |
-| `GET /api/ai/providers` | 제공자·모델 목록 |
-| `POST /api/ai/preview`, `POST /api/ai/runs`, `GET /api/ai/runs/{id}` | AI 미리보기(예상 비용 포함)·실행·결과 |
-| `GET /api/events` (SSE) | 작업 진행·새 채팅·후보 갱신 |
+2단계까지 구현된 경로입니다. 모든 `/api` 요청은 접근 키 헤더가 필요하고, 쓰기 요청 본문은 16KB 이하 JSON입니다.
+
+| 메서드·경로 | 용도 | 단계 |
+|---|---|---|
+| `GET /api/status` | 버전, 스키마, 지원 플랫폼 | 0 |
+| `GET /api/events` (SSE) | `ready`, `job`(작업 진행), `overflow` | 0 |
+| `GET /api/job`, `POST /api/job/cancel` | 현재 작업 조회·중단 | 2 |
+| `POST /api/collect` `{url, sensitive}` | 다시보기 수집 시작 (202) | 2 |
+| `POST /api/demo` `{sensitive}` | 샘플 세션 생성·분석 (201) | 2 |
+| `GET /api/sessions`, `GET /api/sessions/{id}` | 저장한 작업 목록·상세 (salt·원문 제외) | 2 |
+| `POST /api/sessions/{id}/resume`, `/analyses` | 이어받기, 다시 분석 (202) | 2 |
+| `GET /api/sessions/{id}/chats?at=&analysis=` | 재생 위치 앞뒤 30초 채팅 (앞뒤 150건씩) | 2 |
+| `GET /api/sessions/{id}/playback` | 공개 HLS 주소 (저장하지 않음) | 2 |
+| `GET /api/sessions/{id}/files`, `/files/*` | 내보내기 파일 목록·다운로드 | 2 |
+| `GET /api/analyses/{id}` | 분석 결과 (창, 후보, 근거 요약, 플랫폼 링크) | 2 |
+| `GET /api/analyses/{id}/candidates/{cid}/chats?offset=` | 후보 편집 구간 채팅 (근거 표시, 페이지) | 2 |
+| 숨김·복원, 영상 댓글, 통합 타임라인 | | 4 |
+| `GET /api/ai/providers`, `POST /api/ai/preview`, `POST /api/ai/runs`, `GET /api/ai/runs/{id}` | AI | 4~5 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
 
@@ -343,13 +347,13 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | `momentforge-architecture` | 이 저장소의 모든 코드 작성·수정·리팩토링·리뷰 | 작업 절차, 의존 방향 표, 등록 방식, 위치 규칙, 영역별 상세 규칙(`references/go.md`, `web.md`, `ai.md`, `privacy-security.md`), 검사 스크립트 `scripts/check_layers.py` |
 | `e2e-check` | 단계 완료·커밋 전, 동작 확인 요청, E2E 실패 진단·추가 | `make test` → `make e2e` → 스크린샷 점검 → 정해진 형식으로 보고 (0단계에서 작성) |
 | `add-detection-rule` | 탐지 규칙 추가·임계값 조정, 탐지 결과 설명 | 메시지/창 규칙 선택, Params, `rules.All()` 등록, RulesVersion, 고정된 기존 비교 유지 (1단계에서 작성) |
+| `add-platform` | 플랫폼 추가, 플랫폼 응답 변경 대응 | 인터페이스 선택, 공용 HTTP 클라이언트, 응답 검증·PageError, 등록, 가짜 서버 테스트 (2단계에서 작성) |
 | `port-legacy-module` | 기존 Python 기능을 새 구조로 옮길 때 | 기존 동작 목록 작성 → 새 위치 결정(`references/legacy-map.md`) → 구현 → 기존 결과와 비교 → 체크리스트 갱신 |
 
 예정 (해당 인터페이스가 실제로 생긴 뒤 작성):
 
 | 스킬 | 만드는 시점 | 내용 |
 |---|---|---|
-| `add-platform` | 2단계 (치지직 어댑터 완성 후) | 새 플랫폼 어댑터 추가 절차: 인터페이스 구현, registry 등록, 응답 파일 기반 테스트, Capabilities 반영 |
 
 작성 규칙: `SKILL.md`는 500줄 이하, 자세한 자료는 `references/`, 반복 실행 코드는 `scripts/`. 설명(description)에 언제 써야 하는지를 구체적으로 적음.
 
@@ -361,7 +365,7 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 |---|---|---|---|
 | **0. 골격** ✅ | Go 모듈, chi 서버, 보안 미들웨어, SQLite·마이그레이션, Vite 앱 embed, 빌드 스크립트, `e2e/` 기반, `docs/DESIGN-SYSTEM.md` | frontend-design, webapp-testing, skill-creator(`e2e-check`) | 단일 바이너리 실행 → 브라우저에 앱 표시, E2E 1개 통과 |
 | **1. 탐지 엔진** ✅ | 엔진 + 규칙 5종 + Params, 데모 데이터 | skill-creator(`add-detection-rule`) | 데모 데이터로 후보 생성, 기존 Python과 결과 비교 확인 |
-| **2. VOD** | 치지직 VOD 메타·채팅 수집·이어받기, 분석, 후보 화면, HLS 재생·채팅 동기화, 내보내기 | frontend-design, webapp-testing, skill-creator(`add-platform`) | 실제 VOD URL로 수집 → 후보 클릭 → 해당 시각 재생 |
+| **2. VOD** ✅ | 치지직 VOD 메타·채팅 수집·이어받기, 분석, 후보 화면, HLS 재생·채팅 동기화, 내보내기 | frontend-design, webapp-testing, skill-creator(`add-platform`) | 실제 VOD URL로 수집 → 후보 클릭 → 해당 시각 재생 |
 | **3. LIVE** | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
 | **5. AI 강화 (확장 1순위)** | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
@@ -369,16 +373,17 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
 
-- [ ] VOD 채팅 페이지 수집·DB/TXT 저장·중단 위치 이어받기
-- [x] 샘플로 먼저 체험(데모) — 분석·타임라인·후보·근거 표시 (1단계). 저장·내보내기는 2단계
+- [x] VOD 채팅 페이지 수집·DB/TXT 저장·중단 위치 이어받기 (2단계, 실제 다시보기로 확인)
+- [x] 샘플로 먼저 체험(데모) — 저장된 세션으로 검토·내보내기 (2단계)
 - [ ] 공개 LIVE 채팅 수집·전체 대화 보관·최근 300건 표시
 - [x] 자동 후보 D1~D5 판정, 임시 후보 표시 (1단계, 기존 결과와 필드 단위 일치)
-- [ ] 소규모 채널 민감도 — 엔진 지원 완료, 화면 설정은 2단계
+- [x] 소규모 채널 민감도 — 수집·다시 분석 화면에서 선택 (2단계)
 - [ ] 영상 댓글 타임스탬프 추천(수집·직접 붙여넣기)
-- [ ] VOD 후보 클릭 → 재생 이동·재생 시각 채팅 따라가기
+- [x] VOD 후보 클릭 → 재생 이동·재생 시각 채팅 따라가기 (2단계, 실제 다시보기로 확인)
 - [ ] LIVE 후보 앞뒤 30초 채팅 문맥(최대 300건)
 - [ ] LIVE 자동 재연결·공백 표시·중단·같은 방송 이어 기록
-- [ ] 내보내기: 전체 채팅 TXT/JSONL, 후보 TXT/CSV/JSON, 후보별 주변 채팅, checkpoint
+- [x] 내보내기: 전체 채팅 TXT/JSONL, 후보 TXT/CSV/JSON, 후보별 주변 채팅 (2단계)
+- [ ] 내보내기: LIVE checkpoint (3단계)
 - [ ] 웹 시청자 수 기록·10% 감소 시 기준 재학습
 - [ ] 저장 목록 숨김·복원
 - [ ] 선택형 AI(미리보기 확인 후 실행)
@@ -429,5 +434,14 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | 2026-10-16 | 근거 채팅 미리보기 (1단계) | 판정 근거는 기존과 같게 두고, 화면 미리보기만 같은 문장끼리 묶어 많이 나온 순서로 표시 (급증 신호의 근거에 평소 대화가 섞여 반응 문장이 가려지던 문제) |
 | 2026-10-16 | 데모 저장 (1단계) | 1단계 데모는 요청마다 분석만 하고 저장하지 않음. 세션 저장·내보내기가 생기는 2단계에서 기존처럼 저장 |
 | 2026-10-16 | 3절 성능 진단 정정 (1단계) | 기존 코드도 최근 256개 창 통계를 캐시하고 있어 "평가마다 90개 구간 재계산"은 정확하지 않았음. 실측 비교로 대체 |
+| 2026-10-16 | API와 저장소 분리 (2단계) | `api`는 `app`의 화면용 타입(`SessionInfo`, `PlaybackInfo`, `AnalysisView`)만 사용. 구조 검사 훅이 `api`의 `store`·`platform` import를 잡아낸 뒤 결정 |
+| 2026-10-16 | 파일 다운로드 (2단계) | 기존의 `?key=` URL 대신 fetch로 헤더에 접근 키를 실어 받고 브라우저에 저장 |
+| 2026-10-16 | 진행률 전달 (2단계) | 폴링 대신 SSE `job` 이벤트. 작업은 한 번에 하나(`BUSY`), 앱 종료 시 수집을 안전한 지점에서 일시정지 |
+| 2026-10-16 | 로그인 필요 VOD (2단계) | 401 응답에 "로그인이 필요한 다시보기는 아직 지원하지 않습니다" 안내 (로그인 수집 보류) |
+| 2026-10-16 | 플랫폼 주소 변경 수단 (2단계) | 어댑터 주소는 테스트용 옵션 함수로만 바꿀 수 있음. 실행파일에 환경변수 등 외부 설정 경로를 두지 않음 |
+| 2026-10-16 | 영상 재생 라이브러리 (2단계) | `hls.js/light`를 필요할 때만 불러옴(gzip 114KB). Safari는 내장 HLS 사용 |
+| 2026-10-16 | 샘플 세션 (2단계) | 저장된 샘플이 있으면 새로 만들지 않고 그 세션을 염 |
+| 2026-10-16 | 재생 위치 채팅 조회 (2단계) | 재생 위치를 10초 단위로 묶어 조회(앞뒤 30초, 앞뒤 150건). 재생이 이어질 때 요청이 10초에 한 번 이하 |
+| 2026-10-16 | 2단계 실제 확인 | 사용자가 준 치지직 다시보기(4시간 32분)로 확인. 42페이지·채팅 8,257건 수집(격리·공백·작성자 누락 없음), 후보 16개. 같은 채팅을 CzzEdit 탐지기에 넣은 결과와 후보 16개·창 3,266개 모든 필드 일치. 앱 내장 브라우저에서 후보 클릭 → 편집 구간 시작으로 영상 이동·재생, 재생 위치 채팅 동기화 확인 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

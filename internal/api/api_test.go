@@ -22,23 +22,37 @@ const (
 	testHost = "127.0.0.1:18765"
 )
 
-type fakeCore struct{ err error }
+// fakeCore implements the methods these tests call; any other Core method
+// panics through the nil embedded interface.
+type fakeCore struct {
+	Core
+	err error
+}
 
 func (f fakeCore) Status(context.Context) (app.Status, error) {
 	return app.Status{Name: "MomentForge", Version: "test", SchemaVersion: 1}, f.err
 }
 
-func (f fakeCore) Demo(context.Context) (*app.Analysis, error) {
-	if f.err != nil {
-		return nil, f.err
+func (f fakeCore) Sessions(context.Context) ([]app.SessionInfo, error) {
+	return []app.SessionInfo{{ID: "s1", Platform: "chzzk", Title: "방송", State: "paused", CanResume: true}}, f.err
+}
+
+func (f fakeCore) StartCollect(req app.CollectRequest) (app.JobStatus, error) {
+	if req.URL == "" {
+		return app.JobStatus{}, domain.NewUserError("INVALID_URL", "주소를 입력해 주세요.")
 	}
+	return app.JobStatus{ID: "j1", Kind: "collect", Busy: true}, nil
+}
+
+func (f fakeCore) Analysis(context.Context, string) (*app.AnalysisView, error) {
 	c := app.CandidateView{
 		Candidate:     domain.Candidate{ID: "m0001", Signals: []string{"laugh"}, Reasons: []string{"웃음 증가"}, EvidenceIDs: []string{"e1"}},
 		Evidence:      []app.EvidenceLine{{ChatEvent: domain.ChatEvent{ID: "e1", OffsetMs: 300000, AuthorKey: "user-1", Text: "ㅋㅋ"}, Count: 1}},
 		EvidenceTotal: 1,
 	}
-	return &app.Analysis{Title: "샘플", DurationMs: 600000, Windows: []domain.Window{{T: 10000, N: 3, U: 2, Valid: true, Signals: []string{}}},
-		Candidates: []app.CandidateView{c}}, nil
+	return &app.AnalysisView{ID: "a1", SessionID: "s1", Title: "샘플", DurationMs: 600000,
+		Windows:    []domain.Window{{T: 10000, N: 3, U: 2, Valid: true, Signals: []string{}, Evidence: []string{"e1"}}},
+		Candidates: []app.CandidateView{c}}, f.err
 }
 
 func newTestHandler(core Core, bus *events.Bus, assets fstest.MapFS) http.Handler {
@@ -212,8 +226,8 @@ func TestEventsStream(t *testing.T) {
 	}
 }
 
-func TestDemoResponseShape(t *testing.T) {
-	rec := request(newTestHandler(fakeCore{}, nil, nil), "GET", "/api/demo", map[string]string{KeyHeader: testKey})
+func TestAnalysisResponseShape(t *testing.T) {
+	rec := request(newTestHandler(fakeCore{}, nil, nil), "GET", "/api/analyses/a1", map[string]string{KeyHeader: testKey})
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -223,10 +237,56 @@ func TestDemoResponseShape(t *testing.T) {
 	}
 	c := body["candidates"].([]any)[0].(map[string]any)
 	ev := c["evidence"].([]any)[0].(map[string]any)
-	if c["id"] != "m0001" || c["reasons"].([]any)[0] != "웃음 증가" || ev["author"] != "user-1" || ev["offsetMs"].(float64) != 300000 {
+	if c["id"] != "m0001" || c["reasons"].([]any)[0] != "웃음 증가" || ev["author"] != "user-1" || ev["count"].(float64) != 1 {
 		t.Fatalf("unexpected body: %s", rec.Body)
 	}
-	if _, leaked := body["windows"].([]any)[0].(map[string]any)["Evidence"]; leaked {
+	if strings.Contains(rec.Body.String(), "Evidence\"") {
 		t.Fatal("window evidence ids must not be sent")
 	}
+}
+
+func TestCollectValidatesBody(t *testing.T) {
+	h := newTestHandler(fakeCore{}, nil, nil)
+	hdr := map[string]string{KeyHeader: testKey}
+	if rec := requestBody(h, "POST", "/api/collect", "not json", hdr); rec.Code != 400 || errorCode(t, rec) != "INPUT" {
+		t.Fatalf("bad json: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/collect", strings.Repeat("x", 17<<10), hdr); rec.Code != 400 {
+		t.Fatalf("oversized body: %d", rec.Code)
+	}
+	if rec := requestBody(h, "POST", "/api/collect", `{"url":""}`, hdr); rec.Code != 400 || errorCode(t, rec) != "INVALID_URL" {
+		t.Fatalf("empty url: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/collect", `{"url":"1234"}`, hdr); rec.Code != 202 {
+		t.Fatalf("ok: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "GET", "/api/collect", "", hdr); rec.Code != 405 {
+		t.Fatalf("wrong method: %d", rec.Code)
+	}
+}
+
+func TestSessionsNeverExposeSalt(t *testing.T) {
+	rec := request(newTestHandler(fakeCore{}, nil, nil), "GET", "/api/sessions", map[string]string{KeyHeader: testKey})
+	if rec.Code != 200 || strings.Contains(strings.ToLower(rec.Body.String()), "salt") || !strings.Contains(rec.Body.String(), `"canResume":true`) {
+		t.Fatalf("sessions: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestCSPAllowsPlatformMedia(t *testing.T) {
+	h := NewHandler(Config{Core: fakeCore{}, Port: testPort, AccessKey: testKey, MediaOrigins: []string{"https://*.media.example"}})
+	csp := request(h, "GET", "/api/status", map[string]string{KeyHeader: testKey}).Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "media-src 'self' blob: https://*.media.example") || !strings.Contains(csp, "connect-src 'self' https://*.media.example") {
+		t.Fatalf("csp = %s", csp)
+	}
+}
+
+func requestBody(h http.Handler, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Host = testHost
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }

@@ -62,17 +62,18 @@ func (g guard) accessKey(next http.Handler) http.Handler {
 	})
 }
 
-// securityHeaders applies to every response.
-func securityHeaders(next http.Handler) http.Handler {
-	const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; " +
-		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", csp)
-		h.Set("Cache-Control", "no-store")
-		next.ServeHTTP(w, r)
-	})
+// securityHeaders applies to every response. Video may stream from the
+// platforms' media origins; everything else must come from this server.
+func securityHeaders(mediaOrigins []string) func(http.Handler) http.Handler {
+	csp := cspFor(mediaOrigins)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("Referrer-Policy", "no-referrer")
+			h.Set("Content-Security-Policy", csp)
+			h.Set("Cache-Control", "no-store")
+			next.ServeHTTP(w, r)
+		})
+	}
 }

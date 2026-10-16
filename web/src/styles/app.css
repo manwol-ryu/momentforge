@@ -340,3 +340,268 @@ a {
 .evidence-first {
   color: var(--muted);
 }
+
+/* Forms */
+.collect {
+  max-width: var(--measure);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+input[type="url"],
+input[type="text"] {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+input[type="url"]:focus-visible {
+  border-color: var(--density);
+}
+
+.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin-top: var(--space-3);
+}
+
+.check input {
+  accent-color: var(--density);
+}
+
+.field-help {
+  margin: var(--space-2) 0 0;
+  max-width: var(--measure);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+button.button {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button-quiet {
+  background: transparent;
+  color: var(--ink);
+}
+
+.button-quiet:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--density);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Job progress */
+.job {
+  margin-top: var(--space-5);
+  padding: var(--space-4) 0 0;
+  border-top: 1px solid var(--rule);
+  max-width: var(--measure);
+}
+
+.job-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.job-phase {
+  font-weight: 600;
+}
+
+.job-progress {
+  width: 100%;
+  height: 6px;
+  margin-top: var(--space-2);
+  accent-color: var(--density);
+}
+
+.job-meta,
+.job-message {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.job-message.error {
+  color: var(--alert);
+}
+
+.notice {
+  max-width: var(--measure);
+}
+
+.notice p {
+  margin: 0;
+}
+
+/* Saved sessions */
+.sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-row {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.session-meta {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* Review: video beside chat */
+.media-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.player-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--ink);
+  border-radius: var(--radius);
+}
+
+.player-note {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.media-chat .check {
+  margin-top: 0;
+  font-size: var(--text-xs);
+}
+
+.chatlog {
+  max-height: 360px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+  font-size: var(--text-xs);
+}
+
+.chatlog li {
+  display: flex;
+  gap: var(--space-2);
+  padding: 3px var(--space-1);
+}
+
+.chatlog li[data-current] {
+  background: color-mix(in srgb, var(--density) 14%, transparent);
+}
+
+.chatlog li[data-evidence] .chat-text {
+  font-weight: 600;
+}
+
+.chat-time,
+.chat-author,
+.chat-mark {
+  flex: none;
+  color: var(--muted);
+}
+
+.chat-mark {
+  color: var(--marker);
+  font-weight: 600;
+}
+
+.chat-author {
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-text {
+  overflow-wrap: anywhere;
+}
+
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.context {
+  margin-top: var(--space-4);
+}
+
+.reanalyze {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: baseline;
+  margin-top: var(--space-5);
+}
+
+.reanalyze .check {
+  margin: 0;
+}
+
+.files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files li {
+  padding: 2px 0;
+}
+
+.file-size {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 760px) {
+  .media-grid {
+    grid-template-columns: 1fr;
+  }
+}

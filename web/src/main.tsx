@@ -5,7 +5,7 @@ import { ApiError } from "./api/client";
 import { EventsProvider } from "./shared/events";
 import { usePath } from "./shared/navigation";
 import { Home } from "./features/home/Home";
-import { DemoView } from "./features/demo/DemoView";
+import { SessionView } from "./features/session/SessionView";
 import "./styles/app.css";
 
 const queryClient = new QueryClient({
@@ -21,7 +21,8 @@ const queryClient = new QueryClient({
 
 function App() {
   const path = usePath();
-  if (path === "/demo") return <DemoView />;
+  const session = /^\/sessions\/([0-9a-f]{32})$/.exec(path);
+  if (session) return <SessionView key={session[1]} id={session[1]!} />;
   return <Home />;
 }
 

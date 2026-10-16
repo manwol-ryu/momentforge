@@ -20,6 +20,7 @@ MomentForge: 방송 채팅을 수집해 편집할 순간(후보)을 찾는 로�
 | 화면 설계·구성 변경 | **frontend-design** |
 | 단계 완료 후 정상 작동 확인 | **webapp-testing** |
 | 탐지 규칙 추가·임계값 조정, 탐지 결과 설명 | **add-detection-rule** |
+| 플랫폼 추가, 플랫폼 응답 변경 대응 | **add-platform** |
 | 단계 완료·커밋 전 정상 작동 확인, E2E 실패 진단·추가 | **e2e-check** (`make test` → `make e2e` → 스크린샷 점검 → 보고) |
 | 새 프로젝트 스킬 작성·수정 | **skill-creator** (Agent Skills 규격: agentskills.io/specification) |
 

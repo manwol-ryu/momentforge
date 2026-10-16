@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Candidate } from "../../api/types";
 import { timecode } from "../format";
 
@@ -6,10 +7,14 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   longForm?: boolean;
+  /** Extra controls under a candidate (seek, open on the platform). */
+  renderActions?: (c: Candidate) => ReactNode;
+  /** Shown under the selected candidate (e.g. its context chat). */
+  renderDetail?: (c: Candidate) => ReactNode;
 }
 
 /** Candidates in time order with their reasons and a few evidence messages. */
-export function CandidateList({ candidates, selectedId, onSelect, longForm = false }: Props) {
+export function CandidateList({ candidates, selectedId, onSelect, longForm = false, renderActions, renderDetail }: Props) {
   if (candidates.length === 0) {
     return <p className="empty">반응이 몰린 구간을 찾지 못했습니다. 소규모 채널이라면 민감도를 높여 다시 분석하세요.</p>;
   }
@@ -34,6 +39,7 @@ export function CandidateList({ candidates, selectedId, onSelect, longForm = fal
             </p>
             {!c.baselineReady && <p className="candidate-note">평소 채팅량을 학습하기 전이라 임시 후보입니다.</p>}
             {c.partialContext && <p className="candidate-note">앞뒤 채팅 일부가 없어 문맥이 짧습니다.</p>}
+            {renderActions && <div className="candidate-actions">{renderActions(c)}</div>}
             {selected && (
               <div className="evidence">
                 <p className="evidence-title">근거 채팅 {c.evidenceTotal}건, 많이 나온 문장 순</p>
@@ -48,6 +54,7 @@ export function CandidateList({ candidates, selectedId, onSelect, longForm = fal
                     </li>
                   ))}
                 </ul>
+                {renderDetail?.(c)}
               </div>
             )}
           </li>

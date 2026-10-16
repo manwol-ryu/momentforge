@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,16 +63,19 @@ func TestMigrateBacksUpExistingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	next := fstest.MapFS{
-		"0001_app_meta.sql": {Data: []byte("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")},
-		"0002_extra.sql":    {Data: []byte("CREATE TABLE extra (id INTEGER PRIMARY KEY);")},
+	// The real migrations plus one more, as a future release would ship.
+	all, _ := loadMigrations(migrationFiles)
+	next := fstest.MapFS{}
+	for _, m := range all {
+		next[m.name] = &fstest.MapFile{Data: []byte(m.sql)}
 	}
+	next[fmt.Sprintf("%04d_extra.sql", len(all)+1)] = &fstest.MapFile{Data: []byte("CREATE TABLE extra (id INTEGER PRIMARY KEY);")}
 	backups := filepath.Join(dir, "data", "backup")
 	if err := s.migrate(ctx, next, backups); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if v, _ := s.SchemaVersion(ctx); v != 2 {
-		t.Fatalf("schema version = %d, want 2", v)
+	if v, _ := s.SchemaVersion(ctx); v != len(all)+1 {
+		t.Fatalf("schema version = %d, want %d", v, len(all)+1)
 	}
 	files, _ := os.ReadDir(backups)
 	if len(files) != 1 {

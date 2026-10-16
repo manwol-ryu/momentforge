@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
 import type { ServerEvent } from "../api/types";
@@ -72,16 +72,17 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     };
   }, [queryClient]);
 
-  const subscribe = (type: string, fn: Listener) => {
+  const subscribe = useCallback((type: string, fn: Listener) => {
     const set = listeners.current.get(type) ?? new Set<Listener>();
     set.add(fn);
     listeners.current.set(type, set);
     return () => {
       set.delete(fn);
     };
-  };
+  }, []);
+  const value = useMemo(() => ({ state, subscribe }), [state, subscribe]);
 
-  return <Ctx.Provider value={{ state, subscribe }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /** Connection state and a subscribe function for server events. */

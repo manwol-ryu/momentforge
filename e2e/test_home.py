@@ -18,8 +18,9 @@ def test_home_shows_status_and_live_connection(page: Page, base_url: str) -> Non
     open_home(page, base_url)
     expect(page.get_by_role("heading", level=1, name="MomentForge")).to_be_visible()
     expect(page.get_by_role("heading", name="저장한 작업")).to_be_visible()
-    expect(page.get_by_role("status")).to_have_text("연결됨", timeout=10_000)
-    expect(page.get_by_text("스키마 1")).to_be_visible()
+    expect(page.locator(".connection")).to_have_text("연결됨", timeout=10_000)
+    expect(page.get_by_text("스키마 2")).to_be_visible()
+    expect(page.get_by_text("치지직", exact=True)).to_be_visible()  # supported platforms
     expect(page.get_by_text(".data", exact=False).first).to_be_visible()  # data folder is e2e/.data
     page.screenshot(path=str(SHOTS / "home-light.png"), full_page=True)
 
