@@ -1,9 +1,15 @@
 import type {
   Analysis,
   ApiErrorBody,
+  Candidate,
   CandidateChats,
   ExportFile,
+  Checkpoint,
   JobStatus,
+  LiveChat,
+  LiveDensity,
+  LiveInfo,
+  LiveStatus,
   Playback,
   PlayheadChats,
   Session,
@@ -85,6 +91,20 @@ export const api = {
     ),
   playback: (sessionId: string) => getJSON<Playback>(`/api/sessions/${enc(sessionId)}/playback`),
   files: (sessionId: string) => getJSON<ExportFile[]>(`/api/sessions/${enc(sessionId)}/files`),
+  inspectLive: (url: string) => postJSON<LiveInfo>("/api/live/inspect", { url }),
+  startLive: (url: string, sensitive: boolean, viewerAdaptive: boolean) =>
+    postJSON<Session>("/api/live", { url, sensitive, viewerAdaptive }),
+  liveStatus: (id: string) => getJSON<LiveStatus>(`/api/live/${enc(id)}`),
+  stopLive: (id: string) => postJSON<{ stopping: boolean }>(`/api/live/${enc(id)}/stop`),
+  resumeLive: (id: string) => postJSON<Session>(`/api/live/${enc(id)}/resume`),
+  liveChats: (id: string, afterSeq = 0) =>
+    getJSON<{ chats: LiveChat[] }>(`/api/live/${enc(id)}/chats${afterSeq > 0 ? `?after=${afterSeq}` : ""}`),
+  liveCandidates: (id: string, afterRevision = 0) =>
+    getJSON<{ candidates: Candidate[]; revision: number }>(`/api/live/${enc(id)}/candidates?after=${afterRevision}`),
+  liveCandidateChats: (id: string, candidateId: string, offset = 0) =>
+    getJSON<CandidateChats>(`/api/live/${enc(id)}/candidates/${enc(candidateId)}/chats?offset=${offset}`),
+  liveCheckpoint: (id: string) => postJSON<Checkpoint>(`/api/live/${enc(id)}/checkpoint`),
+  liveDensity: (id: string) => getJSON<LiveDensity>(`/api/live/${enc(id)}/density`),
   /** Downloads through fetch so the access key stays in a header, not the URL. */
   async download(sessionId: string, path: string) {
     const res = await apiFetch(`/api/sessions/${enc(sessionId)}/files/${path.split("/").map(enc).join("/")}`);

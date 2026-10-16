@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
@@ -92,6 +93,43 @@ type Playback struct {
 // and short-lived; callers must not store them.
 type PlaybackSource interface {
 	Playback(ctx context.Context, t Target) (Playback, error)
+}
+
+// LiveMeta is a channel's current broadcast as the platform reports it.
+type LiveMeta struct {
+	LiveID     string // broadcast (episode) id; a new broadcast gets a new id
+	Title      string
+	Open       bool      // broadcasting now
+	ChatRoom   string    // chat channel to connect to; empty when chat is unavailable
+	StartedAt  time.Time // broadcast start; zero when unknown
+	Viewers    int       // concurrent viewers; -1 when unknown
+	ObservedAt time.Time
+}
+
+// LiveChat is one received message. AuthorID must not be stored (app pseudonymizes it).
+type LiveChat struct {
+	AuthorID   string
+	Text       string
+	MessageID  string    // platform message id, if any (used to drop replays after reconnects)
+	EventTime  time.Time // platform's message time; zero when missing
+	ReceivedAt time.Time
+}
+
+// LiveSink receives one connection's events in order. An error from Chat
+// (e.g. the app's queue is full) ends the stream with that error.
+type LiveSink interface {
+	Connected(at time.Time)
+	Chat(c LiveChat) error
+	Heartbeat(at time.Time)
+}
+
+// LiveSource reads a broadcast's chat anonymously (read-only).
+type LiveSource interface {
+	LiveMeta(ctx context.Context, t Target) (LiveMeta, error)
+	// LiveStream connects to room and delivers events until ctx ends
+	// (returns ctx.Err()) or the connection fails. Failures are UserErrors;
+	// LIVE_ACCESS, LIVE_SCHEMA and LIVE_CLOCK are permanent, others are worth a reconnect.
+	LiveStream(ctx context.Context, t Target, room string, sink LiveSink) error
 }
 
 // LinkSource builds a link that opens the platform's own player at a position.

@@ -17,8 +17,9 @@ export function usePath(): string {
   return path;
 }
 
-export function navigate(to: string) {
-  window.history.pushState(null, "", to);
+export function navigate(to: string, { replace = false } = {}) {
+  if (replace) window.history.replaceState(null, "", to);
+  else window.history.pushState(null, "", to);
   window.dispatchEvent(new Event(CHANGE));
   window.scrollTo(0, 0);
 }

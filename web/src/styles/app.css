@@ -149,6 +149,10 @@ a {
 }
 
 .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
   margin: var(--space-4) 0 0;
 }
 
@@ -603,5 +607,105 @@ button.button {
 @media (max-width: 760px) {
   .media-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* LIVE */
+.live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink);
+}
+
+.live-state::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.live-state[data-state="collecting"]::before {
+  background: var(--marker);
+}
+
+.live-state[data-state="reconnecting"]::before,
+.live-state[data-state="error"]::before,
+.live-state[data-state="incomplete"]::before {
+  background: var(--alert);
+}
+
+.live-controls p.notice,
+.live-controls p.error {
+  margin: 0 0 var(--space-2);
+}
+
+.live-inspect {
+  margin: var(--space-3) 0 0;
+  max-width: var(--measure);
+}
+
+.live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.chatlog-live {
+  height: 420px;
+  max-height: none;
+}
+
+.chatlog li[data-late] .chat-text {
+  color: var(--muted);
+}
+
+.chat-late {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.live-follow {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.timeline-gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--muted) 22%, transparent) 0 2px,
+    transparent 2px 7px
+  );
+  pointer-events: none;
+}
+
+.candidate-state {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.candidate-state[data-state="generating"] {
+  color: var(--marker);
+  font-weight: 600;
+}
+
+.candidate-state[data-state="waiting_context"] {
+  color: var(--density);
+}
+
+@media (max-width: 760px) {
+  .live-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+  }
+  .chatlog-live {
+    height: 320px;
   }
 }

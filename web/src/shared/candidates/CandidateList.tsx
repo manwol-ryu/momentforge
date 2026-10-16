@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Candidate } from "../../api/types";
+import type { Candidate, CandidateState } from "../../api/types";
 import { timecode } from "../format";
 
 interface Props {
@@ -11,12 +11,21 @@ interface Props {
   renderActions?: (c: Candidate) => ReactNode;
   /** Shown under the selected candidate (e.g. its context chat). */
   renderDetail?: (c: Candidate) => ReactNode;
+  /** Shown when there are no candidates. */
+  emptyText?: string;
 }
 
+const stateText: Record<CandidateState, string> = {
+  generating: "반응 진행 중",
+  waiting_context: "뒤 채팅 기다리는 중",
+  confirmed: "확정",
+  partial: "부분 문맥으로 마감",
+};
+
 /** Candidates in time order with their reasons and a few evidence messages. */
-export function CandidateList({ candidates, selectedId, onSelect, longForm = false, renderActions, renderDetail }: Props) {
+export function CandidateList({ candidates, selectedId, onSelect, longForm = false, renderActions, renderDetail, emptyText }: Props) {
   if (candidates.length === 0) {
-    return <p className="empty">반응이 몰린 구간을 찾지 못했습니다. 소규모 채널이라면 민감도를 높여 다시 분석하세요.</p>;
+    return <p className="empty">{emptyText ?? "반응이 몰린 구간을 찾지 못했습니다. 더 작은 반응까지 보려면 '항상 가장 민감하게'로 다시 분석하세요."}</p>;
   }
   return (
     <ol className="candidates">
@@ -29,10 +38,16 @@ export function CandidateList({ candidates, selectedId, onSelect, longForm = fal
                 {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}
               </span>
               <span className="candidate-reasons">{c.reasons.join(", ")}</span>
+              {c.state && (
+                <span className="candidate-state" data-state={c.state}>
+                  {stateText[c.state]}
+                </span>
+              )}
               <span className="visually-hidden">후보 {i + 1}</span>
             </button>
             <p className="candidate-meta">
-              가장 활발한 10초에 채팅 {c.peak.n}건, 참여 {c.peak.u}명. 편집 구간{" "}
+              가장 활발한 10초에 채팅 {c.peak.n}건, 참여 {c.peak.u}명
+              {c.peak.gate ? ` (그때 판정 시작 기준: 채팅 ${c.peak.gate}건 또는 ${c.peak.spikeGate ?? "-"}명)` : ""}. 편집 구간{" "}
               <span className="timecode">
                 {timecode(c.clipStartMs, longForm)}–{timecode(c.clipEndMs, longForm)}
               </span>

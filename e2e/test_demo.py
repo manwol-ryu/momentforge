@@ -79,11 +79,11 @@ def test_sample_is_saved_once_and_reopened(page: Page, base_url: str) -> None:
 
 def test_reanalyze_with_sensitivity(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
-    page.locator(".reanalyze").get_by_label("소규모 채널용 민감도").check()
+    page.locator(".reanalyze").get_by_label("항상 가장 민감하게").check()
     page.get_by_role("button", name="다시 분석").click()
     # The job finishes and the screen reloads the new analysis.
     expect(page.locator(".job")).to_contain_text("분석이 끝났습니다", timeout=10_000)
-    expect(page.locator(".reanalyze").get_by_label("소규모 채널용 민감도")).to_be_checked()
+    expect(page.locator(".reanalyze").get_by_label("항상 가장 민감하게")).to_be_checked()
 
 
 def test_invalid_urls_are_explained(page: Page, base_url: str) -> None:

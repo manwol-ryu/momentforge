@@ -36,7 +36,7 @@ MomentForge: 방송 채팅을 수집해 편집할 순간(후보)을 찾는 로�
 make dev          # Go 서버 + Vite 개발 서버 동시 실행
 make build        # web 빌드 → go:embed → bin/momentforge
 make test         # 구조 검사 + gofmt + go vet + go test + 화면 타입 검사
-make e2e          # build 후 e2e/ Playwright 정상 작동 테스트
+make e2e          # 가짜 생방송을 넣은 bin/momentforge-e2e 빌드 후 e2e/ Playwright 정상 작동 테스트
 python3 -I .claude/skills/momentforge-architecture/scripts/check_layers.py   # 구조 검사만
 ```
 

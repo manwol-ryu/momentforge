@@ -45,3 +45,20 @@ func EventID(salt []byte, offsetMs int64, authorID, text string, occurrence int)
 	h.Write(fp)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
+
+// ReplayKey fingerprints a LIVE message that has a platform message id, so
+// the copy a platform re-sends after a reconnect can be recognized. eventMs
+// is 0 when the platform gave no time.
+func ReplayKey(salt []byte, eventMs int64, authorID, messageID, text string) string {
+	var event, author any
+	if eventMs != 0 {
+		event = eventMs
+	}
+	if authorID != "" {
+		author = authorID
+	}
+	fp, _ := json.Marshal([]any{event, author, messageID, text})
+	m := hmac.New(sha256.New, salt)
+	m.Write(fp)
+	return hex.EncodeToString(m.Sum(nil))
+}

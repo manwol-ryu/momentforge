@@ -10,10 +10,16 @@ import (
 // Grouper turns evaluated windows into candidates. A finished VOD and an
 // unbounded LIVE stream use the same state machine.
 type Grouper struct {
-	e        *Engine
-	active   *group
-	previous *domain.Window
-	serial   int
+	e            *Engine
+	active       *group
+	previous     *domain.Window
+	serial       int
+	prevBaseline *viewerKey // viewer epoch of the previous window (LIVE)
+}
+
+type viewerKey struct {
+	mode  string
+	epoch int64
 }
 
 type group struct {
@@ -39,6 +45,26 @@ func (g *Grouper) Step(w domain.Window, strong bool, endMs int64) ([]domain.Cand
 		out = append(out, *c)
 		return nil
 	}
+
+	// A new viewer-count epoch closes the open candidate: its baseline changed.
+	var key *viewerKey
+	if w.Viewer != nil {
+		key = &viewerKey{w.Viewer.Mode, w.Viewer.EpochStartMs}
+		if g.prevBaseline != nil && *key != *g.prevBaseline {
+			if g.active != nil {
+				before := len(out)
+				if err := emit(-1, false); err != nil {
+					return nil, err
+				}
+				if len(out) > before {
+					out[len(out)-1].BaselineTransition = true
+				}
+				g.active = nil
+			}
+			g.previous = nil
+		}
+	}
+	g.prevBaseline = key
 
 	consecutive := g.previous != nil && g.previous.Valid && sharesSignal(w.Signals, g.previous.Signals)
 	if !w.Valid {
@@ -190,9 +216,10 @@ func (g *Grouper) candidate(gr *group, endMs, boundary int64, partial bool) (*do
 		Reasons:         sortedKeys(reasonSet),
 		Peak: domain.PeakStats{
 			N: peak.N, U: peak.U, Ratio: peak.Ratio, Z: peak.Z,
-			BaselineN: peak.BaselineN, ReactionRatio: peak.ReactionRatio,
+			BaselineN: peak.BaselineN, ReactionRatio: peak.ReactionRatio, Gate: peak.Gate, SpikeGate: peak.SpikeGate,
 		},
 		BaselineReady:  ready,
+		Viewer:         peak.Viewer,
 		EvidenceIDs:    ids,
 		PartialContext: partial || end+p.PostRollMs > endMs || start-p.ReactionDelayMs-p.PreRollMs < 0,
 	}, nil

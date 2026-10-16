@@ -2,6 +2,7 @@ package detect
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -20,6 +21,12 @@ type Engine struct {
 	gaps    []domain.Gap
 	bins    map[int64]*windowStats // aligned history bins keyed by start
 	minGate [3]int
+
+	// Adaptive gate: the finished valid bins of the lookback in time order,
+	// their message counts sorted (for the median), and the next bin to finish.
+	recent  []finishedBin
+	sorted  []int
+	nextBin int64
 }
 
 type position struct{ offset, seq int64 }
@@ -198,6 +205,7 @@ func (e *Engine) Evaluate(t, baselineFrom int64) (w domain.Window, strong bool) 
 		first = max(first, ceilDiv(baselineFrom, p.WindowMs)*p.WindowMs)
 	}
 	last := floorDiv(t-p.BaselineExclude, p.WindowMs) * p.WindowMs
+	e.finishBins(last)
 	var history []*windowStats
 	for b := first; b < last; b += p.WindowMs {
 		if h := e.bin(b); h.valid {
@@ -229,8 +237,8 @@ func (e *Engine) Evaluate(t, baselineFrom int64) (w domain.Window, strong bool) 
 
 	signals := map[string]bool{}
 	evidence := map[string]bool{}
-	minN, minU, minReaction := e.minGate[0], e.minGate[1], e.minGate[2]
-	if cur.valid && cur.n >= minN && cur.u >= minU {
+	open, minReaction := e.gate(cur, base, &w)
+	if cur.valid && open {
 		stats := WindowStats{N: cur.n, U: cur.u}
 		for _, r := range e.rules.window {
 			if r.Fires(stats, base, p) {
@@ -286,6 +294,76 @@ func (e *Engine) Evaluate(t, baselineFrom int64) (w domain.Window, strong bool) 
 		}
 	}
 	return w, strong
+}
+
+type finishedBin struct {
+	start int64
+	n     int
+}
+
+// finishBins records the message counts of bins that ended before the
+// excluded recent span (bins start at multiples of WindowMs from 0) and
+// forgets those older than GateLookbackMs. Recorded bins never change: VOD
+// has all chat up front, and LIVE drops chat older than its watermark. Bins
+// in gaps are left out.
+func (e *Engine) finishBins(last int64) {
+	p := e.p
+	if p.GateBusyRatio <= 0 {
+		return
+	}
+	for ; e.nextBin < last; e.nextBin += p.WindowMs {
+		if h := e.stats(e.nextBin, e.nextBin+p.WindowMs); h.valid {
+			e.recent = append(e.recent, finishedBin{e.nextBin, h.n})
+			e.sorted = slices.Insert(e.sorted, sort.SearchInts(e.sorted, h.n), h.n)
+		}
+	}
+	for len(e.recent) > 0 && e.recent[0].start < last-p.GateLookbackMs {
+		i := sort.SearchInts(e.sorted, e.recent[0].n)
+		e.sorted = slices.Delete(e.sorted, i, i+1)
+		e.recent = e.recent[1:]
+	}
+}
+
+// gate reports whether window cur has enough chat for its signals to be
+// judged, and how many authors a message rule then needs (REDESIGN 6.2.1).
+// It records the adaptive thresholds in w.
+//
+// Fixed (CzzEdit, or sensitive): MinMessages/MinAuthors (or the sensitive
+// values). Adaptive: closed until GateWarmupBins bins have finished (a fixed
+// gate there would depend on the channel's size), then open when either
+//   - busy for the broadcast: messages ≥ GateBusyRatio × the median of the
+//     recent finished bins (at least the sensitive minimum, no upper cap),
+//     with authors and reaction authors in the normal gate's proportion
+//     (5 of 15);
+//   - a sudden spike: authors ≥ GateSpikeRatio × the baseline's median
+//     authors (at least the sensitive minimum), messages at least as many.
+func (e *Engine) gate(cur *windowStats, base Baseline, w *domain.Window) (open bool, reaction int) {
+	p := e.p
+	minN, minU, minR := e.minGate[0], e.minGate[1], e.minGate[2]
+	if p.GateBusyRatio <= 0 || p.Sensitive {
+		return cur.n >= minN && cur.u >= minU, minR
+	}
+	if len(e.sorted) < p.GateWarmupBins {
+		return false, minR // still learning what this channel's chat is like
+	}
+	scaled := func(n, full, floor int) int { return max((n*full+p.MinMessages-1)/p.MinMessages, floor) }
+	mid := len(e.sorted) / 2
+	typical := float64(e.sorted[mid])
+	if len(e.sorted)%2 == 0 {
+		typical = float64(e.sorted[mid-1]+e.sorted[mid]) / 2
+	}
+	busyN := max(int(math.Ceil(p.GateBusyRatio*typical-1e-9)), p.SensitiveMinMessages)
+	w.Gate = busyN
+	open = cur.n >= busyN && cur.u >= scaled(busyN, p.MinAuthors, p.SensitiveMinAuthors)
+	reaction = scaled(busyN, p.MinReactionAuthors, p.SensitiveMinReaction)
+	if base.Ready && p.GateSpikeRatio > 0 {
+		spikeU := max(int(math.Ceil(p.GateSpikeRatio*base.U-1e-9)), p.SensitiveMinAuthors)
+		w.SpikeGate = spikeU
+		if cur.u >= spikeU && cur.n >= max(spikeU, p.SensitiveMinMessages) {
+			open, reaction = true, min(reaction, p.SensitiveMinReaction)
+		}
+	}
+	return open, reaction
 }
 
 // median matches Python's statistics.median (mean of the middle pair).

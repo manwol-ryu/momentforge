@@ -49,9 +49,14 @@ func (a *App) info(s store.Session) SessionInfo {
 	if p, ok := a.cfg.Platforms.Get(s.Platform); ok {
 		out.PlatformName = p.Name()
 		_, vod := p.(platform.VODSource)
+		_, live := p.(platform.LiveSource)
 		_, play := p.(platform.PlaybackSource)
-		out.CanResume = vod && s.State == store.StatePaused
-		out.CanPlay = play
+		if s.Kind == string(platform.KindLive) {
+			out.CanResume = live && (s.State == store.LiveStopped || s.State == store.LiveError || s.State == store.LiveIncomplete)
+		} else {
+			out.CanResume = vod && s.State == store.StatePaused
+			out.CanPlay = play
+		}
 		if link := a.linker(s); link != nil {
 			out.WatchURL = link(0)
 		}
@@ -108,7 +113,11 @@ func (a *App) CandidateChats(ctx context.Context, analysisID, candidateID string
 	if cand == nil {
 		return nil, 0, domain.NewUserError("NOT_FOUND", "편집 후보를 찾을 수 없습니다.")
 	}
-	chats, total, err := a.cfg.Store.ChatsBetween(ctx, an.SessionID, cand.ClipStartMs, cand.ClipEndMs, an.MaxSeq, limit, offset)
+	return a.contextChats(ctx, an.SessionID, *cand, an.MaxSeq, offset, limit)
+}
+
+func (a *App) contextChats(ctx context.Context, sid string, cand domain.Candidate, maxSeq int64, offset, limit int) ([]ContextChat, int, error) {
+	chats, total, err := a.cfg.Store.ChatsBetween(ctx, sid, cand.ClipStartMs, cand.ClipEndMs, maxSeq, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

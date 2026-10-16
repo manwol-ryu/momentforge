@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -33,6 +34,7 @@ var (
 type Chzzk struct {
 	base string
 	http *platform.HTTPClient
+	live liveEndpoints
 }
 
 // Option configures the adapter (tests point it at a fake server).
@@ -55,6 +57,7 @@ func WithSleep(f func(context.Context, time.Duration) error) Option {
 func New(opts ...Option) *Chzzk {
 	c := &Chzzk{
 		base: apiBase,
+		live: defaultLive(),
 		http: &platform.HTTPClient{
 			Header:      http.Header{"User-Agent": {"Mozilla/5.0"}, "Referer": {webOrigin + "/"}},
 			Interval:    time.Second,
@@ -75,7 +78,8 @@ func (*Chzzk) ID() string             { return "chzzk" }
 func (*Chzzk) Name() string           { return "치지직" }
 func (*Chzzk) MediaOrigins() []string { return []string{cdnOrigin} }
 
-// Match accepts https://chzzk.naver.com/video/<number> or a bare number.
+// Match accepts https://chzzk.naver.com/video/<number>, a bare number (VOD),
+// and https://chzzk.naver.com/live/<32-hex channel id> (LIVE).
 func (*Chzzk) Match(raw string) (platform.Target, bool, error) {
 	if digitsOnly.MatchString(raw) {
 		return platform.Target{Platform: "chzzk", Kind: platform.KindVOD, ID: raw}, true, nil
@@ -84,15 +88,21 @@ func (*Chzzk) Match(raw string) (platform.Target, bool, error) {
 	if err != nil || u.Hostname() != webHost {
 		return platform.Target{}, false, nil
 	}
-	if m := videoPath.FindStringSubmatch(u.Path); m != nil && u.Scheme == "https" && u.User == nil &&
-		(u.Port() == "" || u.Port() == "443") {
+	safe := u.Scheme == "https" && u.User == nil && (u.Port() == "" || u.Port() == "443")
+	if m := videoPath.FindStringSubmatch(u.Path); m != nil && safe {
 		return platform.Target{Platform: "chzzk", Kind: platform.KindVOD, ID: m[1]}, true, nil
 	}
+	if m := livePath.FindStringSubmatch(u.Path); m != nil && safe {
+		return platform.Target{Platform: "chzzk", Kind: platform.KindLive, ID: strings.ToLower(m[1])}, true, nil
+	}
 	return platform.Target{}, false, domain.NewUserError("INVALID_URL",
-		"https://chzzk.naver.com/video/영상번호 형식으로 입력해 주세요.")
+		"다시보기는 https://chzzk.naver.com/video/영상번호 형식, 생방송은 https://chzzk.naver.com/live/채널ID 형식으로 입력해 주세요.")
 }
 
-// WatchURL opens the VOD on CHZZK at offsetMs.
+// WatchURL opens the VOD on CHZZK at offsetMs, or the channel's live page.
 func (*Chzzk) WatchURL(t platform.Target, offsetMs int64) string {
+	if t.Kind == platform.KindLive {
+		return webOrigin + "/live/" + t.ID
+	}
 	return webOrigin + "/video/" + t.ID + "?currentTime=" + strconv.FormatInt(max(0, offsetMs)/1000, 10)
 }

@@ -6,6 +6,7 @@ NPM     ?= npm
 PYTHON  ?= python3
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BIN     := bin/momentforge
+E2E_BIN := bin/momentforge-e2e
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 E2E_PORT := 18765
@@ -40,6 +41,7 @@ check: web/dist
 	@out="$$($(GOFMT) -l cmd internal web/embed.go)"; \
 		if [ -n "$$out" ]; then echo "gofmt가 필요한 파일:"; echo "$$out"; exit 1; fi
 	$(GO) vet ./...
+	$(GO) vet -tags e2efake ./cmd/... ./internal/platform/e2efake/
 
 test: check web/node_modules/.installed
 	$(GO) test ./...
@@ -65,10 +67,12 @@ $(E2E_VENV)/.installed: e2e/requirements.txt
 
 e2e-deps: $(E2E_VENV)/.installed
 
-e2e: build e2e-deps
+# The E2E binary adds a synthetic LIVE platform (build tag e2efake); releases never include it.
+e2e: web e2e-deps
+	CGO_ENABLED=0 $(GO) build -trimpath -tags e2efake -ldflags "$(LDFLAGS)" -o $(E2E_BIN) ./cmd/momentforge
 	rm -rf e2e/.data
 	$(E2E_PY) e2e/with_server.py \
-		--server "./$(BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data" --port $(E2E_PORT) \
+		--server "./$(E2E_BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data" --port $(E2E_PORT) \
 		-- $(E2E_PY) e2e/run.py --base-url http://127.0.0.1:$(E2E_PORT)
 
 clean:

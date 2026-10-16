@@ -68,8 +68,9 @@ func TestAnalyzeIsCancellable(t *testing.T) {
 
 func TestInvalidRangeFromSettings(t *testing.T) {
 	// Laughter in the first 20 s forms a candidate before any baseline exists
-	// (two consecutive windows). A 300 s reaction delay puts its clip end
-	// before its clip start.
+	// (two consecutive windows; the fixed gate, as the adaptive one waits for
+	// 3 minutes of chat). A 300 s reaction delay puts its clip end before its
+	// clip start.
 	var events []domain.ChatEvent
 	for offset := int64(0); offset < 20000; offset += 2000 {
 		for i := int64(0); i < 18; i++ {
@@ -78,7 +79,7 @@ func TestInvalidRangeFromSettings(t *testing.T) {
 				AuthorKey: fmt.Sprintf("r%d", i), Text: "ㅋㅋㅋ"})
 		}
 	}
-	p := detect.DefaultParams()
+	p := detect.CzzEditParams()
 	p.ReactionDelayMs, p.PreRollMs, p.PostRollMs = 300000, 0, 0
 	_, err := detect.Analyze(context.Background(), events, 120000, nil, p, All(), nil)
 	if ue, ok := domain.AsUserError(err); !ok || ue.Code != "INVALID_RANGE" {

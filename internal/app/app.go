@@ -33,6 +33,9 @@ type App struct {
 	ctx       context.Context // lives until Shutdown; background jobs derive from it
 	stop      context.CancelFunc
 	jobs      *jobs
+
+	live       liveJobs
+	liveTiming liveTiming
 }
 
 // New returns an App ready to serve requests.
@@ -41,13 +44,15 @@ func New(cfg Config) *App {
 		cfg.Platforms = &platform.Registry{}
 	}
 	ctx, stop := context.WithCancel(context.Background())
-	return &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus}}
+	return &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus},
+		liveTiming: defaultLiveTiming()}
 }
 
 // Shutdown cancels background work and waits for it (bounded by ctx).
 func (a *App) Shutdown(ctx context.Context) {
 	a.stop()
 	a.jobs.stop(ctx)
+	a.stopLive(ctx)
 }
 
 // Status describes the running app.

@@ -15,7 +15,7 @@ REDESIGN.md 10절의 확인 절차입니다. 단계마다 "완료"라고 말하�
 ## 실행 순서
 
 1. `make test` — 빠른 검사부터 실행합니다. 구조 규칙, gofmt, go vet, Go 테스트, 화면 타입 검사입니다. 실패하면 E2E로 넘어가지 말고 먼저 고칩니다.
-2. `make e2e` — 화면을 빌드하고 실행파일을 만든 뒤, `e2e/with_server.py`가 `bin/momentforge`를 포트 18765, 데이터 폴더 `e2e/.data`로 띄우고 `e2e/run.py`가 `e2e/test_*.py`의 모든 테스트를 실행합니다.
+2. `make e2e` — 화면을 빌드하고 E2E 전용 실행파일 `bin/momentforge-e2e`(빌드 태그 `e2efake`, 가짜 생방송 `https://live.e2e.test/채널` 포함)를 만든 뒤, `e2e/with_server.py`가 이를 포트 18765, 데이터 폴더 `e2e/.data`로 띄우고 `e2e/run.py`가 `e2e/test_*.py`의 모든 테스트를 실행합니다. 가짜 생방송은 연결하면 20분치 채팅을 한 번에 보내고(12분 지점 웃음 반응) 이후 0.5초마다 1건씩 보냅니다. 채널 이름이 `offline`이면 방송 중이 아닌 것으로 응답합니다.
 3. 화면을 바꿨다면 `e2e/.data/screenshots/`의 스크린샷(`home-light.png`, `home-dark.png`, `home-mobile.png` 등)을 Read 도구로 직접 보고 점검합니다. 한글 줄바꿈, 좁은 화면 넘침, 다크 모드 대비를 확인하고 `docs/DESIGN-SYSTEM.md`와 다르면 고칩니다.
 
 처음 실행이면 `make e2e`가 `e2e/.venv`를 만들고 Chromium을 내려받습니다. 내려받기 전에 사용자에게 알립니다.
@@ -28,7 +28,7 @@ REDESIGN.md 10절의 확인 절차입니다. 단계마다 "완료"라고 말하�
 | `gofmt가 필요한 파일` | `gofmt -w <파일>` |
 | `go test` 실패 | 실패한 테스트 이름과 메시지로 원인을 찾습니다. 테스트를 지우거나 기대값을 근거 없이 바꾸지 않습니다 |
 | `tsc` 오류 | 타입을 고칩니다. `any`나 `@ts-ignore`로 덮지 않습니다 |
-| `Server ... did not start` | 포트 18765를 다른 프로세스가 쓰는지 확인합니다 (`lsof -i :18765`). 남아 있는 `bin/momentforge`가 있으면 종료합니다 |
+| `Server ... did not start` | 포트 18765를 다른 프로세스가 쓰는지 확인합니다 (`lsof -i :18765`). 남아 있는 `bin/momentforge-e2e`가 있으면 종료합니다 |
 | E2E `실패` | 출력의 예외 메시지와 `스크린샷:` 경로의 실패 화면을 함께 봅니다. `브라우저 콘솔 오류`도 실패로 처리됩니다 |
 | `data-app-state` 대기 시간 초과 | 화면이 초기 데이터를 받지 못했습니다. 실패 스크린샷의 오류 문구와 `/api/status` 응답을 확인합니다 |
 

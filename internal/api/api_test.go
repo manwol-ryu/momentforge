@@ -290,3 +290,36 @@ func requestBody(h http.Handler, method, target, body string, headers map[string
 	h.ServeHTTP(rec, req)
 	return rec
 }
+
+func (f fakeCore) LiveStatus(context.Context, string) (app.LiveView, error) {
+	return app.LiveView{Session: app.SessionInfo{ID: "l1", Kind: "live", State: "collecting"}, TimeBasis: "broadcast_elapsed",
+		Running: true, ViewerCount: -1, Gaps: []domain.Gap{{StartMs: 0, EndMs: 5000}}}, f.err
+}
+
+func (f fakeCore) StartLive(_ context.Context, req app.LiveRequest) (app.SessionInfo, error) {
+	if !req.ViewerAdaptive {
+		return app.SessionInfo{}, domain.NewUserError("TEST", "viewer adaptation defaults to on")
+	}
+	return app.SessionInfo{ID: "l1", Kind: "live"}, nil
+}
+
+func TestLiveResponseShape(t *testing.T) {
+	h := newTestHandler(fakeCore{}, nil, nil)
+	hdr := map[string]string{KeyHeader: testKey}
+	rec := request(h, "GET", "/api/live/l1", hdr)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"gaps":[{"startMs":0,"endMs":5000}]`, `"viewerCount":null`, `"timeBasis":"broadcast_elapsed"`, `"kind":"live"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+	if rec := requestBody(h, "POST", "/api/live", `{"url":"x"}`, hdr); rec.Code != 201 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "GET", "/api/live/l1/chats?after=-1", "", hdr); rec.Code != 400 {
+		t.Fatalf("negative cursor: %d", rec.Code)
+	}
+}

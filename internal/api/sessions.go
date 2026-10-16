@@ -274,13 +274,17 @@ func (h *handler) analysis(w http.ResponseWriter, r *http.Request) {
 		RulesVersion: a.RulesVersion, Sensitive: a.Sensitive, Windows: nonNil(a.Windows),
 		Candidates: make([]candidateJSON, 0, len(a.Candidates))}
 	for _, c := range a.Candidates {
-		cj := candidateJSON{Candidate: c.Candidate, EvidenceTotal: c.EvidenceTotal, WatchURL: c.WatchURL, Evidence: []evidenceJSON{}}
-		for _, e := range c.Evidence {
-			cj.Evidence = append(cj.Evidence, evidenceJSON{chatJSON: toChatJSON(e.ChatEvent), Count: e.Count})
-		}
-		out.Candidates = append(out.Candidates, cj)
+		out.Candidates = append(out.Candidates, toCandidateJSON(c))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func toCandidateJSON(c app.CandidateView) candidateJSON {
+	cj := candidateJSON{Candidate: c.Candidate, EvidenceTotal: c.EvidenceTotal, WatchURL: c.WatchURL, Evidence: []evidenceJSON{}}
+	for _, e := range c.Evidence {
+		cj.Evidence = append(cj.Evidence, evidenceJSON{chatJSON: toChatJSON(e.ChatEvent), Count: e.Count})
+	}
+	return cj
 }
 
 func (h *handler) candidateChats(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +300,10 @@ func (h *handler) candidateChats(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	writeContextChats(w, chats, total, offset)
+}
+
+func writeContextChats(w http.ResponseWriter, chats []app.ContextChat, total, offset int) {
 	type contextJSON struct {
 		chatJSON
 		IsEvidence bool `json:"isEvidence"`

@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Session } from "../../api/types";
+import type { LiveState, Session } from "../../api/types";
+import { LiveForm } from "../live/LiveForm";
+import { liveStateText } from "../live/LiveView";
 import { queryState, useAppState } from "../../shared/appState";
 import { useEvents, type ConnectionState } from "../../shared/events";
 import { timecode } from "../../shared/format";
@@ -15,17 +17,21 @@ const connectionText: Record<ConnectionState, string> = {
   closed: "연결이 끊겨 다시 연결하는 중",
 };
 
-const stateText: Record<Session["state"], string> = {
+const stateText: Partial<Record<Session["state"], string>> = {
   collecting: "수집 중",
   paused: "일시정지",
   finished: "수집 완료",
 };
 
+const liveTerminal = new Set<string>(["stopped", "ended", "error", "incomplete"]);
+
 export function Home() {
   const status = useQuery({ queryKey: ["status"], queryFn: api.status });
-  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
+  // Chat counts change while collecting, so the list is reloaded whenever Home opens.
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions, refetchOnMount: "always" });
   const job = useJob();
   const { state } = useEvents();
+  const runningLive = sessions.data?.find((s) => s.kind === "live" && !liveTerminal.has(s.state));
   useAppState(queryState({ isSuccess: status.isSuccess && sessions.isSuccess, isError: status.isError || sessions.isError }));
 
   return (
@@ -43,6 +49,13 @@ export function Home() {
         {job.data?.id && <JobPanel job={job.data} />}
       </section>
 
+      <section className="section" aria-labelledby="live-title">
+        <h2 id="live-title" className="section-title">
+          생방송 수집
+        </h2>
+        <LiveForm running={runningLive} />
+      </section>
+
       <section className="section" aria-labelledby="sessions-title">
         <h2 id="sessions-title" className="section-title">
           저장한 작업
@@ -54,7 +67,7 @@ export function Home() {
             ))}
           </ul>
         ) : (
-          <p className="empty">아직 수집한 방송이 없습니다. 위에 다시보기 주소를 넣거나 샘플 채팅으로 먼저 살펴보세요.</p>
+          <p className="empty">아직 수집한 방송이 없습니다. 위에 다시보기나 생방송 주소를 넣거나 샘플 채팅으로 먼저 살펴보세요.</p>
         )}
         <p className="actions">
           <DemoButton existing={sessions.data?.find((s) => s.isDemo)} />
@@ -116,10 +129,11 @@ function CollectForm({ busy }: { busy: boolean }) {
       </label>
       <label className="check">
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
-        소규모 채널용 민감도 (작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다)
+        항상 가장 민감하게 (10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다)
       </label>
       <p id="collect-help" className="field-help">
-        채팅을 모두 받은 뒤 편집 후보를 찾습니다. 긴 방송은 몇 분 걸릴 수 있고, 중단해도 받은 데까지 저장됩니다.
+        채팅을 모두 받은 뒤 편집 후보를 찾습니다. 판정 기준은 채널 규모와 시간대에 맞춰 최근 2시간·15분의 평소 채팅량으로 자동으로
+        정합니다. 긴 방송은 몇 분 걸릴 수 있고, 중단해도 받은 데까지 저장됩니다.
       </p>
       <p className="actions">
         <button type="submit" className="button" disabled={busy || collect.isPending}>
@@ -167,13 +181,19 @@ function DemoButton({ existing }: { existing?: Session }) {
 
 function SessionRow({ s }: { s: Session }) {
   const longForm = s.durationMs >= 3_600_000;
+  const live = s.kind === "live";
+  const what = s.isDemo
+    ? "예시 채팅"
+    : live
+      ? `${s.platformName} 생방송 ${liveStateText[s.state as LiveState] ?? s.state}`
+      : `${s.platformName} ${stateText[s.state] ?? s.state}`;
   return (
     <li className="session-row" data-state={s.state}>
-      <Link href={`/sessions/${s.id}`} className="session-title">
+      <Link href={live ? `/live/${s.id}` : `/sessions/${s.id}`} className="session-title">
         {s.title}
       </Link>
       <span className="session-meta">
-        {s.isDemo ? "예시 채팅" : `${s.platformName} ${stateText[s.state]}`}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
+        {what}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
         <span className="timecode">{timecode(s.durationMs, longForm)}</span>
         {s.state === "paused" && s.errorMessage ? ` (${s.errorMessage})` : ""}
       </span>

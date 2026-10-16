@@ -26,6 +26,9 @@ func (a *App) StartCollect(req CollectRequest) (JobStatus, error) {
 	if err != nil {
 		return JobStatus{}, err
 	}
+	if target.Kind == platform.KindLive {
+		return JobStatus{}, domain.NewUserError("LIVE_URL", "생방송 주소입니다. 생방송 수집 칸에서 시작하세요.")
+	}
 	src, ok := p.(platform.VODSource)
 	if !ok || target.Kind != platform.KindVOD {
 		return JobStatus{}, domain.NewUserError("UNSUPPORTED", "이 주소는 아직 수집할 수 없습니다. 다시보기 주소를 입력해 주세요.")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/api"
+	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/platform"
 	"github.com/manwol-ryu/momentforge/internal/platform/chzzk"
@@ -73,7 +75,8 @@ func TestServerEndToEnd(t *testing.T) {
 	if code, body := get(t, s.URL+"/", ""); code != 200 || !strings.Contains(body, string(key)) {
 		t.Fatalf("index: %d %s", code, body)
 	}
-	if code, body := get(t, s.URL+"/api/status", string(key)); code != 200 || !strings.Contains(body, `"schemaVersion":2`) {
+	schema, _ := s.store.SchemaVersion(context.Background())
+	if code, body := get(t, s.URL+"/api/status", string(key)); code != 200 || schema < 3 || !strings.Contains(body, fmt.Sprintf(`"schemaVersion":%d`, schema)) {
 		t.Fatalf("status: %d %s", code, body)
 	}
 	if code, _ := get(t, s.URL+"/api/status", "wrong"); code != 401 {
@@ -147,7 +150,7 @@ func TestDemoSessionUsesRegisteredRules(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("analysis: %d %s", code, body)
 	}
-	for _, want := range []string{`"id":"m0003"`, "웃음 증가", "집단 반복", "감정 반응", `"rulesVersion":"1.0.0"`} {
+	for _, want := range []string{`"id":"m0003"`, "웃음 증가", "집단 반복", "감정 반응", `"rulesVersion":"` + detect.RulesVersion + `"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("analysis lacks %s", want)
 		}

@@ -1,18 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Analysis, Candidate, ExportFile, Session } from "../../api/types";
 import { useAppState } from "../../shared/appState";
 import { CandidateList } from "../../shared/candidates/CandidateList";
 import { ChatList } from "../../shared/chat/ChatList";
-import { timecode } from "../../shared/format";
+import { formatSize, timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
-import { Link } from "../../shared/navigation";
+import { Link, navigate } from "../../shared/navigation";
 import { VideoPlayer, type PlayerHandle } from "../../shared/player/VideoPlayer";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { useJob } from "../../shared/useJob";
 
-const stateText: Record<Session["state"], string> = { collecting: "수집 중", paused: "일시정지", finished: "수집 완료" };
+const stateText: Partial<Record<Session["state"], string>> = { collecting: "수집 중", paused: "일시정지", finished: "수집 완료" };
 
 export function SessionView({ id }: { id: string }) {
   const session = useQuery({ queryKey: ["session", id], queryFn: () => api.session(id) });
@@ -23,6 +23,10 @@ export function SessionView({ id }: { id: string }) {
     enabled: !!analysisId,
   });
   const job = useJob();
+  const isLive = session.data?.kind === "live";
+  useEffect(() => {
+    if (isLive) navigate(`/live/${id}`, { replace: true });
+  }, [isLive, id]);
   const ready = session.isSuccess && (!analysisId || analysis.isSuccess);
   useAppState(ready ? "ready" : session.isError || analysis.isError ? "error" : "loading");
 
@@ -229,7 +233,7 @@ function Reanalyze({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
     <div className="reanalyze">
       <label className="check">
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
-        소규모 채널용 민감도
+        항상 가장 민감하게
       </label>
       <button type="button" className="button button-quiet" onClick={() => run.mutate()} disabled={busy || run.isPending}>
         다시 분석
@@ -275,10 +279,4 @@ function Files({ sessionId, analysisId, updatedAt }: { sessionId: string; analys
       )}
     </section>
   );
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

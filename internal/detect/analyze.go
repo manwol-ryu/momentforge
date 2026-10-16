@@ -10,7 +10,7 @@ import (
 
 // RulesVersion changes whenever detection output can change for the same input.
 // 1.0.0 reproduces CzzEdit 0.3.2 rules 0.1.0.
-const RulesVersion = "1.0.0"
+const RulesVersion = "2.0.0" // 2.0.0: adaptive gate (REDESIGN 6.2.1)
 
 // Result is one analysis of a finished timeline.
 type Result struct {

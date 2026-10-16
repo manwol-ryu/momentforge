@@ -28,7 +28,19 @@ type Window struct {
 	Valid         bool               `json:"valid"`
 	Signals       []string           `json:"signals"`
 	ReactionRatio map[string]float64 `json:"reactionRatios,omitempty"`
+	Viewer        *ViewerState       `json:"viewerBaseline,omitempty"` // LIVE with viewer-count adaptation
+	Gate          int                `json:"gate,omitempty"`           // adaptive gate: messages that make a window busy for the broadcast
+	SpikeGate     int                `json:"spikeGate,omitempty"`      // adaptive gate: authors that make a window a sudden spike
 	Evidence      []string           `json:"-"`
+}
+
+// ViewerState is the viewer-count baseline in effect at a window (LIVE).
+type ViewerState struct {
+	Mode         string   `json:"mode"` // "viewer_adaptive" | "chat_only"
+	EpochStartMs int64    `json:"epochStartMs"`
+	Reference    *float64 `json:"reference"`
+	Average      *float64 `json:"average"`
+	Status       string   `json:"status"` // "active" | "warming_up" | "missing"
 }
 
 // PeakStats are the numbers of a candidate's strongest window.
@@ -39,6 +51,8 @@ type PeakStats struct {
 	Z             *float64           `json:"z,omitempty"`
 	BaselineN     *float64           `json:"baselineN,omitempty"`
 	ReactionRatio map[string]float64 `json:"reactionRatios,omitempty"`
+	Gate          int                `json:"gate,omitempty"`      // adaptive gate at the peak (see Window)
+	SpikeGate     int                `json:"spikeGate,omitempty"` // adaptive gate at the peak (see Window)
 }
 
 // Candidate is a suggested editing moment.
@@ -56,4 +70,17 @@ type Candidate struct {
 	BaselineReady   bool      `json:"baselineReady"`
 	EvidenceIDs     []string  `json:"evidenceIds"`
 	PartialContext  bool      `json:"partialContext"`
+
+	// LIVE only.
+	State              string       `json:"state,omitempty"` // generating | waiting_context | confirmed | partial
+	Viewer             *ViewerState `json:"viewerBaseline,omitempty"`
+	BaselineTransition bool         `json:"baselineTransition,omitempty"`
 }
+
+// LIVE candidate states.
+const (
+	CandidateGenerating     = "generating"
+	CandidateWaitingContext = "waiting_context"
+	CandidateConfirmed      = "confirmed"
+	CandidatePartial        = "partial"
+)

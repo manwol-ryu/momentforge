@@ -5,7 +5,9 @@ package export
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -75,24 +77,39 @@ func jsonBytes(v any) ([]byte, error) {
 
 // ChatManifest describes a session's chat files.
 type ChatManifest struct {
-	ID                 string       `json:"id"`
-	Platform           string       `json:"platform"`
-	TargetID           string       `json:"target_id"`
-	Title              string       `json:"title"`
-	DurationMs         int64        `json:"duration_ms"`
-	ReportedDurationMs int64        `json:"reported_duration_ms"`
-	State              string       `json:"state"`
-	Cursor             int64        `json:"cursor"`
-	Pages              int          `json:"pages"`
-	Gaps               []domain.Gap `json:"issues"`
-	Error              string       `json:"error"`
-	SchemaVersion      int          `json:"schema_version"`
-	TimeBasis          string       `json:"time_basis"`
-	EventCount         int          `json:"event_count"`
-	AvailableEndMs     int64        `json:"available_end_ms"`
-	Completeness       string       `json:"completeness"`
-	RetrievalFinished  bool         `json:"retrieval_finished"`
-	Note               string       `json:"note"`
+	ID                 string `json:"id"`
+	Platform           string `json:"platform"`
+	TargetID           string `json:"target_id"`
+	Title              string `json:"title"`
+	DurationMs         int64  `json:"duration_ms"`
+	ReportedDurationMs int64  `json:"reported_duration_ms"`
+	State              string `json:"state"`
+	Cursor             int64  `json:"cursor"`
+	Pages              int    `json:"pages"`
+	Gaps               Issues `json:"issues"`
+	Error              string `json:"error"`
+	SchemaVersion      int    `json:"schema_version"`
+	TimeBasis          string `json:"time_basis"`
+	EventCount         int    `json:"event_count"`
+	AvailableEndMs     int64  `json:"available_end_ms"`
+	Completeness       string `json:"completeness"`
+	RetrievalFinished  bool   `json:"retrieval_finished"`
+	Note               string `json:"note"`
+}
+
+// Issues are unobserved spans, written as CzzEdit wrote them ({"start_ms", "end_ms"}).
+type Issues []domain.Gap
+
+func (is Issues) MarshalJSON() ([]byte, error) {
+	type issue struct {
+		StartMs int64 `json:"start_ms"`
+		EndMs   int64 `json:"end_ms"`
+	}
+	out := make([]issue, len(is))
+	for i, g := range is {
+		out[i] = issue{g.StartMs, g.EndMs}
+	}
+	return json.Marshal(out)
 }
 
 // Completeness is "unverified" for a finished session without gaps, else "partial".
@@ -116,7 +133,7 @@ func WriteChat(dir string, m ChatManifest, events []domain.ChatEvent) error {
 	m.SchemaVersion, m.TimeBasis, m.EventCount = 1, "video_position", len(events)
 	m.Note = "API 조회 종료는 플랫폼의 모든 원문 채팅을 받았다는 보장이 아닙니다."
 	if m.Gaps == nil {
-		m.Gaps = []domain.Gap{}
+		m.Gaps = Issues{}
 	}
 	manifest, err := jsonBytes(m)
 	if err != nil {
@@ -148,10 +165,24 @@ func WriteChat(dir string, m ChatManifest, events []domain.ChatEvent) error {
 
 const receivedHeader = "# MomentForge chat v1 | mode=VOD | ordering=received | time_basis=video_position\n"
 
-// WriteReceived rewrites chat.received.txt (arrival order) from scratch.
+// WriteReceived rewrites a VOD's chat.received.txt (arrival order) from scratch.
 func WriteReceived(dir string, events []domain.ChatEvent) error {
+	return writeReceived(dir, receivedHeader, events)
+}
+
+// LiveHeader is the first line of LIVE chat files.
+func LiveHeader(timeBasis, liveID string) string {
+	return "# MomentForge chat v1 | mode=LIVE | time_basis=" + timeBasis + " | live_id=" + Escape(liveID) + "\n"
+}
+
+// WriteLiveReceived rewrites a LIVE capture's chat.received.txt from scratch.
+func WriteLiveReceived(dir, timeBasis, liveID string, events []domain.ChatEvent) error {
+	return writeReceived(dir, LiveHeader(timeBasis, liveID), events)
+}
+
+func writeReceived(dir, header string, events []domain.ChatEvent) error {
 	var b strings.Builder
-	b.WriteString(receivedHeader)
+	b.WriteString(header)
 	for _, e := range events {
 		b.WriteString(ChatLine(e))
 	}
@@ -187,16 +218,19 @@ type AnalysisManifest struct {
 	DurationMs      int64           `json:"duration_ms"`
 	SourceState     string          `json:"source_state"`
 	Completeness    string          `json:"completeness"`
-	Gaps            []domain.Gap    `json:"issues"`
+	Gaps            Issues          `json:"issues"`
 }
 
 // WriteAnalysis writes analysis-manifest.json, timeline.json, timeline.txt,
 // timeline.csv and markers/<id>.txt (clip-range chat, evidence marked "*").
 // events must be the analysis snapshot in time order.
 func WriteAnalysis(dir string, m AnalysisManifest, title string, cands []domain.Candidate, windows []domain.Window, events []domain.ChatEvent) error {
-	m.SchemaVersion, m.TimeBasis = 1, "video_position"
+	m.SchemaVersion = 1
+	if m.TimeBasis == "" {
+		m.TimeBasis = "video_position"
+	}
 	if m.Gaps == nil {
-		m.Gaps = []domain.Gap{}
+		m.Gaps = Issues{}
 	}
 	manifest, err := jsonBytes(m)
 	if err != nil {
@@ -216,7 +250,7 @@ func WriteAnalysis(dir string, m AnalysisManifest, title string, cands []domain.
 	}
 
 	var txt strings.Builder
-	fmt.Fprintf(&txt, "MomentForge 편집 후보 | %s\n시간 기준: 다시보기 재생 위치 | 후보 %d개\n", Escape(title), len(cands))
+	fmt.Fprintf(&txt, "MomentForge 편집 후보 | %s\n시간 기준: %s | 후보 %d개\n", Escape(title), basisLabel[m.TimeBasis], len(cands))
 	txt.WriteString("수집 완전성: 미확인. manifest.json의 범위·누락 표시를 함께 확인하세요.\n\n")
 	var csvBuf bytes.Buffer
 	csvBuf.WriteString("\ufeff")
@@ -231,14 +265,18 @@ func WriteAnalysis(dir string, m AnalysisManifest, title string, cands []domain.
 		if c.PartialContext {
 			context = "부족"
 		}
-		fmt.Fprintf(&txt, "%s [%s ~ %s]\n  이유: %s\n  반응: %s ~ %s / 정점: %s\n  정점 유효 채팅 %d건 / 작성자 %d명 / 기준 학습: %s\n  앞뒤 문맥: %s / 검토: 미검토\n\n",
+		fmt.Fprintf(&txt, "%s [%s ~ %s]\n  이유: %s\n  반응: %s ~ %s / 정점: %s\n  정점 유효 채팅 %d건 / 작성자 %d명 / 기준 학습: %s\n  앞뒤 문맥: %s / 검토: 미검토\n",
 			c.ID, Stamp(c.ClipStartMs), Stamp(c.ClipEndMs), strings.Join(c.Reasons, ", "),
 			Stamp(c.ReactionStartMs), Stamp(c.ReactionEndMs), Stamp(c.PeakMs), c.Peak.N, c.Peak.U, ready, context)
+		if c.State != "" {
+			fmt.Fprintf(&txt, "  LIVE 상태: %s\n", stateLabel[c.State])
+		}
+		txt.WriteString("\n")
 		ratio := ""
 		if c.Peak.Ratio != nil {
 			ratio = strconv.FormatFloat(*c.Peak.Ratio, 'g', -1, 64)
 		}
-		row := []string{c.ID, "video_position", Stamp(c.ReactionStartMs), Stamp(c.PeakMs), Stamp(c.ReactionEndMs),
+		row := []string{c.ID, m.TimeBasis, Stamp(c.ReactionStartMs), Stamp(c.PeakMs), Stamp(c.ReactionEndMs),
 			Stamp(c.ClipStartMs), Stamp(c.ClipEndMs), strings.Join(c.Reasons, ", "), strconv.Itoa(c.Peak.N),
 			strconv.Itoa(c.Peak.U), ratio, pyBool(c.BaselineReady), pyBool(c.PartialContext), "미검토",
 			strings.Join(c.EvidenceIDs, " ")}
@@ -276,6 +314,101 @@ func WriteAnalysis(dir string, m AnalysisManifest, title string, cands []domain.
 		return err
 	}
 	return writeAtomic(filepath.Join(dir, "timeline.csv"), csvBuf.Bytes())
+}
+
+var basisLabel = map[string]string{
+	"video_position":    "다시보기 재생 위치",
+	"broadcast_elapsed": "방송 시작 후 경과",
+	"capture_elapsed":   "수집 시작 후 경과",
+}
+
+var stateLabel = map[string]string{
+	domain.CandidateGenerating:     "반응 진행 중",
+	domain.CandidateWaitingContext: "뒤 문맥 대기",
+	domain.CandidateConfirmed:      "확정",
+	domain.CandidatePartial:        "문맥 부족",
+}
+
+// LiveManifest describes a LIVE checkpoint's chat files.
+type LiveManifest struct {
+	ID               string            `json:"id"`
+	CheckpointID     string            `json:"checkpoint_id"`
+	Platform         string            `json:"platform"`
+	ChannelID        string            `json:"channel_id"`
+	LiveID           string            `json:"live_id"`
+	Title            string            `json:"title"`
+	State            string            `json:"state"`
+	TimeBasis        string            `json:"time_basis"`
+	OriginMs         int64             `json:"origin_ms"`
+	WatermarkMs      int64             `json:"watermark_ms"`
+	Generation       int               `json:"generation"`
+	Gaps             Issues            `json:"issues"`
+	MaxSeq           int64             `json:"max_seq"`
+	LateCount        int               `json:"late_count"`
+	DuplicateCount   int               `json:"duplicate_count"`
+	InvalidTimeCount int               `json:"invalid_time_count"`
+	ViewerSamples    []json.RawMessage `json:"viewer_samples"`
+	Error            string            `json:"error"`
+	SchemaVersion    int               `json:"schema_version"`
+	EventCount       int               `json:"event_count"`
+	DataSHA256       string            `json:"data_sha256"`
+	LatePolicy       string            `json:"late_policy"`
+	Completeness     string            `json:"completeness"`
+	Note             string            `json:"note"`
+}
+
+// LiveRow is a stored LIVE message with the facts exported alongside it.
+type LiveRow struct {
+	domain.ChatEvent
+	Late        bool
+	TimeQuality string
+}
+
+type jsonlLive struct {
+	jsonlChat
+	Late        bool   `json:"late"`
+	TimeQuality string `json:"time_quality"`
+}
+
+// WriteLiveChat writes a LIVE checkpoint's manifest.json, chat.txt and
+// chat.jsonl. rows must be in time order. It returns the SHA-256 of chat.jsonl.
+func WriteLiveChat(dir string, m LiveManifest, rows []LiveRow) (string, error) {
+	var jsonl bytes.Buffer
+	enc := json.NewEncoder(&jsonl)
+	enc.SetEscapeHTML(false)
+	var txt strings.Builder
+	txt.WriteString(LiveHeader(m.TimeBasis, m.LiveID))
+	for _, r := range rows {
+		txt.WriteString(ChatLine(r.ChatEvent))
+		row := jsonlLive{jsonlChat{EventID: r.ID, TimeMs: r.OffsetMs, Content: r.Text, Seq: r.Seq}, r.Late, r.TimeQuality}
+		if r.AuthorKey != "" {
+			row.AuthorKey = &r.AuthorKey
+		}
+		if err := enc.Encode(row); err != nil {
+			return "", err
+		}
+	}
+	sum := sha256.Sum256(jsonl.Bytes())
+	m.SchemaVersion, m.EventCount, m.DataSHA256 = 1, len(rows), hex.EncodeToString(sum[:])
+	m.LatePolicy = "retain_raw_exclude_finalized_windows"
+	m.Note = "늦게 도착한 채팅(late)은 저장하지만 이미 확정한 분석 구간에는 넣지 않습니다. issues는 연결이 끊겨 관측하지 못한 구간입니다."
+	if m.Gaps == nil {
+		m.Gaps = Issues{}
+	}
+	if m.ViewerSamples == nil {
+		m.ViewerSamples = []json.RawMessage{}
+	}
+	manifest, err := jsonBytes(m)
+	if err != nil {
+		return "", err
+	}
+	if err := writeAtomic(filepath.Join(dir, "manifest.json"), manifest); err != nil {
+		return "", err
+	}
+	if err := writeAtomic(filepath.Join(dir, "chat.txt"), []byte(txt.String())); err != nil {
+		return "", err
+	}
+	return m.DataSHA256, writeAtomic(filepath.Join(dir, "chat.jsonl"), jsonl.Bytes())
 }
 
 // csvSafe stops spreadsheet formula injection.

@@ -102,6 +102,9 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
 		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
 	})
+	if err := core.RecoverLive(ctx); err != nil {
+		return nil, err
+	}
 	httpSrv := &http.Server{
 		Handler: api.NewHandler(api.Config{
 			Core: core, Bus: bus, Port: port, AccessKey: key, Assets: opt.Assets, MediaOrigins: core.MediaOrigins(),
@@ -143,6 +146,9 @@ func (s *server) Shutdown(ctx context.Context) error {
 }
 
 // registerPlatforms is where adapters are registered (REDESIGN.md 4).
+// extraPlatforms are added by build-tagged files (e2efake.go for make e2e).
+var extraPlatforms []platform.Platform
+
 func registerPlatforms(override []platform.Platform) *platform.Registry {
 	r := &platform.Registry{}
 	if override != nil {
@@ -150,6 +156,7 @@ func registerPlatforms(override []platform.Platform) *platform.Registry {
 		return r
 	}
 	r.Register(chzzk.New())
+	r.Register(extraPlatforms...)
 	return r
 }
 

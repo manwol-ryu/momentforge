@@ -14,3 +14,10 @@ export function tickStep(durationMs: number): number {
   const steps = [60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
   return steps.find((s) => durationMs / s <= 12) ?? 3_600_000;
 }
+
+/** File size for download lists. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}

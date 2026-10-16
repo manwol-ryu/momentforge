@@ -5,6 +5,8 @@ import { ApiError } from "./api/client";
 import { EventsProvider } from "./shared/events";
 import { usePath } from "./shared/navigation";
 import { Home } from "./features/home/Home";
+import { LiveView } from "./features/live/LiveView";
+import { useLiveSessionUpdates } from "./features/live/useLiveFeed";
 import { SessionView } from "./features/session/SessionView";
 import "./styles/app.css";
 
@@ -21,8 +23,11 @@ const queryClient = new QueryClient({
 
 function App() {
   const path = usePath();
+  useLiveSessionUpdates();
   const session = /^\/sessions\/([0-9a-f]{32})$/.exec(path);
   if (session) return <SessionView key={session[1]} id={session[1]!} />;
+  const live = /^\/live\/([0-9a-f]{32})$/.exec(path);
+  if (live) return <LiveView key={live[1]} id={live[1]!} />;
   return <Home />;
 }
 

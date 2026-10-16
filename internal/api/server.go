@@ -37,6 +37,18 @@ type Core interface {
 	Playback(ctx context.Context, sid string) (app.PlaybackInfo, error)
 	Files(ctx context.Context, sid string) ([]app.ExportFile, error)
 	OpenFile(ctx context.Context, sid, rel string) (*os.File, error)
+
+	InspectLive(ctx context.Context, url string) (app.LiveInfo, error)
+	StartLive(ctx context.Context, req app.LiveRequest) (app.SessionInfo, error)
+	ResumeLive(ctx context.Context, sid string) (app.SessionInfo, error)
+	StopLive(sid string)
+	LiveStatus(ctx context.Context, sid string) (app.LiveView, error)
+	LiveChats(ctx context.Context, sid string, afterSeq int64) ([]app.LiveChat, error)
+	LiveContext(ctx context.Context, sid string, atMs int64) ([]app.LiveChat, error)
+	LiveCandidates(ctx context.Context, sid string, afterRev int64) ([]app.CandidateView, int64, error)
+	LiveCandidateChats(ctx context.Context, sid, candidateID string, offset, limit int) ([]app.ContextChat, int, error)
+	LiveCheckpoint(ctx context.Context, sid string) (app.Checkpoint, error)
+	LiveDensity(ctx context.Context, sid string) (app.LiveDensity, error)
 }
 
 // Config wires the HTTP handler.
@@ -84,6 +96,19 @@ func NewHandler(cfg Config) http.Handler {
 			r.Get("/playback", h.playback)
 			r.Get("/files", h.files)
 			r.Get("/files/*", h.download)
+		})
+		r.Post("/live/inspect", h.inspectLive)
+		r.Post("/live", h.startLive)
+		r.Route("/live/{id}", func(r chi.Router) {
+			r.Get("/", h.liveStatus)
+			r.Post("/stop", h.stopLive)
+			r.Post("/resume", h.resumeLive)
+			r.Get("/chats", h.liveChats)
+			r.Get("/context", h.liveContext)
+			r.Get("/density", h.liveDensity)
+			r.Get("/candidates", h.liveCandidates)
+			r.Get("/candidates/{cid}/chats", h.liveCandidateChats)
+			r.Post("/checkpoint", h.liveCheckpoint)
 		})
 		r.Get("/analyses/{id}", h.analysis)
 		r.Get("/analyses/{id}/candidates/{cid}/chats", h.candidateChats)

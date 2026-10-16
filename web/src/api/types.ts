@@ -39,13 +39,15 @@ export interface JobStatus {
   updatedAt: string;
 }
 
-export type SessionState = "collecting" | "paused" | "finished";
+export type LiveState = "starting" | "collecting" | "reconnecting" | "stopping" | "stopped" | "ended" | "error" | "incomplete";
+
+export type SessionState = "collecting" | "paused" | "finished" | LiveState;
 
 export interface Session {
   id: string;
   platform: string;
   platformName: string;
-  kind: string;
+  kind: "vod" | "live";
   targetId: string;
   title: string;
   durationMs: number;
@@ -76,6 +78,10 @@ export interface DetectWindow {
   valid: boolean;
   signals: string[];
   reactionRatios?: Record<string, number>;
+  /** Adaptive gate: messages that make a window busy for the broadcast (2-hour median × 3.75). */
+  gate?: number;
+  /** Adaptive gate: chatters that make a window a sudden spike (15-minute median × 5). */
+  spikeGate?: number;
 }
 
 export interface Chat {
@@ -94,6 +100,8 @@ export interface ContextChat extends Chat {
   isEvidence: boolean;
 }
 
+export type CandidateState = "generating" | "waiting_context" | "confirmed" | "partial";
+
 export interface Candidate {
   id: string;
   groupId: string;
@@ -104,13 +112,15 @@ export interface Candidate {
   clipEndMs: number;
   signals: string[];
   reasons: string[];
-  peak: { n: number; u: number; ratio?: number; z?: number; baselineN?: number };
+  peak: { n: number; u: number; ratio?: number; z?: number; baselineN?: number; gate?: number; spikeGate?: number };
   baselineReady: boolean;
   evidenceIds: string[];
   partialContext: boolean;
   evidence: EvidenceChat[];
   evidenceTotal: number;
   watchUrl?: string;
+  /** LIVE only: how settled the candidate is. */
+  state?: CandidateState;
 }
 
 export interface Analysis {
@@ -146,4 +156,76 @@ export interface ExportFile {
 export interface Playback {
   url: string;
   type: "hls";
+}
+
+// --- LIVE ---
+
+export interface LiveInfo {
+  platformName: string;
+  channelId: string;
+  liveId: string;
+  title: string;
+  open: boolean;
+  viewers: number | null;
+  startedAt: string | null;
+}
+
+export interface Gap {
+  startMs: number;
+  endMs: number;
+}
+
+export interface LiveStatus {
+  session: Session;
+  channelId: string;
+  liveId: string;
+  timeBasis: "broadcast_elapsed" | "capture_elapsed";
+  running: boolean;
+  sensitive: boolean;
+  /** The message gate follows the channel (REDESIGN 6.2.1); false for older captures. */
+  adaptiveGate: boolean;
+  viewerAdaptive: boolean;
+  /** Analysis is final up to here. */
+  watermarkMs: number;
+  /** Connections made so far. */
+  generation: number;
+  viewerCount: number | null;
+  viewerStatus: "" | "active" | "warming_up" | "missing";
+  lateCount: number;
+  duplicateCount: number;
+  invalidTimeCount: number;
+  revision: number;
+  closedReason?: string;
+  gaps: Gap[];
+  lastWindow: DetectWindow | null;
+}
+
+export interface LiveChat extends Chat {
+  seq: number;
+  /** Stored, but arrived too late (or from before the connection) to count in analysis. */
+  late: boolean;
+}
+
+/** Payload of the "live" server event, sent after each save. */
+export interface LiveUpdate {
+  sessionId: string;
+  state: LiveState;
+  watermarkMs: number;
+  generation: number;
+  revision: number;
+  message?: string;
+  chats: LiveChat[];
+}
+
+export interface Checkpoint {
+  id: string;
+  folder: string;
+  eventCount: number;
+}
+
+/** Messages per bucket over the capture so far; invalid windows are unobserved gaps. */
+export interface LiveDensity {
+  bucketMs: number;
+  endMs: number;
+  windows: DetectWindow[];
 }
