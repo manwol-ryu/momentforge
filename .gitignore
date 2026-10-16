@@ -35,3 +35,10 @@ Desktop.ini
 .vscode/
 .codex/
 .agents/
+
+# MomentForge (Go rewrite)
+.momentforge/
+e2e/.data/
+bin/
+node_modules/
+.claude/settings.local.json
