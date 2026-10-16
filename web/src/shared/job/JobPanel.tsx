@@ -9,6 +9,7 @@ const phaseText: Record<string, string> = {
   checking: "영상 정보 확인",
   collecting: "채팅 수집",
   analyzing: "편집 후보 찾기",
+  comments: "영상 댓글 읽기",
   done: "완료",
   paused: "중단됨",
   error: "중단됨",

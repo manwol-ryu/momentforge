@@ -2,7 +2,13 @@
 
 package main
 
-import "github.com/manwol-ryu/momentforge/internal/platform/e2efake"
+import (
+	aifake "github.com/manwol-ryu/momentforge/internal/ai/e2efake"
+	"github.com/manwol-ryu/momentforge/internal/platform/e2efake"
+)
 
-// The E2E binary (make e2e) also serves the synthetic LIVE platform.
-func init() { extraPlatforms = append(extraPlatforms, e2efake.New()) }
+// The E2E binary (make e2e) also serves a synthetic LIVE platform and AI provider.
+func init() {
+	extraPlatforms = append(extraPlatforms, e2efake.New())
+	extraAI = append(extraAI, aifake.New())
+}

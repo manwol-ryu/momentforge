@@ -36,6 +36,7 @@ type SessionInfo struct {
 	IsDemo             bool
 	CanResume          bool // paused and the platform can collect it
 	CanPlay            bool // the platform can stream it in the app
+	CanReadComments    bool // the platform can read the video's comments
 	WatchURL           string
 }
 
@@ -54,8 +55,9 @@ func (a *App) info(s store.Session) SessionInfo {
 		if s.Kind == string(platform.KindLive) {
 			out.CanResume = live && (s.State == store.LiveStopped || s.State == store.LiveError || s.State == store.LiveIncomplete)
 		} else {
-			out.CanResume = vod && s.State == store.StatePaused
-			out.CanPlay = play
+			_, comments := p.(platform.CommentSource)
+			out.CanResume = vod && (s.State == store.StatePaused || s.State == store.StateCommentsOnly)
+			out.CanPlay, out.CanReadComments = play, comments
 		}
 		if link := a.linker(s); link != nil {
 			out.WatchURL = link(0)
@@ -77,6 +79,16 @@ func (a *App) Sessions(ctx context.Context) ([]SessionInfo, error) {
 		out[i] = a.info(s)
 	}
 	return out, nil
+}
+
+// HideSessions hides every session from the list; nothing is deleted.
+func (a *App) HideSessions(ctx context.Context) (int, error) {
+	return a.cfg.Store.SetAllHidden(ctx, true)
+}
+
+// RestoreSessions shows every hidden session again.
+func (a *App) RestoreSessions(ctx context.Context) (int, error) {
+	return a.cfg.Store.SetAllHidden(ctx, false)
 }
 
 // Session returns one session.

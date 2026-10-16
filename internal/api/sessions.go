@@ -47,13 +47,15 @@ func (h *handler) cancelJob(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) collect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		URL       string `json:"url"`
-		Sensitive bool   `json:"sensitive"`
+		URL             string `json:"url"`
+		Sensitive       bool   `json:"sensitive"`
+		IncludeComments *bool  `json:"includeComments"` // default true
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	st, err := h.cfg.Core.StartCollect(app.CollectRequest{URL: body.URL, Sensitive: body.Sensitive})
+	st, err := h.cfg.Core.StartCollect(app.CollectRequest{URL: body.URL, Sensitive: body.Sensitive,
+		IncludeComments: body.IncludeComments == nil || *body.IncludeComments})
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -123,6 +125,7 @@ type sessionJSON struct {
 	IsDemo             bool      `json:"isDemo"`
 	CanResume          bool      `json:"canResume"`
 	CanPlay            bool      `json:"canPlay"`
+	CanReadComments    bool      `json:"canReadComments"`
 	WatchURL           string    `json:"watchUrl,omitempty"`
 }
 
@@ -132,7 +135,8 @@ func toSessionJSON(s app.SessionInfo) sessionJSON {
 		Title: s.Title, DurationMs: s.DurationMs, ReportedDurationMs: s.ReportedDurationMs, State: s.State,
 		Cursor: s.Cursor, Pages: s.Pages, ChatCount: s.ChatCount, ErrorCode: s.ErrorCode,
 		ErrorMessage: s.ErrorMessage, LatestAnalysisID: s.LatestAnalysisID, CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt, IsDemo: s.IsDemo, CanResume: s.CanResume, CanPlay: s.CanPlay, WatchURL: s.WatchURL,
+		UpdatedAt: s.UpdatedAt, IsDemo: s.IsDemo, CanResume: s.CanResume, CanPlay: s.CanPlay, CanReadComments: s.CanReadComments,
+		WatchURL: s.WatchURL,
 	}
 }
 
@@ -147,6 +151,24 @@ func (h *handler) sessions(w http.ResponseWriter, r *http.Request) {
 		out[i] = toSessionJSON(s)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *handler) hideSessions(w http.ResponseWriter, r *http.Request) {
+	n, err := h.cfg.Core.HideSessions(r.Context())
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"changed": n})
+}
+
+func (h *handler) restoreSessions(w http.ResponseWriter, r *http.Request) {
+	n, err := h.cfg.Core.RestoreSessions(r.Context())
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"changed": n})
 }
 
 func (h *handler) session(w http.ResponseWriter, r *http.Request) {

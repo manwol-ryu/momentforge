@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/ai/openai"
 	"github.com/manwol-ryu/momentforge/internal/api"
 	"github.com/manwol-ryu/momentforge/internal/app"
 	"github.com/manwol-ryu/momentforge/internal/detect"
@@ -30,8 +32,9 @@ type options struct {
 	DataDir string
 	Version string
 	Assets  fs.FS
-	// Platforms overrides the registered adapters (tests use fakes).
+	// Platforms and AI override the registered adapters (tests use fakes).
 	Platforms []platform.Platform
+	AI        []ai.Provider
 }
 
 // server is a running instance and everything it must release on shutdown.
@@ -101,8 +104,12 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 	core := app.New(app.Config{
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
 		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
+		AI: registerAI(opt.AI),
 	})
 	if err := core.RecoverLive(ctx); err != nil {
+		return nil, err
+	}
+	if err := core.RecoverAI(ctx); err != nil {
 		return nil, err
 	}
 	httpSrv := &http.Server{
@@ -146,8 +153,22 @@ func (s *server) Shutdown(ctx context.Context) error {
 }
 
 // registerPlatforms is where adapters are registered (REDESIGN.md 4).
-// extraPlatforms are added by build-tagged files (e2efake.go for make e2e).
-var extraPlatforms []platform.Platform
+// extraPlatforms and extraAI are added by build-tagged files (e2efake.go for make e2e).
+var (
+	extraPlatforms []platform.Platform
+	extraAI        []ai.Provider
+)
+
+func registerAI(override []ai.Provider) *ai.Registry {
+	r := &ai.Registry{}
+	if override != nil {
+		r.Register(override...)
+		return r
+	}
+	r.Register(openai.New())
+	r.Register(extraAI...)
+	return r
+}
 
 func registerPlatforms(override []platform.Platform) *platform.Registry {
 	r := &platform.Registry{}

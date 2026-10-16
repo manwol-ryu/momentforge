@@ -15,7 +15,7 @@ REDESIGN.md 10절의 확인 절차입니다. 단계마다 "완료"라고 말하�
 ## 실행 순서
 
 1. `make test` — 빠른 검사부터 실행합니다. 구조 규칙, gofmt, go vet, Go 테스트, 화면 타입 검사입니다. 실패하면 E2E로 넘어가지 말고 먼저 고칩니다.
-2. `make e2e` — 화면을 빌드하고 E2E 전용 실행파일 `bin/momentforge-e2e`(빌드 태그 `e2efake`, 가짜 생방송 `https://live.e2e.test/채널` 포함)를 만든 뒤, `e2e/with_server.py`가 이를 포트 18765, 데이터 폴더 `e2e/.data`로 띄우고 `e2e/run.py`가 `e2e/test_*.py`의 모든 테스트를 실행합니다. 가짜 생방송은 연결하면 20분치 채팅을 한 번에 보내고(12분 지점 웃음 반응) 이후 0.5초마다 1건씩 보냅니다. 채널 이름이 `offline`이면 방송 중이 아닌 것으로 응답합니다.
+2. `make e2e` — 화면을 빌드하고 E2E 전용 실행파일 `bin/momentforge-e2e`(빌드 태그 `e2efake`, 가짜 생방송 `https://live.e2e.test/채널` 포함)를 만든 뒤, `e2e/with_server.py`가 이를 포트 18765, 데이터 폴더 `e2e/.data`로 띄우고 `e2e/run.py`가 `e2e/test_*.py`의 모든 테스트를 실행합니다. 가짜 생방송은 연결하면 20분치 채팅을 한 번에 보내고(12분 지점 웃음 반응) 이후 0.5초마다 1건씩 보냅니다. 채널 이름이 `offline`이면 방송 중이 아닌 것으로 응답합니다. 같은 실행파일에 가짜 다시보기(`https://live.e2e.test/video/번호`, 20분, 12:00 웃음, 댓글 4개: 시각 2개·검토 필요 1개·숨김 1개)와 가짜 AI 제공자("E2E 가짜 AI")도 있어, 댓글·통합 타임라인·AI 흐름을 외부 연결 없이 시험합니다.
 3. 화면을 바꿨다면 `e2e/.data/screenshots/`의 스크린샷(`home-light.png`, `home-dark.png`, `home-mobile.png` 등)을 Read 도구로 직접 보고 점검합니다. 한글 줄바꿈, 좁은 화면 넘침, 다크 모드 대비를 확인하고 `docs/DESIGN-SYSTEM.md`와 다르면 고칩니다.
 
 처음 실행이면 `make e2e`가 `e2e/.venv`를 만들고 Chromium을 내려받습니다. 내려받기 전에 사용자에게 알립니다.

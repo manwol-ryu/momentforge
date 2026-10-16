@@ -132,6 +132,34 @@ type LiveSource interface {
 	LiveStream(ctx context.Context, t Target, room string, sink LiveSink) error
 }
 
+// Comment is a public comment under a VOD. AuthorID must not be stored (app
+// pseudonymizes it). Hidden comments (deleted, secret, filtered by the
+// platform) keep only their IDs.
+type Comment struct {
+	ID       string
+	ParentID string // empty for top-level comments
+	AuthorID string
+	Text     string
+	Hidden   bool
+}
+
+// CommentResult is what a comment fetch got. Issues name what is missing
+// (page_budget, reply_incomplete, reply_stalled, or an error code after some
+// comments were read); empty means the platform listed everything it reported.
+type CommentResult struct {
+	Comments      []Comment
+	ReportedCount int // the platform's count of top-level comments, -1 unknown
+	Pages         int
+	Issues        []string
+}
+
+// CommentSource reads the public comments under a VOD, whose timestamps
+// become viewer recommendations. It reads at most maxPages pages (replies
+// included) and reports progress after each.
+type CommentSource interface {
+	VODComments(ctx context.Context, t Target, maxPages int, progress func(pages, comments int)) (CommentResult, error)
+}
+
 // LinkSource builds a link that opens the platform's own player at a position.
 type LinkSource interface {
 	WatchURL(t Target, offsetMs int64) string

@@ -21,6 +21,7 @@ const stateText: Partial<Record<Session["state"], string>> = {
   collecting: "수집 중",
   paused: "일시정지",
   finished: "수집 완료",
+  comments_only: "댓글만 수집",
 };
 
 const liveTerminal = new Set<string>(["stopped", "ended", "error", "incomplete"]);
@@ -72,6 +73,7 @@ export function Home() {
         <p className="actions">
           <DemoButton existing={sessions.data?.find((s) => s.isDemo)} />
         </p>
+        <HistoryActions hasVisible={(sessions.data?.length ?? 0) > 0} />
       </section>
 
       <section className="section" aria-labelledby="app-title">
@@ -108,7 +110,9 @@ export function Home() {
 function CollectForm({ busy }: { busy: boolean }) {
   const [url, setUrl] = useState("");
   const [sensitive, setSensitive] = useState(false);
-  const collect = useMutation({ mutationFn: () => api.collect(url.trim(), sensitive) });
+  const [withComments, setWithComments] = useState(true);
+  const collect = useMutation({ mutationFn: () => api.collect(url.trim(), sensitive, withComments) });
+  const commentsOnly = useMutation({ mutationFn: () => api.startComments({ url: url.trim() }) });
   const submit = (e: FormEvent) => {
     e.preventDefault();
     collect.mutate();
@@ -131,6 +135,10 @@ function CollectForm({ busy }: { busy: boolean }) {
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
         항상 가장 민감하게 (10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다)
       </label>
+      <label className="check">
+        <input type="checkbox" checked={withComments} onChange={(e) => setWithComments(e.target.checked)} />
+        영상 댓글의 시청자 추천도 수집 (댓글에 적힌 시각을 자동 후보와 따로 표시합니다)
+      </label>
       <p id="collect-help" className="field-help">
         채팅을 모두 받은 뒤 편집 후보를 찾습니다. 판정 기준은 채널 규모와 시간대에 맞춰 최근 2시간·15분의 평소 채팅량으로 자동으로
         정합니다. 긴 방송은 몇 분 걸릴 수 있고, 중단해도 받은 데까지 저장됩니다.
@@ -139,10 +147,18 @@ function CollectForm({ busy }: { busy: boolean }) {
         <button type="submit" className="button" disabled={busy || collect.isPending}>
           수집하고 편집점 찾기
         </button>
+        <button
+          type="button"
+          className="button button-quiet"
+          onClick={() => url.trim() && commentsOnly.mutate()}
+          disabled={busy || commentsOnly.isPending || !url.trim()}
+        >
+          댓글만 수집
+        </button>
       </p>
-      {collect.isError && (
+      {(collect.error ?? commentsOnly.error) && (
         <p className="error" role="alert">
-          {collect.error.message}
+          {(collect.error ?? commentsOnly.error)!.message}
         </p>
       )}
     </form>
@@ -176,6 +192,43 @@ function DemoButton({ existing }: { existing?: Session }) {
         </span>
       )}
     </>
+  );
+}
+
+// Hides every saved session from the list, or shows them again. Nothing is deleted.
+function HistoryActions({ hasVisible }: { hasVisible: boolean }) {
+  const queryClient = useQueryClient();
+  const change = useMutation({
+    mutationFn: (restore: boolean) => (restore ? api.restoreSessions() : api.hideSessions()).then((r) => ({ ...r, restore })),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+  return (
+    <div className="history">
+      <p className="actions">
+        {hasVisible && (
+          <button type="button" className="link-button" onClick={() => change.mutate(false)} disabled={change.isPending}>
+            목록에서 모두 숨기기
+          </button>
+        )}
+        <button type="button" className="link-button" onClick={() => change.mutate(true)} disabled={change.isPending}>
+          숨긴 작업 다시 표시
+        </button>
+      </p>
+      {change.data && (
+        <p className="field-help" role="status">
+          {change.data.restore
+            ? change.data.changed > 0
+              ? `${change.data.changed}개 작업을 다시 표시합니다.`
+              : "숨긴 작업이 없습니다."
+            : `${change.data.changed}개 작업을 목록에서 숨겼습니다. 채팅과 내보낸 파일은 그대로 보관됩니다.`}
+        </p>
+      )}
+      {change.isError && (
+        <p className="error" role="alert">
+          {change.error.message}
+        </p>
+      )}
+    </div>
   );
 }
 

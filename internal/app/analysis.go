@@ -118,6 +118,7 @@ func (a *App) analyzeSession(ctx context.Context, sid string, p detect.Params, h
 			})
 		}
 	}
+	a.writeUnified(context.WithoutCancel(ctx), sid)
 	return an, nil
 }
 

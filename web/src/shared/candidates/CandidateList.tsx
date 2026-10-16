@@ -29,52 +29,77 @@ export function CandidateList({ candidates, selectedId, onSelect, longForm = fal
   }
   return (
     <ol className="candidates">
-      {candidates.map((c, i) => {
-        const selected = c.id === selectedId;
-        return (
-          <li key={c.id} className="candidate" data-selected={selected || undefined}>
-            <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(c.id)}>
-              <span className="candidate-time timecode">
-                {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}
-              </span>
-              <span className="candidate-reasons">{c.reasons.join(", ")}</span>
-              {c.state && (
-                <span className="candidate-state" data-state={c.state}>
-                  {stateText[c.state]}
-                </span>
-              )}
-              <span className="visually-hidden">후보 {i + 1}</span>
-            </button>
-            <p className="candidate-meta">
-              가장 활발한 10초에 채팅 {c.peak.n}건, 참여 {c.peak.u}명
-              {c.peak.gate ? ` (그때 판정 시작 기준: 채팅 ${c.peak.gate}건 또는 ${c.peak.spikeGate ?? "-"}명)` : ""}. 편집 구간{" "}
-              <span className="timecode">
-                {timecode(c.clipStartMs, longForm)}–{timecode(c.clipEndMs, longForm)}
-              </span>
-            </p>
-            {!c.baselineReady && <p className="candidate-note">평소 채팅량을 학습하기 전이라 임시 후보입니다.</p>}
-            {c.partialContext && <p className="candidate-note">앞뒤 채팅 일부가 없어 문맥이 짧습니다.</p>}
-            {renderActions && <div className="candidate-actions">{renderActions(c)}</div>}
-            {selected && (
-              <div className="evidence">
-                <p className="evidence-title">근거 채팅 {c.evidenceTotal}건, 많이 나온 문장 순</p>
-                <ul>
-                  {c.evidence.map((e, j) => (
-                    <li key={j}>
-                      <span className="evidence-text">{e.text}</span>{" "}
-                      <span className="evidence-count">{e.count}건</span>{" "}
-                      <span className="evidence-first">
-                        처음 <span className="timecode">{timecode(e.offsetMs, longForm)}</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                {renderDetail?.(c)}
-              </div>
-            )}
-          </li>
-        );
-      })}
+      {candidates.map((c, i) => (
+        <CandidateItem
+          key={c.id}
+          c={c}
+          index={i}
+          selected={c.id === selectedId}
+          onSelect={onSelect}
+          longForm={longForm}
+          renderActions={renderActions}
+          renderDetail={renderDetail}
+        />
+      ))}
     </ol>
+  );
+}
+
+interface ItemProps {
+  c: Candidate;
+  index: number;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  longForm?: boolean;
+  /** Label before the reasons, e.g. the source in a mixed list. */
+  badge?: ReactNode;
+  renderActions?: (c: Candidate) => ReactNode;
+  renderDetail?: (c: Candidate) => ReactNode;
+}
+
+/** One detected candidate: time, reasons, peak numbers and, when selected, its evidence. */
+export function CandidateItem({ c, index, selected, onSelect, longForm = false, badge, renderActions, renderDetail }: ItemProps) {
+  return (
+    <li className="candidate" data-selected={selected || undefined} data-source="rule">
+      <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(c.id)}>
+        <span className="candidate-time timecode">
+          {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}
+        </span>
+        {badge}
+        <span className="candidate-reasons">{c.reasons.join(", ")}</span>
+        {c.state && (
+          <span className="candidate-state" data-state={c.state}>
+            {stateText[c.state]}
+          </span>
+        )}
+        <span className="visually-hidden">후보 {index + 1}</span>
+      </button>
+      <p className="candidate-meta">
+        가장 활발한 10초에 채팅 {c.peak.n}건, 참여 {c.peak.u}명
+        {c.peak.gate ? ` (그때 판정 시작 기준: 채팅 ${c.peak.gate}건 또는 ${c.peak.spikeGate ?? "-"}명)` : ""}. 편집 구간{" "}
+        <span className="timecode">
+          {timecode(c.clipStartMs, longForm)}–{timecode(c.clipEndMs, longForm)}
+        </span>
+      </p>
+      {!c.baselineReady && <p className="candidate-note">평소 채팅량을 학습하기 전이라 임시 후보입니다.</p>}
+      {c.partialContext && <p className="candidate-note">앞뒤 채팅 일부가 없어 문맥이 짧습니다.</p>}
+      {renderActions && <div className="candidate-actions">{renderActions(c)}</div>}
+      {selected && (
+        <div className="evidence">
+          <p className="evidence-title">근거 채팅 {c.evidenceTotal}건, 많이 나온 문장 순</p>
+          <ul>
+            {c.evidence.map((e, j) => (
+              <li key={j}>
+                <span className="evidence-text">{e.text}</span> <span className="evidence-count">{e.count}건</span>{" "}
+                <span className="evidence-first">
+                  처음 <span className="timecode">{timecode(e.offsetMs, longForm)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {renderDetail?.(c)}
+        </div>
+      )}
+    </li>
   );
 }

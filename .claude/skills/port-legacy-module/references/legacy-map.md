@@ -5,8 +5,8 @@
 | 기존 파일 | 주요 내용 | 새 위치 | 단계 | 상태 |
 |---|---|---|---|---|
 | `__main__.py` | 실행 명령, 인자 처리 | `cmd/momentforge` | 0 | 완료 |
-| `server.py` | HTTP 서버, 경로 분기, 로컬 키·Host·Origin 검사, 작업 상태 | `internal/api`, `internal/app` | 0, 2~4 | 진행 중 (VOD·LIVE·작업·파일 경로 완료, 댓글·AI는 4단계) |
-| `ui.html` | 화면 전체 | `web/` | 0, 2~4 | 진행 중 (홈·수집·검토·LIVE 화면 완료, 댓글·AI는 4단계) |
+| `server.py` | HTTP 서버, 경로 분기, 로컬 키·Host·Origin 검사, 작업 상태 | `internal/api`, `internal/app` | 0, 2~4 | 완료 |
+| `ui.html` | 화면 전체 | `web/` | 0, 2~4 | 완료 |
 | `common.py` | `Config`, `AppError`, `video_id`, `normalized` | `internal/domain`, `internal/detect` `Params`, `internal/platform/chzzk` | 1~2 | 완료 |
 | `records.py` | 스키마 버전, records·viewer_samples 테이블 | `internal/store/migrations` | 0, 2~3 | 완료 (viewer_samples는 0003) |
 | `detector.py` | D1~D5 규칙, 창 통계, 후보 병합·분할 | `internal/detect`, `internal/detect/rules` | 1, 3 | 완료 (기존 결과와 필드 단위 일치, 시청자 수 보정 연결 포함) |
@@ -26,8 +26,8 @@
 | `live.js` | LIVE 화면 | `web/src/features/live` | 3 | 완료 |
 | `viewers.py` | 웹 시청자 수 보정 | `internal/detect` `viewers.go`, 시청자 수는 `LiveMeta.Viewers` | 3 | 완료 |
 | `viewers.py` | 공식 API 시청자 수 | — | 보류 | 보류 |
-| `comments.py` | 영상 댓글 수집, 타임스탬프 추출 | `internal/platform/chzzk` `CommentSource`, `internal/app` | 4 | 대기 |
-| `timeline.py` | 자동 후보 + 시청자 추천 통합 | `internal/app` | 4 | 대기 |
-| `v2.js` | 통합 타임라인 화면 | `web/src/features/timeline` | 4 | 대기 |
-| `history.py` | 저장 목록 숨김·복원 | `internal/store`, `internal/app` | 4 | 대기 |
-| `ai.py` | 미리보기, OpenAI 호출, 결과 검증 | `internal/ai`, `internal/ai/openai` (5단계에 `internal/ai/anthropic` 추가) | 4, 5 | 대기 |
+| `comments.py` | 영상 댓글 수집, 타임스탬프 추출 | `internal/platform/chzzk` `comments.go` (`CommentSource`), `internal/app` `comments.go`·`timestamps.go` | 4 | 완료 (파서 46개 사례 일치, 로그인 댓글 조회는 보류) |
+| `timeline.py` | 자동 후보 + 시청자 추천 통합 | `internal/app` `timeline.go`, `internal/export` | 4 | 완료 |
+| `v2.js` | 통합 타임라인·댓글·AI 화면 | `web/src/features/session` (`UnifiedList`, `CommentsPanel`, `AIPanel`) | 4 | 완료 (공식 API 시청자 기록 패널은 보류) |
+| `history.py` | 저장 목록 숨김·복원 | `internal/store`, `internal/app` | 4 | 완료 |
+| `ai.py` | 미리보기, OpenAI 호출, 결과 검증 | `internal/ai`, `internal/ai/openai`, `internal/app` `ai.go` (5단계에 `internal/ai/anthropic` 추가) | 4, 5 | 4단계 완료 (OpenAI) |

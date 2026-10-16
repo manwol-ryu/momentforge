@@ -186,6 +186,10 @@ func fakeChzzk(t *testing.T) *httptest.Server {
 				content(w, map[string]any{"previousVideoChats": []any{row(60000, "b", "ㅋㅋ")}, "nextPlayerMessageTime": nil,
 					"videoChats": []any{row(90000, "c", "끝")}})
 			}
+		case "/type/STREAMING_VIDEO/id/1234/comments":
+			content(w, map[string]any{"commentActive": true, "comments": map[string]any{"commentCount": 1, "data": []any{
+				map[string]any{"comment": map[string]any{"commentId": 1, "content": "0:30 웃긴 장면", "objectId": "1234"},
+					"user": map[string]any{"userIdHash": "viewer"}}}}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -231,6 +235,11 @@ func TestCollectThroughAPIWithFakeChzzk(t *testing.T) {
 	if !strings.Contains(body, `"state":"finished"`) || !strings.Contains(body, `"chatCount":3`) ||
 		!strings.Contains(body, `"watchUrl":"`+watch+`"`) {
 		t.Fatalf("session: %s", body)
+	}
+	// Comments are read after the chat (default); their times become viewer recommendations.
+	_, body = get(t, s.URL+"/api/sessions/"+job.SessionID+"/comments", string(key))
+	if !strings.Contains(body, `"startMs":30000`) || !strings.Contains(body, `"description":"웃긴 장면"`) || strings.Contains(body, "viewer") {
+		t.Fatalf("comments: %s", body)
 	}
 	code, body := get(t, s.URL+"/api/sessions/"+job.SessionID+"/playback", string(key))
 	if code != 200 || !strings.Contains(body, "navercdn.com/1234.m3u8") {

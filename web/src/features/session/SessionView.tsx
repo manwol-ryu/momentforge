@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Analysis, Candidate, ExportFile, Session } from "../../api/types";
+import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, UnifiedTimeline } from "../../api/types";
 import { useAppState } from "../../shared/appState";
-import { CandidateList } from "../../shared/candidates/CandidateList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
@@ -11,8 +10,16 @@ import { Link, navigate } from "../../shared/navigation";
 import { VideoPlayer, type PlayerHandle } from "../../shared/player/VideoPlayer";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { useJob } from "../../shared/useJob";
+import { AIPanel } from "./AIPanel";
+import { CommentsPanel } from "./CommentsPanel";
+import { sourceLabel, UnifiedList } from "./UnifiedList";
 
-const stateText: Partial<Record<Session["state"], string>> = { collecting: "수집 중", paused: "일시정지", finished: "수집 완료" };
+const stateText: Partial<Record<Session["state"], string>> = {
+  collecting: "수집 중",
+  paused: "일시정지",
+  finished: "수집 완료",
+  comments_only: "댓글만 수집",
+};
 
 export function SessionView({ id }: { id: string }) {
   const session = useQuery({ queryKey: ["session", id], queryFn: () => api.session(id) });
@@ -22,16 +29,27 @@ export function SessionView({ id }: { id: string }) {
     queryFn: () => api.analysis(analysisId!),
     enabled: !!analysisId,
   });
+  const isVOD = session.data?.kind === "vod";
+  const timeline = useQuery({ queryKey: ["timeline", id, analysisId], queryFn: () => api.timeline(id), enabled: isVOD });
+  const [aiSelection, setAISelection] = useState<Set<string>>(() => new Set());
+  const toggleAI = (itemId: string) =>
+    setAISelection((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(itemId)) next.add(itemId);
+      return next;
+    });
   const job = useJob();
   const isLive = session.data?.kind === "live";
   useEffect(() => {
     if (isLive) navigate(`/live/${id}`, { replace: true });
   }, [isLive, id]);
-  const ready = session.isSuccess && (!analysisId || analysis.isSuccess);
-  useAppState(ready ? "ready" : session.isError || analysis.isError ? "error" : "loading");
+  const ready = session.isSuccess && (!analysisId || analysis.isSuccess) && (!isVOD || timeline.isSuccess);
+  useAppState(ready ? "ready" : session.isError || analysis.isError || timeline.isError ? "error" : "loading");
 
   const s = session.data;
   const jobHere = job.data?.id && job.data.sessionId === id ? job.data : undefined;
+  const busy = job.data?.busy ?? false;
+  const hasItems = (timeline.data?.items.length ?? 0) > 0;
   return (
     <main className="page">
       <p className="back">
@@ -47,7 +65,7 @@ export function SessionView({ id }: { id: string }) {
           <header>
             <h1 className="page-title">{s.title}</h1>
             <p className="page-lede">
-              {s.isDemo ? "실제 방송이 아닌 예시 채팅" : `${s.platformName} ${stateText[s.state]}`}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
+              {s.isDemo ? "실제 방송이 아닌 예시 채팅" : `${s.platformName} ${stateText[s.state] ?? s.state}`}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
               <span className="timecode">{timecode(s.durationMs, s.durationMs >= 3_600_000)}</span>
               {s.watchUrl && (
                 <>
@@ -59,19 +77,22 @@ export function SessionView({ id }: { id: string }) {
               )}
             </p>
           </header>
-          {s.state !== "finished" && <ResumeNotice s={s} busy={job.data?.busy ?? false} />}
+          {s.state !== "finished" && <ResumeNotice s={s} busy={busy} />}
           {jobHere && <JobPanel job={jobHere} showResultLink={false} />}
           {analysis.isError && (
             <p className="error section" role="alert">
               {analysis.error.message}
             </p>
           )}
-          {analysis.data ? (
-            <Review s={s} a={analysis.data} busy={job.data?.busy ?? false} />
+          {analysis.data || hasItems ? (
+            <Review s={s} a={analysis.data} tl={timeline.data} busy={busy} aiSelection={aiSelection} onToggleAI={toggleAI} />
           ) : (
-            !analysisId && <p className="empty section">아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.</p>
+            !analysisId &&
+            s.state !== "comments_only" && <p className="empty section">아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.</p>
           )}
-          <Files sessionId={s.id} analysisId={analysisId} updatedAt={s.updatedAt} />
+          {isVOD && <CommentsPanel s={s} busy={busy} />}
+          {isVOD && (analysis.data || hasItems) && <AIPanel s={s} selection={[...aiSelection]} />}
+          <Files sessionId={s.id} analysisId={analysisId} timeline={timeline.data} updatedAt={s.updatedAt} />
         </>
       )}
     </main>
@@ -81,16 +102,23 @@ export function SessionView({ id }: { id: string }) {
 function ResumeNotice({ s, busy }: { s: Session; busy: boolean }) {
   const resume = useMutation({ mutationFn: () => api.resume(s.id, false) });
   if (s.state === "collecting" && busy) return null;
+  const commentsOnly = s.state === "comments_only";
   return (
     <div className="notice section">
       <p>
-        {s.errorMessage ?? "수집이 끝나지 않았습니다."}{" "}
-        <span className="timecode">{timecode(s.cursor, s.durationMs >= 3_600_000)}</span>까지 저장되어 있습니다.
+        {commentsOnly ? (
+          "영상 댓글만 받은 작업입니다. 채팅도 받아 편집 후보를 찾으려면 채팅 수집을 누르세요."
+        ) : (
+          <>
+            {s.errorMessage ?? "수집이 끝나지 않았습니다."}{" "}
+            <span className="timecode">{timecode(s.cursor, s.durationMs >= 3_600_000)}</span>까지 저장되어 있습니다.
+          </>
+        )}
       </p>
       {s.canResume && (
         <p className="actions">
           <button type="button" className="button" onClick={() => resume.mutate()} disabled={busy || resume.isPending}>
-            이어받기
+            {commentsOnly ? "채팅 수집" : "이어받기"}
           </button>
         </p>
       )}
@@ -103,26 +131,61 @@ function ResumeNotice({ s, busy }: { s: Session; busy: boolean }) {
   );
 }
 
-function Review({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
+type SourceFilter = "all" | TimelineSource;
+
+interface ReviewProps {
+  s: Session;
+  a?: Analysis;
+  tl?: UnifiedTimeline;
+  busy: boolean;
+  aiSelection: Set<string>;
+  onToggleAI: (itemId: string) => void;
+}
+
+function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<SourceFilter>("all");
   const [nowMs, setNowMs] = useState(0);
   const [follow, setFollow] = useState(true);
   const player = useRef<PlayerHandle>(null);
-  const longForm = a.durationMs >= 3_600_000;
-  const select = (id: string) => setSelectedId((cur) => (cur === id ? null : id));
-  const seek = (c: Candidate) => {
-    setSelectedId(c.id);
-    player.current?.seek(c.clipStartMs);
+  const durationMs = a?.durationMs ?? s.durationMs;
+  const longForm = durationMs >= 3_600_000;
+  const candidates = useMemo(() => new Map((a?.candidates ?? []).map((c) => [c.id, c])), [a]);
+  const items: TimelineItem[] = useMemo(
+    () =>
+      tl?.items ??
+      (a?.candidates ?? []).map((c) => ({
+        id: "rule:" + c.id, source: "rule" as const, originId: c.id, anchorMs: c.clipStartMs,
+        clipStartMs: c.clipStartMs, clipEndMs: c.clipEndMs, title: c.reasons.join(" · "), watchUrl: c.watchUrl,
+      })),
+    [tl, a],
+  );
+  const sources = [...new Set(items.map((i) => i.source))];
+  const shown = filter === "all" ? items : items.filter((i) => i.source === filter);
+  const select = (itemId: string) => setSelectedId((cur) => (cur === itemId ? null : itemId));
+  const seek = (ms: number, itemId: string) => {
+    setSelectedId(itemId);
+    player.current?.seek(ms);
   };
 
   // Chat near the playhead, fetched per 10-second step of playback.
   const step = Math.floor(nowMs / 10_000) * 10_000;
   const playhead = useQuery({
-    queryKey: ["chatsAt", s.id, a.id, step],
-    queryFn: () => api.chatsAt(s.id, step + 5_000, a.id),
-    enabled: s.canPlay,
+    queryKey: ["chatsAt", s.id, a?.id, step],
+    queryFn: () => api.chatsAt(s.id, step + 5_000, a?.id),
+    enabled: s.canPlay && s.chatCount > 0,
     placeholderData: keepPreviousData,
   });
+  const counter: Partial<Record<TimelineSource, number>> = {};
+  const extraMarkers = items
+    .filter((i) => i.source !== "rule")
+    .map((i) => {
+      counter[i.source] = (counter[i.source] ?? 0) + 1;
+      return {
+        id: i.id, ms: i.anchorMs, kind: i.source as "viewer_comment" | "ai",
+        label: `${sourceLabel[i.source]} ${counter[i.source]}, ${timecode(i.anchorMs, longForm)}`,
+      };
+    });
 
   return (
     <>
@@ -159,44 +222,57 @@ function Review({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
           반응 타임라인
         </h2>
         <Timeline
-          durationMs={a.durationMs}
-          windows={a.windows}
-          candidates={a.candidates}
-          selectedId={selectedId}
-          onSelect={(cid) => {
-            const c = a.candidates.find((x) => x.id === cid);
-            if (s.canPlay && c) seek(c);
-            else select(cid);
+          durationMs={durationMs}
+          windows={a?.windows ?? []}
+          candidates={a?.candidates ?? []}
+          extraMarkers={extraMarkers}
+          selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
+          onSelect={(markerId) => {
+            const itemId = markerId.includes(":") ? markerId : "rule:" + markerId;
+            const it = items.find((i) => i.id === itemId);
+            if (s.canPlay && it) seek(it.clipStartMs, itemId);
+            else select(itemId);
           }}
         />
       </section>
 
       <section className="section" aria-labelledby="candidates-title">
-        <h2 id="candidates-title" className="section-title">
-          편집 후보 {a.candidates.length}개
-        </h2>
-        <CandidateList
-          candidates={a.candidates}
-          selectedId={selectedId}
-          onSelect={select}
-          longForm={longForm}
-          renderActions={(c) => (
-            <>
-              {s.canPlay && (
-                <button type="button" className="link-button" onClick={() => seek(c)}>
-                  영상에서 보기
-                </button>
-              )}
-              {c.watchUrl && (
-                <a href={c.watchUrl} target="_blank" rel="noreferrer">
-                  {s.platformName}에서 열기
-                </a>
-              )}
-            </>
+        <div className="section-head">
+          <h2 id="candidates-title" className="section-title">
+            편집 후보 {shown.length}개
+          </h2>
+          {sources.length > 1 && (
+            <label className="field-inline">
+              <span className="visually-hidden">후보 출처</span>
+              <select value={filter} onChange={(e) => setFilter(e.target.value as SourceFilter)} aria-label="후보 출처">
+                <option value="all">모든 출처</option>
+                {sources.map((src) => (
+                  <option key={src} value={src}>
+                    {sourceLabel[src]}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-          renderDetail={(c) => <CandidateContext analysisId={a.id} c={c} longForm={longForm} />}
-        />
-        <Reanalyze s={s} a={a} busy={busy} />
+        </div>
+        {shown.length === 0 ? (
+          <p className="empty">반응이 몰린 구간을 찾지 못했습니다. 더 작은 반응까지 보려면 '항상 가장 민감하게'로 다시 분석하세요.</p>
+        ) : (
+          <UnifiedList
+            items={shown}
+            candidates={candidates}
+            selectedId={selectedId}
+            onSelect={select}
+            longForm={longForm}
+            canPlay={s.canPlay}
+            platformName={s.platformName}
+            onSeek={seek}
+            aiSelection={aiSelection}
+            onToggleAI={onToggleAI}
+            renderRuleDetail={(c) => (a ? <CandidateContext analysisId={a.id} c={c} longForm={longForm} /> : null)}
+          />
+        )}
+        {a && <Reanalyze s={s} a={a} busy={busy} />}
       </section>
     </>
   );
@@ -247,11 +323,30 @@ function Reanalyze({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
   );
 }
 
-function Files({ sessionId, analysisId, updatedAt }: { sessionId: string; analysisId?: string; updatedAt: string }) {
-  const files = useQuery({ queryKey: ["files", sessionId, analysisId, updatedAt], queryFn: () => api.files(sessionId) });
+function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: string; analysisId?: string; timeline?: UnifiedTimeline; updatedAt: string }) {
+  const files = useQuery({
+    queryKey: ["files", sessionId, analysisId, timeline?.captureId, timeline?.aiRunId, updatedAt],
+    queryFn: () => api.files(sessionId),
+  });
   const download = useMutation({ mutationFn: (f: ExportFile) => api.download(sessionId, f.path) });
-  const shown = (files.data ?? []).filter((f) => !f.path.includes("/") || (analysisId && f.path.startsWith(analysisId + "/") && !f.path.includes("/markers/")));
-  const label = (f: ExportFile) => (f.path.includes("/") ? "분석 " + f.path.split("/").pop() : f.path);
+  // Top-level chat files and the newest analysis, timeline, comment capture and AI run.
+  const folders: [string | undefined, string][] = [
+    ["timeline/", "통합"],
+    [analysisId && analysisId + "/", "분석"],
+    [timeline?.captureId && `comments/${timeline.captureId}/`, "댓글"],
+    [timeline?.aiRunId && `ai/${timeline.aiRunId}/`, "AI"],
+  ];
+  // Chat files first, then each folder in the order above.
+  const groupOf = (f: ExportFile) =>
+    f.path.includes("/") ? folders.findIndex(([prefix]) => prefix && f.path.startsWith(prefix)) + 1 : 0;
+  const labelOf = (f: ExportFile) => {
+    if (!f.path.includes("/")) return f.path;
+    const hit = folders.find(([prefix]) => prefix && f.path.startsWith(prefix));
+    return hit && !f.path.includes("/markers/") ? `${hit[1]} ${f.path.split("/").pop()}` : null;
+  };
+  const shown = (files.data ?? [])
+    .filter((f) => labelOf(f) !== null)
+    .sort((x, y) => groupOf(x) - groupOf(y) || x.path.localeCompare(y.path));
   return (
     <section className="section" aria-labelledby="files-title">
       <h2 id="files-title" className="section-title">
@@ -264,7 +359,7 @@ function Files({ sessionId, analysisId, updatedAt }: { sessionId: string; analys
           {shown.map((f) => (
             <li key={f.path}>
               <button type="button" className="link-button" onClick={() => download.mutate(f)}>
-                {label(f)}
+                {labelOf(f)}
               </button>{" "}
               <span className="file-size">{formatSize(f.size)}</span>
             </li>

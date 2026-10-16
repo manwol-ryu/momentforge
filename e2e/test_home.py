@@ -1,6 +1,7 @@
 """Phase 0: the single binary serves the app, the API is guarded, SSE connects."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from playwright.sync_api import Page, expect
@@ -19,7 +20,7 @@ def test_home_shows_status_and_live_connection(page: Page, base_url: str) -> Non
     expect(page.get_by_role("heading", level=1, name="MomentForge")).to_be_visible()
     expect(page.get_by_role("heading", name="저장한 작업")).to_be_visible()
     expect(page.locator(".connection")).to_have_text("연결됨", timeout=10_000)
-    expect(page.get_by_text("스키마 3")).to_be_visible()
+    expect(page.get_by_text(re.compile(r"^스키마 \d+$"))).to_be_visible()
     expect(page.locator(".facts")).to_contain_text("치지직")  # supported platforms
     expect(page.get_by_text(".data", exact=False).first).to_be_visible()  # data folder is e2e/.data
     page.screenshot(path=str(SHOTS / "home-light.png"), full_page=True)

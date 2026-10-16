@@ -27,6 +27,11 @@ func (c *Chzzk) get(ctx context.Context, path string, q url.Values) (map[string]
 	if err != nil {
 		return nil, nil, err
 	}
+	return decodeContent(res)
+}
+
+// decodeContent checks a CHZZK/Naver response envelope ({"code":200,"content":{…}}).
+func decodeContent(res *platform.Response) (map[string]any, []byte, error) {
 	switch {
 	case res.Status == 401:
 		return nil, res.Body, loginRequired()

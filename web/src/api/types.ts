@@ -19,11 +19,11 @@ export interface ServerEvent<T = unknown> {
   data?: T;
 }
 
-export type JobPhase = "starting" | "checking" | "collecting" | "analyzing" | "done" | "paused" | "error";
+export type JobPhase = "starting" | "checking" | "collecting" | "analyzing" | "comments" | "done" | "paused" | "error";
 
 export interface JobStatus {
   id: string;
-  kind: "collect" | "analyze" | "";
+  kind: "collect" | "analyze" | "comments" | "";
   busy: boolean;
   phase: JobPhase | "";
   message: string;
@@ -35,13 +35,16 @@ export interface JobStatus {
   pages: number;
   analysisId?: string;
   candidates: number;
+  /** Comments read and viewer recommendations found (comments step). */
+  comments?: number;
+  recommendations?: number;
   warning?: string;
   updatedAt: string;
 }
 
 export type LiveState = "starting" | "collecting" | "reconnecting" | "stopping" | "stopped" | "ended" | "error" | "incomplete";
 
-export type SessionState = "collecting" | "paused" | "finished" | LiveState;
+export type SessionState = "collecting" | "paused" | "finished" | "comments_only" | LiveState;
 
 export interface Session {
   id: string;
@@ -64,6 +67,7 @@ export interface Session {
   isDemo: boolean;
   canResume: boolean;
   canPlay: boolean;
+  canReadComments: boolean;
   watchUrl?: string;
 }
 
@@ -228,4 +232,104 @@ export interface LiveDensity {
   bucketMs: number;
   endMs: number;
   windows: DetectWindow[];
+}
+
+// --- Viewer recommendations, unified timeline, AI (phase 4) ---
+
+export interface ViewerRecommendation {
+  id: string;
+  commentId: string;
+  startMs: number;
+  endMs: number | null;
+  description: string;
+  commentText: string;
+  watchUrl?: string;
+}
+
+export interface CommentsView {
+  captureId: string;
+  source: "website" | "manual_paste";
+  state: "finished" | "partial";
+  pages: number;
+  reportedCount: number | null;
+  commentCount: number;
+  issues: string[];
+  createdAt: string;
+  recommendations: ViewerRecommendation[];
+  needsReview: { commentId: string; text: string; reasons: string[] }[];
+}
+
+export type TimelineSource = "rule" | "viewer_comment" | "ai";
+
+export interface TimelineItem {
+  id: string;
+  source: TimelineSource;
+  originId: string;
+  anchorMs: number;
+  clipStartMs: number;
+  clipEndMs: number;
+  title: string;
+  commentText?: string;
+  rationale?: string;
+  uncertainty?: string;
+  priority?: "high" | "medium" | "low";
+  watchUrl?: string;
+}
+
+export interface UnifiedTimeline {
+  sessionId: string;
+  title: string;
+  durationMs: number;
+  analysisId: string;
+  captureId: string;
+  aiRunId: string;
+  items: TimelineItem[];
+}
+
+export interface AIProvider {
+  id: string;
+  name: string;
+  configured: boolean;
+}
+
+/** Exactly what an AI run will send (snake_case as sent). */
+export interface AIPlan {
+  provider: string;
+  model: string;
+  prompt: string;
+  ranges: { start_ms: number; end_ms: number }[];
+  chunks: unknown[];
+  omitted: { start_ms: number; end_ms: number; reason: string }[];
+  request_count: number;
+  planned_input_token_estimate: number;
+  input_token_upper_estimate: number;
+  output_token_limit: number;
+  request_attempt_limit: number;
+  estimate_note: string;
+  fingerprint: string;
+}
+
+export interface AIPreview {
+  previewId: string;
+  expiresAt: string;
+  plan: AIPlan;
+}
+
+export type AIRunState = "running" | "completed" | "partial" | "failed" | "cancelled";
+
+export interface AIRun {
+  id: string;
+  sessionId: string;
+  provider: string;
+  model: string;
+  state: AIRunState;
+  requestCount: number;
+  completedRequests: number;
+  attempts: number;
+  rejected: number;
+  recommendations: number;
+  inputTokens: number;
+  outputTokens: number;
+  errorCode?: string;
+  errorMessage?: string;
 }

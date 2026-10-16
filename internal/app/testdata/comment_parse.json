@@ -1,0 +1,534 @@
+{
+ "durationMs": 18000000,
+ "cases": [
+  {
+   "text": "1:23 웃긴 장면",
+   "found": [
+    {
+     "start_ms": 83000,
+     "end_ms": null,
+     "description": "웃긴 장면",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "12:34",
+   "found": [
+    {
+     "start_ms": 754000,
+     "end_ms": null,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1:02:03 레전드",
+   "found": [
+    {
+     "start_ms": 3723000,
+     "end_ms": null,
+     "description": "레전드",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "0:59 시작하자마자",
+   "found": [
+    {
+     "start_ms": 59000,
+     "end_ms": null,
+     "description": "시작하자마자",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1:60 잘못된 초",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_time"
+    }
+   ]
+  },
+  {
+   "text": "1:61:00 잘못된 분",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_time"
+    }
+   ]
+  },
+  {
+   "text": "1시간 2분 3초 여기",
+   "found": [
+    {
+     "start_ms": 3723000,
+     "end_ms": null,
+     "description": "여기",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "2분 30초",
+   "found": [
+    {
+     "start_ms": 150000,
+     "end_ms": null,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1시간2분3초",
+   "found": [
+    {
+     "start_ms": 3723000,
+     "end_ms": null,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "10분 61초",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_time"
+    }
+   ]
+  },
+  {
+   "text": "1시간 60분 0초",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_time"
+    }
+   ]
+  },
+  {
+   "text": "12:00~13:30 하이라이트",
+   "found": [
+    {
+     "start_ms": 720000,
+     "end_ms": 810000,
+     "description": "하이라이트",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "12:00 ~ 13:30",
+   "found": [
+    {
+     "start_ms": 720000,
+     "end_ms": 810000,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "12:00 - 11:00 거꾸로",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_range"
+    }
+   ]
+  },
+  {
+   "text": "12:00–12:40 대시",
+   "found": [
+    {
+     "start_ms": 720000,
+     "end_ms": 760000,
+     "description": "대시",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "12:00〜13:00",
+   "found": [
+    {
+     "start_ms": 720000,
+     "end_ms": 780000,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1:00:00～1:01:00",
+   "found": [
+    {
+     "start_ms": 3600000,
+     "end_ms": 3660000,
+     "description": "",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "오후 3:00에 다시",
+   "found": [],
+   "issues": [
+    {
+     "offset": 3,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "오늘 12:00 방송",
+   "found": [],
+   "issues": [
+    {
+     "offset": 3,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "5:00 후에 시작",
+   "found": [
+    {
+     "start_ms": 300000,
+     "end_ms": null,
+     "description": "후에 시작",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "3:00 남음",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "1:00 뒤 반전",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "점수 3:2",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "비율 16:9 화면",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "1:23 웃김 2:34 대박 3:45 미침",
+   "found": [
+    {
+     "start_ms": 83000,
+     "end_ms": null,
+     "description": "웃김",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    },
+    {
+     "start_ms": 154000,
+     "end_ms": null,
+     "description": "대박",
+     "offset": 8,
+     "parse_kind": "text_timestamp"
+    },
+    {
+     "start_ms": 225000,
+     "end_ms": null,
+     "description": "미침",
+     "offset": 16,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1:23 웃김 1:23 웃김 중복",
+   "found": [
+    {
+     "start_ms": 83000,
+     "end_ms": null,
+     "description": "웃김",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "99:00 영상 끝 넘음",
+   "found": [
+    {
+     "start_ms": 5940000,
+     "end_ms": null,
+     "description": "영상 끝 넘음",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "4:59:59 끝",
+   "found": [
+    {
+     "start_ms": 17999000,
+     "end_ms": null,
+     "description": "끝",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "5:00:00 끝 바로",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "invalid_time"
+    }
+   ]
+  },
+  {
+   "text": "a1:23 붙음",
+   "found": [
+    {
+     "start_ms": 83000,
+     "end_ms": null,
+     "description": "붙음",
+     "offset": 1,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "-1:23 음수",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "1:23:4 짧음",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "12:345 숫자",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "1:2 짧음",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "타임라인\n0:30 인트로\n5:10 첫 킬\n12:00 ~ 12:45 보스전",
+   "found": [
+    {
+     "start_ms": 30000,
+     "end_ms": null,
+     "description": "인트로",
+     "offset": 5,
+     "parse_kind": "text_timestamp"
+    },
+    {
+     "start_ms": 310000,
+     "end_ms": null,
+     "description": "첫 킬",
+     "offset": 14,
+     "parse_kind": "text_timestamp"
+    },
+    {
+     "start_ms": 720000,
+     "end_ms": 765000,
+     "description": "보스전",
+     "offset": 23,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "3:00 | 웃음 / 4:00 | 눈물",
+   "found": [
+    {
+     "start_ms": 180000,
+     "end_ms": null,
+     "description": "웃음",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    },
+    {
+     "start_ms": 240000,
+     "end_ms": null,
+     "description": "눈물",
+     "offset": 12,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "시계 10:30 맞춤",
+   "found": [],
+   "issues": [
+    {
+     "offset": 3,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "날짜 1:12",
+   "found": [],
+   "issues": [
+    {
+     "offset": 3,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "내일 7:30",
+   "found": [],
+   "issues": [
+    {
+     "offset": 3,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "1:23:45:67",
+   "found": [],
+   "issues": []
+  },
+  {
+   "text": "0:00 처음",
+   "found": [
+    {
+     "start_ms": 0,
+     "end_ms": null,
+     "description": "처음",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "🙂 1:23 이모지 뒤",
+   "found": [
+    {
+     "start_ms": 83000,
+     "end_ms": null,
+     "description": "이모지 뒤",
+     "offset": 2,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  },
+  {
+   "text": "1:23후 붙은 후",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "1:23 후 띄운 후",
+   "found": [],
+   "issues": [
+    {
+     "offset": 0,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "앞부분 아주 긴 설명이 있고 나서야 오후 3:00",
+   "found": [],
+   "issues": [
+    {
+     "offset": 23,
+     "reason": "needs_review"
+    }
+   ]
+  },
+  {
+   "text": "100:00 긴 영상",
+   "found": [
+    {
+     "start_ms": 6000000,
+     "end_ms": null,
+     "description": "긴 영상",
+     "offset": 0,
+     "parse_kind": "text_timestamp"
+    }
+   ],
+   "issues": []
+  }
+ ]
+}

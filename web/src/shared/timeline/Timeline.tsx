@@ -13,6 +13,8 @@ interface Props {
   windowMs?: number;
   /** Spans with no observed chat, shown hatched. */
   gaps?: Gap[];
+  /** Moments from other sources (viewer comments, AI), drawn as their own markers. */
+  extraMarkers?: { id: string; ms: number; kind: "viewer_comment" | "ai"; label: string }[];
 }
 
 const BAR_AREA = 64; // px, matches .timeline-bars height
@@ -23,7 +25,17 @@ const BAR_AREA = 64; // px, matches .timeline-bars height
  * per candidate at its peak. Markers are buttons, so the timeline is usable
  * with a keyboard as well as a pointer.
  */
-export function Timeline({ durationMs, windows, candidates, selectedId, onSelect, stepMs = 5000, windowMs = 10_000, gaps = [] }: Props) {
+export function Timeline({
+  durationMs,
+  windows,
+  candidates,
+  selectedId,
+  onSelect,
+  stepMs = 5000,
+  windowMs = 10_000,
+  gaps = [],
+  extraMarkers = [],
+}: Props) {
   const maxN = Math.max(1, ...windows.map((w) => w.n));
   const pct = (ms: number) => `${(Math.min(Math.max(ms, 0), durationMs) / durationMs) * 100}%`;
   const ticks: number[] = [];
@@ -83,6 +95,18 @@ export function Timeline({ durationMs, windows, candidates, selectedId, onSelect
             aria-pressed={c.id === selectedId}
             aria-label={`후보 ${i + 1}, ${timecode(c.reactionStartMs, longForm)}`}
             onClick={() => onSelect(c.id)}
+          />
+        ))}
+        {extraMarkers.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            className="timeline-marker"
+            data-kind={m.kind}
+            style={{ left: pct(m.ms) }}
+            aria-pressed={m.id === selectedId}
+            aria-label={m.label}
+            onClick={() => onSelect(m.id)}
           />
         ))}
       </div>

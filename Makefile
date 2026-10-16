@@ -41,7 +41,7 @@ check: web/dist
 	@out="$$($(GOFMT) -l cmd internal web/embed.go)"; \
 		if [ -n "$$out" ]; then echo "gofmt가 필요한 파일:"; echo "$$out"; exit 1; fi
 	$(GO) vet ./...
-	$(GO) vet -tags e2efake ./cmd/... ./internal/platform/e2efake/
+	$(GO) vet -tags e2efake ./cmd/... ./internal/platform/e2efake/ ./internal/ai/e2efake/
 
 test: check web/node_modules/.installed
 	$(GO) test ./...

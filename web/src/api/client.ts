@@ -1,8 +1,12 @@
 import type {
+  AIPreview,
+  AIProvider,
+  AIRun,
   Analysis,
   ApiErrorBody,
   Candidate,
   CandidateChats,
+  CommentsView,
   ExportFile,
   Checkpoint,
   JobStatus,
@@ -14,6 +18,7 @@ import type {
   PlayheadChats,
   Session,
   Status,
+  UnifiedTimeline,
 } from "./types";
 
 export const KEY_HEADER = "X-MomentForge-Key";
@@ -75,9 +80,30 @@ export const api = {
   status: () => getJSON<Status>("/api/status"),
   job: () => getJSON<JobStatus>("/api/job"),
   cancelJob: () => postJSON<JobStatus>("/api/job/cancel"),
-  collect: (url: string, sensitive: boolean) => postJSON<JobStatus>("/api/collect", { url, sensitive }),
+  collect: (url: string, sensitive: boolean, includeComments = true) =>
+    postJSON<JobStatus>("/api/collect", { url, sensitive, includeComments }),
+  startComments: (req: { sessionId?: string; url?: string; text?: string }) => postJSON<JobStatus>("/api/comments", req),
+  comments: (sessionId: string) => getJSON<CommentsView | null>(`/api/sessions/${enc(sessionId)}/comments`),
+  timeline: (sessionId: string) => getJSON<UnifiedTimeline>(`/api/sessions/${enc(sessionId)}/timeline`),
+  aiProviders: () => getJSON<{ providers: AIProvider[] }>("/api/ai"),
+  aiKey: (provider: string, key: string) => postJSON<{ configured: boolean }>("/api/ai/key", { provider, key }),
+  aiPreview: (req: {
+    sessionId: string;
+    provider: string;
+    model: string;
+    mode: "candidates" | "range";
+    itemIds?: string[];
+    startMs?: number;
+    endMs?: number;
+  }) => postJSON<AIPreview>("/api/ai/preview", req),
+  aiStart: (previewId: string, fingerprint: string, regenerate = false) =>
+    postJSON<{ id: string }>("/api/ai/runs", { previewId, fingerprint, regenerate }),
+  aiRun: (id: string) => getJSON<AIRun>(`/api/ai/runs/${enc(id)}`),
+  aiCancel: (id: string) => postJSON<{ cancelling: boolean }>(`/api/ai/runs/${enc(id)}/cancel`),
   demo: (sensitive = false) => postJSON<Session>("/api/demo", { sensitive }),
   sessions: () => getJSON<Session[]>("/api/sessions"),
+  hideSessions: () => postJSON<{ changed: number }>("/api/sessions/hide"),
+  restoreSessions: () => postJSON<{ changed: number }>("/api/sessions/restore"),
   session: (id: string) => getJSON<Session>(`/api/sessions/${enc(id)}`),
   resume: (id: string, sensitive: boolean) => postJSON<JobStatus>(`/api/sessions/${enc(id)}/resume`, { sensitive }),
   reanalyze: (id: string, sensitive: boolean) =>

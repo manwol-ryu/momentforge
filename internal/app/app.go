@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/events"
 	"github.com/manwol-ryu/momentforge/internal/platform"
@@ -24,6 +25,7 @@ type Config struct {
 	Params    detect.Params      // detection thresholds
 	Rules     []detect.Rule      // registered detection rules
 	Platforms *platform.Registry // registered platform adapters
+	AI        *ai.Registry       // registered AI providers
 }
 
 // App is the application core.
@@ -36,6 +38,7 @@ type App struct {
 
 	live       liveJobs
 	liveTiming liveTiming
+	ai         aiState
 }
 
 // New returns an App ready to serve requests.
@@ -43,9 +46,14 @@ func New(cfg Config) *App {
 	if cfg.Platforms == nil {
 		cfg.Platforms = &platform.Registry{}
 	}
+	if cfg.AI == nil {
+		cfg.AI = &ai.Registry{}
+	}
 	ctx, stop := context.WithCancel(context.Background())
-	return &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus},
+	a := &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus},
 		liveTiming: defaultLiveTiming()}
+	a.initAI()
+	return a
 }
 
 // Shutdown cancels background work and waits for it (bounded by ctx).
@@ -53,6 +61,7 @@ func (a *App) Shutdown(ctx context.Context) {
 	a.stop()
 	a.jobs.stop(ctx)
 	a.stopLive(ctx)
+	a.stopAI(ctx)
 }
 
 // Status describes the running app.

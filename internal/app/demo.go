@@ -14,8 +14,21 @@ const demoPlatform = "demo"
 
 // CreateDemo stores the built-in synthetic chat as a finished session and
 // analyzes it, so the sample uses the same review screen as real videos.
+// A sample saved before (even one hidden from the list) is shown again.
 func (a *App) CreateDemo(ctx context.Context, sensitive bool) (SessionInfo, error) {
 	st := a.cfg.Store
+	all, err := st.Sessions(ctx, true)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	for _, s := range all {
+		if IsDemo(s) && s.LatestAnalysisID != "" {
+			if err := st.SetHidden(ctx, s.ID, false); err != nil {
+				return SessionInfo{}, err
+			}
+			return a.Session(ctx, s.ID)
+		}
+	}
 	salt, err := privacy.NewSalt()
 	if err != nil {
 		return SessionInfo{}, err

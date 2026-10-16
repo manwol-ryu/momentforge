@@ -44,10 +44,59 @@ func (*Fake) Match(raw string) (platform.Target, bool, error) {
 		return platform.Target{}, false, nil
 	}
 	ch := strings.Trim(u.Path, "/")
+	if video, ok := strings.CutPrefix(ch, "video/"); ok && video != "" && !strings.Contains(video, "/") {
+		return platform.Target{Platform: "e2efake", Kind: platform.KindVOD, ID: video}, true, nil
+	}
 	if ch == "" || strings.Contains(ch, "/") {
 		return platform.Target{}, true, domain.NewUserError("INVALID_URL", "https://"+Host+"/채널 형식으로 입력해 주세요.")
 	}
 	return platform.Target{Platform: "e2efake", Kind: platform.KindLive, ID: ch}, true, nil
+}
+
+// --- synthetic VOD: https://live.e2e.test/video/{id} ---
+
+const vodMs = 20 * 60_000
+
+// VODMeta describes a 20-minute synthetic VOD.
+func (*Fake) VODMeta(ctx context.Context, t platform.Target) (platform.VODMeta, error) {
+	return platform.VODMeta{Title: "E2E 가짜 다시보기 " + t.ID, DurationMs: vodMs}, nil
+}
+
+// VODChats returns 10 minutes per page: one message a second and, at
+// 12:00, 25 viewers laughing for 20 seconds.
+func (*Fake) VODChats(ctx context.Context, t platform.Target, cursor, durationMs int64) (platform.ChatPage, error) {
+	end := min(cursor+10*60_000, vodMs)
+	var msgs []platform.RawChat
+	for ms := cursor + 1000; ms < end; ms += 1000 {
+		msgs = append(msgs, platform.RawChat{OffsetMs: ms, AuthorID: fmt.Sprintf("v%d", ms/1000%17), Text: casual[ms/1000%int64(len(casual))]})
+		if ms >= 12*60_000 && ms < 12*60_000+20_000 {
+			for i := range 25 {
+				msgs = append(msgs, platform.RawChat{OffsetMs: ms + int64(i)*30, AuthorID: fmt.Sprintf("r%d", i), Text: "ㅋㅋㅋㅋㅋ"})
+			}
+		}
+	}
+	page := platform.ChatPage{Messages: msgs, Raw: []byte(`{"synthetic":true}`)}
+	if end >= vodMs {
+		page.Finished = true
+	} else {
+		page.Next = end
+	}
+	return page, nil
+}
+
+// VODComments returns four synthetic comments: two times (one a range), a
+// clock time that needs review, a hidden comment and a reply.
+func (*Fake) VODComments(ctx context.Context, t platform.Target, maxPages int, progress func(int, int)) (platform.CommentResult, error) {
+	cs := []platform.Comment{
+		{ID: "1", AuthorID: "fan-1", Text: "12:00 웃음 터짐 / 15:30~16:00 반복 구간"},
+		{ID: "2", AuthorID: "fan-2", Text: "오후 3:00에 봤어요"},
+		{ID: "3", AuthorID: "fan-3", Text: "5:00 비밀 댓글", Hidden: true},
+		{ID: "4", ParentID: "1", AuthorID: "fan-4", Text: "ㅇㅈ"},
+	}
+	if progress != nil {
+		progress(1, len(cs))
+	}
+	return platform.CommentResult{Comments: cs, ReportedCount: 3, Pages: 1}, nil
 }
 
 func (f *Fake) LiveMeta(ctx context.Context, t platform.Target) (platform.LiveMeta, error) {
@@ -132,7 +181,10 @@ func later(a, b time.Time) time.Time {
 
 var casual = []string{"안녕하세요", "오늘 방송 재밌다", "GG", "이거 뭐임", "굿굿", "화이팅", "음악 좋네", "오 좋다"}
 
-// WatchURL links to the fake channel (never opened by tests).
+// WatchURL links to the fake channel or video (never opened by tests).
 func (*Fake) WatchURL(t platform.Target, offsetMs int64) string {
+	if t.Kind == platform.KindVOD {
+		return fmt.Sprintf("https://%s/video/%s?t=%d", Host, t.ID, offsetMs/1000)
+	}
 	return "https://" + Host + "/" + t.ID
 }

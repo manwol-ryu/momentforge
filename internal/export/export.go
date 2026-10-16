@@ -425,3 +425,226 @@ func pyBool(b bool) string {
 	}
 	return "False"
 }
+
+// CommentManifest describes a comment capture's files.
+type CommentManifest struct {
+	CaptureID           string   `json:"capture_id"`
+	SessionID           string   `json:"session_id"`
+	VideoID             string   `json:"video_id"`
+	Source              string   `json:"source"` // website | manual_paste
+	State               string   `json:"state"`  // finished | partial
+	Pages               int      `json:"pages"`
+	ReportedCount       *int     `json:"reported_count"`
+	Issues              []string `json:"issues"`
+	ParserVersion       int      `json:"parser_version"`
+	CommentCount        int      `json:"comment_count"`
+	RecommendationCount int      `json:"recommendation_count"`
+	Completeness        string   `json:"completeness"`
+	Note                string   `json:"note"`
+}
+
+// CommentRow is one stored comment (pseudonymous; blank when hidden).
+type CommentRow struct {
+	CommentID string          `json:"comment_id"`
+	ParentID  *string         `json:"parent_comment_id"`
+	AuthorKey *string         `json:"author_key"`
+	Content   string          `json:"content"`
+	Status    string          `json:"status"`
+	Issues    json.RawMessage `json:"issues"`
+}
+
+// RecommendationRow is one viewer recommendation (CzzEdit's fields).
+type RecommendationRow struct {
+	ID          string `json:"id"`
+	CommentID   string `json:"comment_id"`
+	StartMs     int64  `json:"start_ms"`
+	EndMs       *int64 `json:"end_ms"`
+	Description string `json:"description"`
+	SourceType  string `json:"source_type"`
+	ReviewState string `json:"review_state"`
+	Source      string `json:"source"`
+	ParseKind   string `json:"parse_kind"`
+}
+
+// WriteComments writes comments.jsonl, recommendations.json and manifest.json.
+func WriteComments(dir string, m CommentManifest, comments []CommentRow, recs []RecommendationRow) error {
+	m.Completeness = "unverified"
+	m.Note = "영상 댓글의 시각은 시청자가 쓴 내용입니다. 채팅 TXT에는 섞지 않습니다."
+	m.CommentCount, m.RecommendationCount = len(comments), len(recs)
+	if m.Issues == nil {
+		m.Issues = []string{}
+	}
+	var jsonl bytes.Buffer
+	enc := json.NewEncoder(&jsonl)
+	enc.SetEscapeHTML(false)
+	for _, c := range comments {
+		if len(c.Issues) == 0 {
+			c.Issues = json.RawMessage("[]")
+		}
+		if err := enc.Encode(c); err != nil {
+			return err
+		}
+	}
+	if recs == nil {
+		recs = []RecommendationRow{}
+	}
+	for _, f := range []struct {
+		name string
+		v    any
+	}{{"recommendations.json", recs}, {"manifest.json", m}} {
+		b, err := jsonBytes(f.v)
+		if err != nil {
+			return err
+		}
+		if err := writeAtomic(filepath.Join(dir, f.name), b); err != nil {
+			return err
+		}
+	}
+	return writeAtomic(filepath.Join(dir, "comments.jsonl"), jsonl.Bytes())
+}
+
+// TimelineFile is the unified timeline of one video: rule candidates,
+// viewer recommendations and AI recommendations, each labelled by source.
+type TimelineFile struct {
+	SessionID  string         `json:"session_id"`
+	VideoID    string         `json:"video_id"`
+	Title      string         `json:"title"`
+	DurationMs int64          `json:"duration_ms"`
+	AnalysisID string         `json:"run_id"`
+	CaptureID  string         `json:"comment_id"`
+	AIRunID    string         `json:"ai_id"`
+	TimeBasis  string         `json:"time_basis"`
+	Items      []TimelineItem `json:"items"`
+}
+
+// TimelineItem is one entry; Source is rule, viewer_comment or ai.
+type TimelineItem struct {
+	ID          string `json:"id"`
+	Source      string `json:"source_type"`
+	OriginID    string `json:"origin_id"`
+	AnchorMs    int64  `json:"anchor_ms"`
+	ClipStartMs int64  `json:"clip_start_ms"`
+	ClipEndMs   int64  `json:"clip_end_ms"`
+	Title       string `json:"title"`
+	CommentText string `json:"comment_text,omitempty"`
+	Rationale   string `json:"rationale,omitempty"`
+	Uncertainty string `json:"uncertainty,omitempty"`
+	WatchURL    string `json:"video_url,omitempty"`
+}
+
+var sourceLabel = map[string]string{"rule": "자동 탐지", "viewer_comment": "시청자 추천", "ai": "AI 추천"}
+
+// WriteTimeline writes timeline.json, timeline.txt and timeline.csv (CzzEdit's unified timeline).
+func WriteTimeline(dir string, t TimelineFile) error {
+	t.TimeBasis = "video_position"
+	if t.Items == nil {
+		t.Items = []TimelineItem{}
+	}
+	b, err := jsonBytes(t)
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(dir, "timeline.json"), b); err != nil {
+		return err
+	}
+	var txt strings.Builder
+	fmt.Fprintf(&txt, "MomentForge 통합 타임라인 | %s\n자동 탐지 %s / 시청자 추천 %s / AI %s\n", Escape(t.Title),
+		orNone(t.AnalysisID), orNone(t.CaptureID), orNone(t.AIRunID))
+	var csvBuf bytes.Buffer
+	csvBuf.WriteString("\ufeff")
+	w := csv.NewWriter(&csvBuf)
+	w.Write([]string{"time_ms", "time", "source", "id", "title"})
+	for _, it := range t.Items {
+		s := it.AnchorMs / 1000
+		fmt.Fprintf(&txt, "%02d:%02d:%02d [%s] %s (%s)\n", s/3600, s/60%60, s%60, sourceLabel[it.Source], Escape(it.Title), it.ID)
+		w.Write([]string{strconv.FormatInt(it.AnchorMs, 10), Stamp(it.AnchorMs), sourceLabel[it.Source], it.ID, csvSafe(it.Title)})
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(dir, "timeline.txt"), []byte(txt.String())); err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(dir, "timeline.csv"), csvBuf.Bytes())
+}
+
+func orNone(id string) string {
+	if id == "" {
+		return "없음"
+	}
+	return id
+}
+
+// AIManifest describes an AI run's files.
+type AIManifest struct {
+	RunID             string  `json:"run_id"`
+	SessionID         string  `json:"session_id"`
+	Provider          string  `json:"provider"`
+	Model             string  `json:"model"`
+	PromptVersion     int     `json:"prompt_version"`
+	Fingerprint       string  `json:"fingerprint"`
+	State             string  `json:"state"`
+	RequestCount      int     `json:"request_count"`
+	CompletedRequests int     `json:"completed_requests"`
+	Attempts          int     `json:"attempts"`
+	Rejected          int     `json:"rejected"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	Error             string  `json:"error,omitempty"`
+	Ranges            any     `json:"ranges"`
+	Omitted           any     `json:"omitted"`
+	Unprocessed       []Range `json:"unprocessed_ranges"`
+	Note              string  `json:"note"`
+}
+
+// Range is a span of the video in milliseconds.
+type Range struct {
+	StartMs int64 `json:"start_ms"`
+	EndMs   int64 `json:"end_ms"`
+}
+
+// AIRecommendation is one validated AI recommendation.
+type AIRecommendation struct {
+	ID                 string   `json:"id"`
+	SourceCandidateIDs []string `json:"source_candidate_ids"`
+	StartMs            int64    `json:"start_ms"`
+	EndMs              int64    `json:"end_ms"`
+	Title              string   `json:"title"`
+	Rationale          string   `json:"rationale"`
+	EvidenceRefs       []string `json:"evidence_refs"`
+	Uncertainty        string   `json:"uncertainty"`
+	Priority           string   `json:"priority"`
+}
+
+var priorityLabel = map[string]string{"high": "높음", "medium": "보통", "low": "낮음"}
+
+// WriteAIRun writes recommendations.json, recommendations.txt and manifest.json.
+func WriteAIRun(dir string, m AIManifest, recs []AIRecommendation) error {
+	m.Note = "AI는 영상과 음성을 보지 않았습니다. 채팅 근거로 만든 추천이며 장면을 직접 확인해야 합니다."
+	if recs == nil {
+		recs = []AIRecommendation{}
+	}
+	if m.Unprocessed == nil {
+		m.Unprocessed = []Range{}
+	}
+	var txt strings.Builder
+	fmt.Fprintf(&txt, "MomentForge AI 추천 | %s %s | %s\n\n", m.Provider, Escape(m.Model), m.State)
+	for _, r := range recs {
+		fmt.Fprintf(&txt, "%s ~ %s [%s] %s\n  근거: %s\n  판단 한계: %s\n\n", Stamp(r.StartMs), Stamp(r.EndMs),
+			priorityLabel[r.Priority], Escape(r.Title), Escape(r.Rationale), Escape(r.Uncertainty))
+	}
+	for _, f := range []struct {
+		name string
+		v    any
+	}{{"recommendations.json", recs}, {"manifest.json", m}} {
+		b, err := jsonBytes(f.v)
+		if err != nil {
+			return err
+		}
+		if err := writeAtomic(filepath.Join(dir, f.name), b); err != nil {
+			return err
+		}
+	}
+	return writeAtomic(filepath.Join(dir, "recommendations.txt"), []byte(txt.String()))
+}

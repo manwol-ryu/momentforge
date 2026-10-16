@@ -18,6 +18,9 @@ type CollectRequest struct {
 	URL       string
 	Sensitive bool
 	Resume    string // session ID to continue; empty starts a new session
+	// IncludeComments also reads the video's comments for viewer
+	// recommendations after the chat (CzzEdit's default).
+	IncludeComments bool
 }
 
 // StartCollect validates the URL now and collects in the background.
@@ -33,7 +36,7 @@ func (a *App) StartCollect(req CollectRequest) (JobStatus, error) {
 	if !ok || target.Kind != platform.KindVOD {
 		return JobStatus{}, domain.NewUserError("UNSUPPORTED", "이 주소는 아직 수집할 수 없습니다. 다시보기 주소를 입력해 주세요.")
 	}
-	return a.startCollect(p, src, target, req.Resume, a.params(req.Sensitive))
+	return a.startCollect(p, src, target, req.Resume, a.params(req.Sensitive), req.IncludeComments)
 }
 
 // ResumeSession continues a paused collection from its saved position.
@@ -48,17 +51,21 @@ func (a *App) ResumeSession(ctx context.Context, sid string, sensitive bool) (Jo
 		return JobStatus{}, domain.NewUserError("UNSUPPORTED", "이 작업은 이어받을 수 없습니다.")
 	}
 	target := platform.Target{Platform: s.Platform, Kind: platform.KindVOD, ID: s.TargetID}
-	return a.startCollect(p, src, target, sid, a.params(sensitive))
+	_, hasComments, err := a.cfg.Store.LatestCommentCapture(ctx, sid)
+	if err != nil {
+		return JobStatus{}, err
+	}
+	return a.startCollect(p, src, target, sid, a.params(sensitive), !hasComments)
 }
 
-func (a *App) startCollect(p platform.Platform, src platform.VODSource, target platform.Target, resume string, params detect.Params) (JobStatus, error) {
+func (a *App) startCollect(p platform.Platform, src platform.VODSource, target platform.Target, resume string, params detect.Params, comments bool) (JobStatus, error) {
 	return a.jobs.start(a.ctx, "collect", func(ctx context.Context, h job) error {
-		return a.collect(ctx, h, p, src, target, resume, params)
+		return a.collect(ctx, h, p, src, target, resume, params, comments)
 	})
 }
 
 func (a *App) collect(ctx context.Context, h job, p platform.Platform, src platform.VODSource,
-	target platform.Target, resume string, params detect.Params) (err error) {
+	target platform.Target, resume string, params detect.Params, comments bool) (err error) {
 	h.update(func(s *JobStatus) { s.Phase, s.Message = "checking", "영상 정보를 확인하는 중입니다." })
 	meta, err := src.VODMeta(ctx, target)
 	if err != nil {
@@ -151,9 +158,21 @@ func (a *App) collect(ctx context.Context, h job, p platform.Platform, src platf
 	if err != nil {
 		return err
 	}
-	h.update(func(s *JobStatus) {
-		s.AnalysisID, s.Candidates, s.Message = an.ID, len(an.Candidates), "저장과 분석이 끝났습니다."
-	})
+	h.update(func(s *JobStatus) { s.AnalysisID, s.Candidates = an.ID, len(an.Candidates) })
+	if _, ok := p.(platform.CommentSource); comments && ok {
+		// Comments are extra: a failure keeps the chat and says why.
+		h.update(func(s *JobStatus) { s.Phase, s.Message = "comments", "영상 댓글을 읽는 중입니다." })
+		if _, n, cerr := a.captureComments(ctx, sess, "", h); cerr != nil {
+			msg := "읽지 못했습니다"
+			if ue, ok := domain.AsUserError(cerr); ok {
+				msg = ue.Message
+			}
+			warning = "채팅 저장 완료. 영상 댓글: " + msg
+		} else {
+			h.update(func(s *JobStatus) { s.Recommendations = n })
+		}
+	}
+	h.update(func(s *JobStatus) { s.Message, s.Warning = "저장과 분석이 끝났습니다.", warning })
 	return nil
 }
 

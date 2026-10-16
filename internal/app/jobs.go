@@ -14,21 +14,23 @@ import (
 // JobStatus is the visible state of the current (or last) background job.
 // It is published on the event bus as "job" every time it changes.
 type JobStatus struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"` // "collect" | "analyze"
-	Busy       bool      `json:"busy"`
-	Phase      string    `json:"phase"` // checking, collecting, analyzing, done, paused, error
-	Message    string    `json:"message"`
-	Code       string    `json:"code,omitempty"`
-	SessionID  string    `json:"sessionId,omitempty"`
-	Title      string    `json:"title,omitempty"`
-	PositionMs int64     `json:"positionMs"`
-	DurationMs int64     `json:"durationMs"`
-	Pages      int       `json:"pages"`
-	AnalysisID string    `json:"analysisId,omitempty"`
-	Candidates int       `json:"candidates"`
-	Warning    string    `json:"warning,omitempty"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	Kind            string    `json:"kind"` // "collect" | "analyze" | "comments"
+	Busy            bool      `json:"busy"`
+	Phase           string    `json:"phase"` // checking, collecting, analyzing, done, paused, error
+	Message         string    `json:"message"`
+	Code            string    `json:"code,omitempty"`
+	SessionID       string    `json:"sessionId,omitempty"`
+	Title           string    `json:"title,omitempty"`
+	PositionMs      int64     `json:"positionMs"`
+	DurationMs      int64     `json:"durationMs"`
+	Pages           int       `json:"pages"`
+	AnalysisID      string    `json:"analysisId,omitempty"`
+	Candidates      int       `json:"candidates"`
+	Comments        int       `json:"comments,omitempty"`        // comments read (comments job)
+	Recommendations int       `json:"recommendations,omitempty"` // viewer recommendations found
+	Warning         string    `json:"warning,omitempty"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type jobs struct {

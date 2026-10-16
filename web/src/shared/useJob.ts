@@ -22,6 +22,8 @@ export function useJob() {
         if (wasBusy.current && !status.busy) {
           void queryClient.invalidateQueries({ queryKey: ["sessions"] });
           void queryClient.invalidateQueries({ queryKey: ["session"] });
+          void queryClient.invalidateQueries({ queryKey: ["comments"] });
+          void queryClient.invalidateQueries({ queryKey: ["timeline"] });
         }
         wasBusy.current = status.busy;
       }),

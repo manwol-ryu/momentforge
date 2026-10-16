@@ -127,6 +127,25 @@ func (s *Store) Sessions(ctx context.Context, includeHidden bool) ([]Session, er
 	return out, rows.Err()
 }
 
+// SetAllHidden hides every visible session from the list (hidden=true) or
+// shows every hidden one again, and returns how many changed. Chat,
+// analyses and exports stay.
+func (s *Store) SetAllHidden(ctx context.Context, hidden bool) (int, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET hidden=?, updated_at=? WHERE hidden=?`,
+		boolInt(hidden), now(), boolInt(!hidden))
+	if err != nil {
+		return 0, fmt.Errorf("change hidden sessions: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// SetHidden hides or shows one session.
+func (s *Store) SetHidden(ctx context.Context, id string, hidden bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET hidden=?, updated_at=? WHERE id=?`, boolInt(hidden), now(), id)
+	return err
+}
+
 // SessionSalt returns the pseudonym secret of a session.
 func (s *Store) SessionSalt(ctx context.Context, id string) ([]byte, error) {
 	var salt []byte
