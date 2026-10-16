@@ -15,7 +15,7 @@
 
 ## 1. 기본 도구
 
-- Go 1.23 이상, `CGO_ENABLED=0`으로 빌드합니다. SQLite는 `modernc.org/sqlite`를 씁니다.
+- Go 1.26 이상(`go.mod` 기준), `CGO_ENABLED=0`으로 빌드합니다. SQLite는 `modernc.org/sqlite`를 씁니다.
 - 모든 파일은 `gofmt`를 통과해야 하고 `go vet ./...`에 경고가 없어야 합니다.
 - 로그는 `log/slog`만 씁니다. `fmt.Println`·`log.Printf`로 운영 로그를 남기지 않습니다.
 - 로그·오류 메시지에 채팅 본문, 원본 작성자 ID, API 키를 넣지 않습니다.

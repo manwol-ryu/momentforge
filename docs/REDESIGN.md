@@ -16,7 +16,7 @@
 | 확장 방향 | 다른 플랫폼, 탐지 규칙 추가·조정, LIVE 고도화, AI 분석 강화 |
 | 확장 1순위 | **AI 분석 강화** (여러 제공자, 자동 분석) |
 | 앱 이름 | **MomentForge**로 변경. 실행파일·Go 모듈·데이터 폴더는 `momentforge` |
-| Go 버전 | **1.23 이상** (`iter` 사용) |
+| Go 버전 | **1.26 이상** (처음 1.23으로 정했으나 `modernc.org/sqlite` 최신판 요구로 상향, 15절) |
 | AI 기본 제공자 | 5단계부터 **Claude가 기본**, OpenAI는 선택 |
 | MCP 서버 | **5단계에 포함** |
 | 보류 기능 | 본인 시청 계정 로그인 VOD, 공식 API 시청자 수 기록 — 기능 동등 범위에서 제외 |
@@ -110,7 +110,7 @@ momentforge/
 │  ├─ export/                     TXT/JSONL/CSV/JSON·checkpoint
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
-├─ web/                           Vite + React + TS
+├─ web/                           Vite + React + TS (embed.go: 빌드 결과를 Go 패키지로 내장)
 │  ├─ src/features/{vod,live,timeline,ai,settings}/
 │  └─ dist/ → go:embed
 ├─ e2e/                           Python Playwright 정상 작동 테스트 (개발용)
@@ -254,7 +254,7 @@ type JobManager interface {
 - WAL 모드, 쓰기는 작업별 단일 writer goroutine, 읽기는 커넥션 풀. MCP 서버는 읽기 전용 연결로 같은 DB를 엶.
 - 마이그레이션은 `store/migrations/NNNN_*.sql` + `PRAGMA user_version`.
 - DB가 원본 기준이고 TXT는 DB에서 재생성 가능하다는 원칙 유지.
-- 데이터 폴더: `.momentforge/` (`data/`, `exports/`, `runtime/`).
+- 데이터 폴더: 실행한 위치의 `.momentforge/` (`--data`로 변경). 하위에 `data/`(DB·백업), `exports/`, `runtime/`(접근 키, 서버 락).
 
 ## 8. HTTP API
 
@@ -337,6 +337,7 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 | 스킬 | 언제 적용되나 | 내용 |
 |---|---|---|
 | `momentforge-architecture` | 이 저장소의 모든 코드 작성·수정·리팩토링·리뷰 | 작업 절차, 의존 방향 표, 등록 방식, 위치 규칙, 영역별 상세 규칙(`references/go.md`, `web.md`, `ai.md`, `privacy-security.md`), 검사 스크립트 `scripts/check_layers.py` |
+| `e2e-check` | 단계 완료·커밋 전, 동작 확인 요청, E2E 실패 진단·추가 | `make test` → `make e2e` → 스크린샷 점검 → 정해진 형식으로 보고 (0단계에서 작성) |
 | `port-legacy-module` | 기존 Python 기능을 새 구조로 옮길 때 | 기존 동작 목록 작성 → 새 위치 결정(`references/legacy-map.md`) → 구현 → 기존 결과와 비교 → 체크리스트 갱신 |
 
 예정 (해당 인터페이스가 실제로 생긴 뒤 작성):
@@ -345,7 +346,6 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 |---|---|---|
 | `add-platform` | 2단계 (치지직 어댑터 완성 후) | 새 플랫폼 어댑터 추가 절차: 인터페이스 구현, registry 등록, 응답 파일 기반 테스트, Capabilities 반영 |
 | `add-detection-rule` | 1단계 (규칙 5종 이식 후) | 새 규칙 추가 절차: Rule 구현, Params 기본값, 설정 UI 노출, 데모 데이터로 확인 |
-| `e2e-check` | 0단계 (E2E 기반 마련 후) | 빌드 → 서버 실행 → E2E 스크립트 실행 → 결과 보고를 한 번에 수행 |
 
 작성 규칙: `SKILL.md`는 500줄 이하, 자세한 자료는 `references/`, 반복 실행 코드는 `scripts/`. 설명(description)에 언제 써야 하는지를 구체적으로 적음.
 
@@ -355,7 +355,7 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 
 | 단계 | 내용 | 적용 스킬 | 완료 기준 |
 |---|---|---|---|
-| **0. 골격** | Go 모듈, chi 서버, 보안 미들웨어, SQLite·마이그레이션, Vite 앱 embed, 빌드 스크립트, `e2e/` 기반, `docs/DESIGN-SYSTEM.md` | frontend-design, webapp-testing, skill-creator(`e2e-check`) | 단일 바이너리 실행 → 브라우저에 앱 표시, E2E 1개 통과 |
+| **0. 골격** ✅ | Go 모듈, chi 서버, 보안 미들웨어, SQLite·마이그레이션, Vite 앱 embed, 빌드 스크립트, `e2e/` 기반, `docs/DESIGN-SYSTEM.md` | frontend-design, webapp-testing, skill-creator(`e2e-check`) | 단일 바이너리 실행 → 브라우저에 앱 표시, E2E 1개 통과 |
 | **1. 탐지 엔진** | 엔진 + 규칙 5종 + Params, 데모 데이터 | skill-creator(`add-detection-rule`) | 데모 데이터로 후보 생성, 기존 Python과 결과 비교 확인 |
 | **2. VOD** | 치지직 VOD 메타·채팅 수집·이어받기, 분석, 후보 화면, HLS 재생·채팅 동기화, 내보내기 | frontend-design, webapp-testing, skill-creator(`add-platform`) | 실제 VOD URL로 수집 → 후보 클릭 → 해당 시각 재생 |
 | **3. LIVE** | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
@@ -377,7 +377,8 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 - [ ] 웹 시청자 수 기록·10% 감소 시 기준 재학습
 - [ ] 저장 목록 숨김·복원
 - [ ] 선택형 AI(미리보기 확인 후 실행)
-- [ ] 작성자 가명화, 127.0.0.1·로컬 키·Host·Origin 검사
+- [x] 127.0.0.1 바인딩·로컬 접근 키·Host·Origin 검사, 보안 헤더·CSP (0단계)
+- [ ] 작성자 가명화
 
 보류 (기능 동등 범위에서 제외, 필요해지면 별도 계획):
 
@@ -405,10 +406,17 @@ python e2e/with_server.py --server "./bin/momentforge serve --no-browser --port 
 |---|---|---|
 | 2026-10-16 | 로그인 VOD·공식 API 시청자 수를 기능 동등 범위에 포함할지 | 보류 (13절) |
 | 2026-10-16 | 앱 이름 | MomentForge로 변경 |
-| 2026-10-16 | Go 최소 버전 | 1.23 이상 |
+| 2026-10-16 | Go 최소 버전 | 1.23 이상 → 0단계에서 **1.26 이상**으로 상향 (`modernc.org/sqlite` v1.60 요구). 설치된 버전 1.27.2 |
 | 2026-10-16 | AI 기본 제공자 | 5단계부터 Claude 기본, OpenAI 선택 |
 | 2026-10-16 | MCP 서버 포함 시점 | 5단계 |
 | 2026-10-16 | 스킬 적용 방식 | 외부 스킬 4개를 저장소에 포함(커밋 `dbd4588` 고정), 규칙은 프로젝트 스킬로 작성, Go 파일 수정 시 훅으로 자동 검사 (2절) |
 | 2026-10-16 | 공용 타입 위치 | `internal/domain` 신설. 작성자 가명화는 어댑터가 아닌 `app`에서 수행 (6.1절) |
+| 2026-10-16 | 데이터 폴더 기본 위치 (0단계) | 실행한 현재 폴더의 `.momentforge/`. 시작할 때 절대 경로를 출력하고 `--data`로 바꿀 수 있음 |
+| 2026-10-16 | 서버 중복 실행 방지 (0단계) | `runtime/server.lock`에 SQLite 배타 잠금. 추가 의존성 없이 모든 OS에서 동작하고, 프로세스가 죽으면 OS가 해제 |
+| 2026-10-16 | SSE 연결 방식 (0단계) | `EventSource` 대신 fetch 스트리밍. 접근 키를 URL이 아닌 헤더로 보내기 위함. 끊기면 1초부터 최대 10초 간격으로 재연결, `overflow` 이벤트를 받으면 모든 데이터를 다시 불러옴 |
+| 2026-10-16 | API 테스트 구조 (0단계) | `api`는 `app.App` 대신 필요한 메서드만 담은 `api.Core` 인터페이스를 받음. 실제 조립은 `cmd/momentforge` 통합 테스트로 확인 |
+| 2026-10-16 | `go ./...`에서 `web/node_modules` 제외 (0단계) | `go.mod`의 `ignore ./web/node_modules` (Go 1.25 이상 기능) |
+| 2026-10-16 | 화면 서체 (0단계) | 운영체제 한글 서체 사용, 웹폰트 미포함 (사용자 확정, DESIGN-SYSTEM.md 3절) |
+| 2026-10-16 | 화면 색 | 사용자가 제공한 참고 이미지 기준의 흑백 테마. 라이트 = 흰 상의·은발, 다크 = 검은 가디건, 강조 = 눈동자 파랑·볼 홍조 (DESIGN-SYSTEM.md 2절) |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

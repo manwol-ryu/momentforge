@@ -4,11 +4,11 @@
 
 | 기존 파일 | 주요 내용 | 새 위치 | 단계 | 상태 |
 |---|---|---|---|---|
-| `__main__.py` | 실행 명령, 인자 처리 | `cmd/momentforge` | 0 | 대기 |
-| `server.py` | HTTP 서버, 경로 분기, 로컬 키·Host·Origin 검사, 작업 상태 | `internal/api`, `internal/app` | 0, 2~4 | 대기 |
-| `ui.html` | 화면 전체 | `web/` | 0, 2~4 | 대기 |
+| `__main__.py` | 실행 명령, 인자 처리 | `cmd/momentforge` | 0 | 완료 |
+| `server.py` | HTTP 서버, 경로 분기, 로컬 키·Host·Origin 검사, 작업 상태 | `internal/api`, `internal/app` | 0, 2~4 | 진행 중 (보안·정적 파일·상태 완료) |
+| `ui.html` | 화면 전체 | `web/` | 0, 2~4 | 진행 중 (홈 골격) |
 | `common.py` | `Config`, `AppError`, `video_id`, `normalized` | `internal/domain`, `internal/detect` `Params`, `internal/platform/chzzk` | 1~2 | 대기 |
-| `records.py` | 스키마 버전, records·viewer_samples 테이블 | `internal/store/migrations` | 0 | 대기 |
+| `records.py` | 스키마 버전, records·viewer_samples 테이블 | `internal/store/migrations` | 0, 2~3 | 진행 중 (마이그레이션 체계 완료, 테이블은 해당 기능 단계에서) |
 | `detector.py` | D1~D5 규칙, 창 통계, 후보 병합·분할 | `internal/detect`, `internal/detect/rules` | 1 | 대기 |
 | `live_analyzer.py` | LIVE 증분 평가 | `internal/detect` (같은 엔진) | 1, 3 | 대기 |
 | `transport.py` | VOD HTTP 조회, 재시도 간격 | `internal/platform/chzzk` (로그인 전송은 보류) | 2 | 대기 |

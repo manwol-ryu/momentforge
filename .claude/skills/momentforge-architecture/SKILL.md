@@ -2,7 +2,7 @@
 name: momentforge-architecture
 description: MomentForge refactoring and implementation rules. Use whenever writing, modifying, refactoring, or reviewing code in this repository (코드 작성·수정·리팩토링·리뷰) — Go packages under cmd/ and internal/, the React + TypeScript app under web/, SQLite migrations, MCP tools, or e2e tests. Enforces the package dependency direction, registry-based extension points, Go and TypeScript conventions, and privacy/security invariants, and says which upstream skill (claude-api, mcp-builder, frontend-design, webapp-testing, skill-creator) to load for each area. Run its layer checker after changing Go code.
 license: MIT
-compatibility: Designed for Claude Code. The layer checker needs Python 3.9+ (standard library only); gofmt and go vet checks need Go 1.23+.
+compatibility: Designed for Claude Code. The layer checker needs Python 3.9+ (standard library only); gofmt and go vet checks need Go 1.26+.
 metadata:
   project: momentforge
   design-doc: docs/REDESIGN.md

@@ -19,6 +19,7 @@ MomentForge: 방송 채팅을 수집해 편집할 순간(후보)을 찾는 로�
 | `internal/mcp` 도구 | **mcp-builder** |
 | 화면 설계·구성 변경 | **frontend-design** |
 | 단계 완료 후 정상 작동 확인 | **webapp-testing** |
+| 단계 완료·커밋 전 정상 작동 확인, E2E 실패 진단·추가 | **e2e-check** (`make test` → `make e2e` → 스크린샷 점검 → 보고) |
 | 새 프로젝트 스킬 작성·수정 | **skill-creator** (Agent Skills 규격: agentskills.io/specification) |
 
 외부 스킬 4개(frontend-design, webapp-testing, mcp-builder, skill-creator)는 anthropics/skills에서 고정 커밋으로 가져왔습니다. 출처와 갱신 방법은 `.claude/skills/UPSTREAM.md`에 있습니다. 이 4개는 직접 수정하지 않습니다.
@@ -27,17 +28,19 @@ MomentForge: 방송 채팅을 수집해 편집할 순간(후보)을 찾는 로�
 
 ## 명령
 
-0단계(골격)에서 아래 명령을 만듭니다. 명령이 바뀌면 이 절을 수정합니다.
+명령이 바뀌면 이 절을 수정합니다. Go가 PATH에 없으면 Makefile이 `/usr/local/go/bin/go`를 씁니다.
 
 ```bash
 make dev          # Go 서버 + Vite 개발 서버 동시 실행
 make build        # web 빌드 → go:embed → bin/momentforge
-make test         # 구조 검사 + go vet ./... + go test ./...
+make test         # 구조 검사 + gofmt + go vet + go test + 화면 타입 검사
 make e2e          # build 후 e2e/ Playwright 정상 작동 테스트
 python3 -I .claude/skills/momentforge-architecture/scripts/check_layers.py   # 구조 검사만
 ```
 
-개발 환경: Go 1.23 이상, Node(LTS), Python 3.9 이상(검사 스크립트·E2E).
+개발 환경: Go 1.26 이상, Node 20.19 이상, Python 3.9 이상(검사 스크립트·E2E). 실행 결과물은 `bin/momentforge` 하나이며, 사용자는 Go·Node·Python이 필요 없습니다.
+
+실행 시 데이터 폴더는 현재 폴더의 `.momentforge/`입니다(`--data`로 변경). E2E는 `e2e/.data/`, 포트 18765를 씁니다.
 
 ## 항상 지킬 것
 

@@ -1,0 +1,46 @@
+/* Design tokens. Source of truth: docs/DESIGN-SYSTEM.md. Components use only these variables. */
+:root {
+  color-scheme: light dark;
+
+  /* Light (백): white top and silver hair of the reference image */
+  --paper: #f7f5fa;
+  --ink: #292929;
+  --muted: #6e6280;
+  --rule: #d6d0db;
+  --density: #4c63a1; /* iris, deep */
+  --marker: #cf5f73; /* blush, deepened for contrast on white */
+  --alert: #b8461b;
+
+  --font-sans: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-md: 19px;
+  --text-lg: 24px;
+  --text-xl: 30px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  --radius: 4px;
+  --measure: 40em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark (흑): black cardigan of the reference image */
+    --paper: #232222;
+    --ink: #ece7f2;
+    --muted: #b7abbd;
+    --rule: #3e3c40;
+    --density: #81adde; /* iris, light */
+    --marker: #ffbac8; /* blush */
+    --alert: #ff8a65;
+  }
+}
