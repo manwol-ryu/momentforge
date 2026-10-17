@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { JobStatus } from "../../api/types";
@@ -29,9 +30,19 @@ export function JobPanel({ job, showResultLink = true }: { job: JobStatus; showR
         <span className="job-phase">{phaseText[job.phase] ?? job.phase}</span>
         {job.title && <span className="job-title">{job.title}</span>}
       </p>
+      {job.busy && (
+        <div
+          className="meter"
+          role="progressbar"
+          aria-label={phaseText[job.phase] ?? "진행"}
+          data-state={collecting ? "determinate" : "indeterminate"}
+          {...(collecting ? { "aria-valuemin": 0, "aria-valuemax": job.durationMs, "aria-valuenow": Math.min(job.positionMs, job.durationMs) } : {})}
+        >
+          <span className="meter-fill" style={{ "--p": collecting ? Math.min(1, job.positionMs / job.durationMs) : 0 } as CSSProperties} />
+        </div>
+      )}
       {collecting && (
         <>
-          <progress className="job-progress" max={job.durationMs} value={Math.min(job.positionMs, job.durationMs)} />
           <p className="job-meta">
             <span className="timecode">
               {timecode(job.positionMs, longForm)} / {timecode(job.durationMs, longForm)}

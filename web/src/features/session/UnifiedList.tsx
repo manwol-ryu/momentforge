@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { Candidate, TimelineItem, TimelineSource } from "../../api/types";
 import { CandidateItem } from "../../shared/candidates/CandidateList";
 import { timecode } from "../../shared/format";
@@ -72,7 +72,7 @@ export function UnifiedList({
   let ruleIndex = 0;
   return (
     <ol className="candidates">
-      {items.map((it) => {
+      {items.map((it, pos) => {
         const selected = it.id === selectedId;
         const rule = it.source === "rule" ? candidates.get(it.originId) : undefined;
         if (rule) {
@@ -81,6 +81,7 @@ export function UnifiedList({
               key={it.id}
               c={rule}
               index={ruleIndex++}
+              order={pos}
               selected={selected}
               onSelect={() => onSelect(it.id)}
               longForm={longForm}
@@ -91,7 +92,13 @@ export function UnifiedList({
           );
         }
         return (
-          <li key={it.id} className="candidate" data-source={it.source} data-selected={selected || undefined}>
+          <li
+            key={it.id}
+            className="candidate"
+            data-source={it.source}
+            data-selected={selected || undefined}
+            style={{ "--i": pos } as CSSProperties}
+          >
             <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(it.id)}>
               <span className="candidate-time timecode">
                 {timecode(it.clipStartMs, longForm)}–{timecode(it.clipEndMs, longForm)}

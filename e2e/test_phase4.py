@@ -45,10 +45,10 @@ def test_vod_comments_join_the_unified_timeline(page: Page, base_url: str) -> No
     expect(page.get_by_role("button", name="시청자 추천 1, 12:00")).to_be_visible()
     expect(page.get_by_text("확인이 필요한 시각 1개")).to_be_visible()
 
-    page.get_by_label("후보 출처").select_option(label="시청자 추천")
+    page.get_by_role("radio", name="시청자 추천").check()
     expect(page.get_by_role("heading", name="편집 후보 2개")).to_be_visible()
     expect(page.locator("ol.candidates > li")).to_have_count(2)
-    page.get_by_label("후보 출처").select_option(label="모든 출처")
+    page.get_by_role("radio", name="모든 출처").check()
     page.screenshot(path=str(SHOTS / "phase4-session.png"), full_page=True)
 
     with page.expect_download() as info:

@@ -51,7 +51,9 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         for name, fn in tests:
-            context = browser.new_context(locale="ko-KR")
+            # Reduced motion: transitions finish at once, so clicks and screenshots
+            # never land mid-animation. test_motion.py turns motion back on.
+            context = browser.new_context(locale="ko-KR", reduced_motion="reduce")
             page = context.new_page()
             console_errors: list[str] = []
             page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)

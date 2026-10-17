@@ -26,7 +26,8 @@
 - 색·서체·간격·모서리 반경은 디자인 시스템의 CSS 변수로만 씁니다. 컴포넌트에 hex 값이나 임의의 px 값을 직접 쓰지 않습니다.
 - 라이트·다크 모드를 모두 지원합니다.
 - 눈에 띄는 요소는 반응 밀도 타임라인 하나로 두고, 나머지는 절제합니다.
-- 사용자 동작에 대한 응답이 아닌 장식용 애니메이션은 넣지 않습니다. `prefers-reduced-motion`을 지킵니다.
+- 움직임은 상태 변화(사용자 동작, 새 데이터, 진행 중인 작업)에만 씁니다. 장식용 반복 애니메이션은 넣지 않습니다. 토큰(`--ease-*`, `--dur-*`)과 `web/src/shared/motion/`의 공용 컴포넌트(`Segmented`, `RollingNumber`, `PageBar`, `RevealWords`)를 먼저 씁니다. 규칙과 적용 목록은 `docs/DESIGN-SYSTEM.md` 8절에 있습니다.
+- `prefers-reduced-motion`을 지킵니다. 전역 규칙이 길이·지연·반복을 없애므로, 새 애니메이션도 그 규칙에 기대도록 `animation`/`transition` 속성으로 만듭니다(JS 타이머로 움직이지 않음).
 
 ## 3. 접근성과 테스트 표시
 
@@ -50,5 +51,6 @@
 - 접근 키는 `e2e/.data/runtime/access-key`에서 읽습니다.
 - 순서: 페이지 열기 → `body[data-app-state="ready"]` 대기 → 스크린샷·DOM 확인 → 찾은 선택자로 조작. SSE 연결이 계속 열려 있어 `networkidle`은 기다리지 않습니다.
 - Chromium은 headless로 실행하고, 콘솔 오류가 하나라도 있으면 실패로 처리합니다.
+- 테스트는 움직임 줄이기(`reduced_motion="reduce"`) 환경에서 돌립니다. 움직임을 확인하는 테스트만 `page.emulate_media(reduced_motion="no-preference")`로 켭니다(`test_motion.py`).
 - 기본 E2E는 데모 데이터만 씁니다. 치지직·AI 같은 외부 서비스 확인은 사용자에게 알리고 따로 실행합니다.
 - `e2e/.data/`는 커밋하지 않습니다.

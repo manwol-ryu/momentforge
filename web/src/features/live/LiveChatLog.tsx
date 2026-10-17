@@ -16,6 +16,9 @@ export function LiveChatLog({ chats, longForm }: Props) {
   // Seq of the last message shown when the reader scrolled away; null while following.
   const [heldAt, setHeldAt] = useState<number | null>(null);
   const shown = heldAt === null ? chats : chats.filter((c) => c.seq <= heldAt);
+  // Messages that were already there when the log first filled do not animate; later ones push in.
+  const firstSeq = useRef<number | null>(null);
+  if (firstSeq.current === null && chats.length > 0) firstSeq.current = chats[chats.length - 1]?.seq ?? 0;
   const unseen = chats.length - shown.length;
 
   useLayoutEffect(() => {
@@ -38,7 +41,7 @@ export function LiveChatLog({ chats, longForm }: Props) {
       ) : (
         <ol ref={box} className="chatlog chatlog-live" aria-label="실시간 채팅" aria-live="off" tabIndex={0} onScroll={onScroll}>
           {shown.map((c) => (
-            <li key={c.seq} data-late={c.late || undefined}>
+            <li key={c.seq} data-late={c.late || undefined} data-new={c.seq > (firstSeq.current ?? Infinity) || undefined}>
               <span className="chat-time timecode">{timecode(c.offsetMs, longForm)}</span>
               <span className="chat-author">{c.author || "알 수 없음"}</span>
               <span className="chat-text">{c.text}</span>

@@ -6,6 +6,8 @@ import { useAppState } from "../../shared/appState";
 import { CandidateList } from "../../shared/candidates/CandidateList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
+import { PageBar, useScrolledPast } from "../../shared/motion/PageBar";
+import { RollingNumber } from "../../shared/motion/RollingNumber";
 import { Link } from "../../shared/navigation";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { LiveChatLog } from "./LiveChatLog";
@@ -29,6 +31,7 @@ export function LiveView({ id }: { id: string }) {
   const feed = useLiveFeed(id);
   useAppState(status.isSuccess && feed.loaded ? "ready" : status.isError ? "error" : "loading");
   const v = status.data;
+  const [header, scrolledPast] = useScrolledPast();
 
   return (
     <main className="page">
@@ -42,14 +45,19 @@ export function LiveView({ id }: { id: string }) {
       )}
       {v && (
         <>
-          <header>
+          <PageBar title={v.session.title} shown={scrolledPast}>
+            <span className="bar-state" data-state={v.session.state}>
+              {liveStateText[v.session.state as LiveState] ?? v.session.state}
+            </span>
+          </PageBar>
+          <header ref={header}>
             <h1 className="page-title">{v.session.title}</h1>
             <p className="page-lede">
               {v.session.platformName} 생방송,{" "}
               <span className="live-state" data-state={v.session.state}>
                 {liveStateText[v.session.state as LiveState] ?? v.session.state}
               </span>
-              , 채팅 {v.session.chatCount.toLocaleString("ko-KR")}건
+              , 채팅 <RollingNumber value={v.session.chatCount} />건
               {v.session.watchUrl && (
                 <>
                   {" "}
@@ -170,7 +178,7 @@ function Workspace({ v, feed }: { v: LiveStatus; feed: ReturnType<typeof useLive
         </section>
         <section aria-labelledby="live-candidates-title">
           <h2 id="live-candidates-title" className="section-title">
-            편집 후보 {feed.candidates.length}개
+            편집 후보 <RollingNumber value={feed.candidates.length} />개
           </h2>
           <CandidateList
             candidates={feed.candidates}
@@ -233,7 +241,14 @@ function Facts({ v }: { v: LiveStatus }) {
         <dd>{v.generation > 1 ? `연결 복구 ${v.generation - 1}회` : v.generation === 1 ? "처음 연결 유지" : "연결 전"}</dd>
         <dt>시청자</dt>
         <dd>
-          {v.viewerCount !== null ? `${v.viewerCount.toLocaleString("ko-KR")}명` : "자료 없음"}, 시청자 수 보정{" "}
+          {v.viewerCount !== null ? (
+            <>
+              <RollingNumber value={v.viewerCount} />명
+            </>
+          ) : (
+            "자료 없음"
+          )}
+          , 시청자 수 보정{" "}
           {v.viewerAdaptive ? viewerText[v.viewerStatus] : "끔"}
         </dd>
         <dt>못 받은 구간</dt>

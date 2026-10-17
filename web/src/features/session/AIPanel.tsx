@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIDelivery, AIModel, AIPreview, AIRun, AITokenCount, Session } from "../../api/types";
 import { useEvents } from "../../shared/events";
 import { timecode, tokens, usd } from "../../shared/format";
+import { Segmented } from "../../shared/motion/Segmented";
 
 const runStateText: Record<AIRun["state"], string> = {
   running: "보내는 중",
@@ -12,6 +13,17 @@ const runStateText: Record<AIRun["state"], string> = {
   failed: "실패",
   cancelled: "중단됨",
 };
+
+const modeHelp = {
+  candidates: "후보 목록에서 ‘AI 검토에 포함’으로 고른 후보의 편집 구간과 앞뒤 채팅을 보냅니다.",
+  all: "자동 탐지와 시청자 추천 후보를 모두 고르고, 비용 한도 안에서만 보냅니다.",
+  range: "지정한 구간의 채팅을 그대로 보냅니다.",
+} as const;
+
+const deliveryHelp = {
+  single: "한 요청씩 보내고 바로 결과를 받습니다.",
+  batch: "가격이 절반입니다. 결과는 보통 1시간 안, 늦어도 24시간 안에 옵니다.",
+} as const;
 
 const omittedText: Record<string, string> = {
   comment_input_too_large: "댓글이 너무 김",
@@ -239,43 +251,42 @@ export function AIPanel({ s, selection }: Props) {
           </button>
         )}
       </p>
-      <fieldset className="ai-mode">
-        <legend className="field-label">보낼 범위</legend>
-        <label className="check">
-          <input type="radio" name="ai-mode" checked={mode === "candidates"} onChange={() => setMode("candidates")} />
-          후보 목록에서 고른 {selection.length}개 (편집 구간과 앞뒤 채팅)
-        </label>
-        {current?.hasPrices && (
-          <label className="check">
-            <input type="radio" name="ai-mode" checked={mode === "all"} onChange={() => setMode("all")} />
-            모든 후보 자동 선택 (비용 한도 안에서만 보냄)
-          </label>
-        )}
-        <label className="check">
-          <input type="radio" name="ai-mode" checked={mode === "range"} onChange={() => setMode("range")} />
-          채팅 구간 직접 지정
-        </label>
+      <div className="ai-mode">
+        <Segmented
+          name="ai-mode"
+          legend="보낼 범위"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "candidates" as const, label: `후보 목록에서 고른 ${selection.length}개` },
+            ...(current?.hasPrices ? [{ value: "all" as const, label: "모든 후보 자동 선택" }] : []),
+            { value: "range" as const, label: "채팅 구간 직접 지정" },
+          ]}
+        />
+        <p className="field-help">{modeHelp[mode]}</p>
         {mode === "range" && (
           <span className="ai-range">
             <input type="text" aria-label="시작 시각" value={from} onChange={(e) => setFrom(e.target.value)} /> ~{" "}
             <input type="text" aria-label="끝 시각" value={to} onChange={(e) => setTo(e.target.value)} />
           </span>
         )}
-      </fieldset>
+      </div>
       {(current?.canBatch || current?.hasPrices) && (
         <div className="ai-grid">
           {current?.canBatch && (
-            <fieldset className="ai-mode">
-              <legend className="field-label">전송 방식</legend>
-              <label className="check">
-                <input type="radio" name="ai-delivery" checked={delivery === "single"} onChange={() => setDelivery("single")} />
-                바로 보내기 (한 요청씩, 바로 결과)
-              </label>
-              <label className="check">
-                <input type="radio" name="ai-delivery" checked={delivery === "batch"} onChange={() => setDelivery("batch")} />
-                배치로 보내기 (가격 절반, 결과는 보통 1시간 안, 최대 24시간)
-              </label>
-            </fieldset>
+            <div className="ai-mode">
+              <Segmented
+                name="ai-delivery"
+                legend="전송 방식"
+                value={delivery}
+                onChange={setDelivery}
+                options={[
+                  { value: "single" as const, label: "바로 보내기" },
+                  { value: "batch" as const, label: "배치로 보내기" },
+                ]}
+              />
+              <p className="field-help">{deliveryHelp[delivery]}</p>
+            </div>
           )}
           {current?.hasPrices && (
             <label className="field ai-cap">
@@ -310,11 +321,14 @@ export function AIPanel({ s, selection }: Props) {
             10분 뒤 만료됩니다.
           </p>
           {plan.price ? (
-            <p className="ai-cost">
-              예상 비용 최대 {usd(plan.cost_upper_usd ?? 0)}
-              {plan.cost_cap_usd ? ` (한도 ${usd(plan.cost_cap_usd)})` : ""}. {plan.price.as_of} 공시 가격 기준
-              {plan.delivery === "batch" ? ", 배치 50% 할인 적용" : ""}.
-            </p>
+            <>
+              <p className="ai-cost">
+                예상 비용 최대 {usd(plan.cost_upper_usd ?? 0)}
+                {plan.cost_cap_usd ? ` (한도 ${usd(plan.cost_cap_usd)})` : ""}. {plan.price.as_of} 공시 가격 기준
+                {plan.delivery === "batch" ? ", 배치 50% 할인 적용" : ""}.
+              </p>
+              {plan.cost_cap_usd ? <CapMeter used={plan.cost_upper_usd ?? 0} cap={plan.cost_cap_usd} /> : null}
+            </>
           ) : (
             <p className="field-help">이 모델의 가격 정보가 없어 비용을 계산하지 않았습니다.</p>
           )}
@@ -358,7 +372,10 @@ export function AIPanel({ s, selection }: Props) {
       )}
       {r && (
         <p className="ai-status" role="status" data-state={r.state}>
-          AI {r.state === "running" && r.delivery === "batch" ? "배치" : runStateText[r.state]}: {runSummary(r)}
+          <span className={r.state === "running" ? "shimmer" : undefined}>
+            AI {r.state === "running" && r.delivery === "batch" ? "배치" : runStateText[r.state]}
+          </span>
+          : {runSummary(r)}
           {r.waitingForKey && ". API 키를 다시 저장하면 결과를 가져옵니다"}
           {r.errorMessage && ` (${r.errorMessage})`}
           {r.state === "running" && (
@@ -377,5 +394,18 @@ export function AIPanel({ s, selection }: Props) {
         </p>
       )}
     </section>
+  );
+}
+
+/** How much of the cost cap the plan can use at most; it turns to the alert color near the cap. */
+function CapMeter({ used, cap }: { used: number; cap: number }) {
+  const share = Math.min(1, used / cap);
+  return (
+    <div className="cap" data-near={share >= 0.85 || undefined}>
+      <div className="cap-meter" role="meter" aria-label="비용 한도 사용" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(share * 100)}>
+        <span className="cap-fill" style={{ "--p": share } as CSSProperties} />
+      </div>
+      <span className="cap-text">최대로 써도 한도의 {Math.round(share * 100)}%</span>
+    </div>
   );
 }

@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { Candidate, DetectWindow, Gap } from "../../api/types";
 import { tickStep, timecode } from "../format";
 
@@ -91,7 +92,7 @@ export function Timeline({
             key={c.id}
             type="button"
             className="timeline-marker"
-            style={{ left: pct(c.peakMs) }}
+            style={{ left: pct(c.peakMs), "--at": c.peakMs / durationMs } as CSSProperties}
             aria-pressed={c.id === selectedId}
             aria-label={`후보 ${i + 1}, ${timecode(c.reactionStartMs, longForm)}`}
             onClick={() => onSelect(c.id)}
@@ -103,7 +104,7 @@ export function Timeline({
             type="button"
             className="timeline-marker"
             data-kind={m.kind}
-            style={{ left: pct(m.ms) }}
+            style={{ left: pct(m.ms), "--at": m.ms / durationMs } as CSSProperties}
             aria-pressed={m.id === selectedId}
             aria-label={m.label}
             onClick={() => onSelect(m.id)}

@@ -6,6 +6,9 @@ import { useAppState } from "../../shared/appState";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
+import { PageBar, useScrolledPast } from "../../shared/motion/PageBar";
+import { RollingNumber } from "../../shared/motion/RollingNumber";
+import { Segmented } from "../../shared/motion/Segmented";
 import { Link, navigate } from "../../shared/navigation";
 import { VideoPlayer, type PlayerHandle } from "../../shared/player/VideoPlayer";
 import { Timeline } from "../../shared/timeline/Timeline";
@@ -45,6 +48,7 @@ export function SessionView({ id }: { id: string }) {
     if (isLive) navigate(`/live/${id}`, { replace: true });
   }, [isLive, id]);
   const ready = session.isSuccess && (!analysisId || analysis.isSuccess) && (!isVOD || timeline.isSuccess);
+  const [header, scrolledPast] = useScrolledPast();
   useAppState(ready ? "ready" : session.isError || analysis.isError || timeline.isError ? "error" : "loading");
 
   const s = session.data;
@@ -61,9 +65,11 @@ export function SessionView({ id }: { id: string }) {
           {session.error.message}
         </p>
       )}
+      {!s && session.isPending && <HeaderSkeleton />}
       {s && (
         <>
-          <header>
+          <PageBar title={s.title} shown={scrolledPast} />
+          <header ref={header}>
             <h1 className="page-title">{s.title}</h1>
             <p className="page-lede">
               {s.isDemo ? "실제 방송이 아닌 예시 채팅" : `${s.platformName} ${stateText[s.state] ?? s.state}`}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
@@ -241,20 +247,20 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
       <section className="section" aria-labelledby="candidates-title">
         <div className="section-head">
           <h2 id="candidates-title" className="section-title">
-            편집 후보 {shown.length}개
+            편집 후보 <RollingNumber value={shown.length} />개
           </h2>
           {sources.length > 1 && (
-            <label className="field-inline">
-              <span className="visually-hidden">후보 출처</span>
-              <select value={filter} onChange={(e) => setFilter(e.target.value as SourceFilter)} aria-label="후보 출처">
-                <option value="all">모든 출처</option>
-                {sources.map((src) => (
-                  <option key={src} value={src}>
-                    {sourceLabel[src]}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Segmented
+              name="candidate-source"
+              legend="후보 출처"
+              hideLegend
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: "all" as SourceFilter, label: "모든 출처" },
+                ...sources.map((src) => ({ value: src as SourceFilter, label: sourceLabel[src] })),
+              ]}
+            />
           )}
         </div>
         {shown.length === 0 ? (
@@ -375,5 +381,16 @@ function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: stri
         </p>
       )}
     </section>
+  );
+}
+
+/** The page's shape while the session loads: title, facts line and timeline. */
+export function HeaderSkeleton() {
+  return (
+    <div className="skeleton-page" aria-busy="true" aria-label="작업을 불러오는 중">
+      <span className="skeleton skeleton-heading" aria-hidden="true" />
+      <span className="skeleton skeleton-line" aria-hidden="true" />
+      <span className="skeleton skeleton-block" aria-hidden="true" />
+    </div>
   );
 }

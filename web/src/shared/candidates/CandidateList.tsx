@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { Candidate, CandidateState } from "../../api/types";
 import { timecode } from "../format";
 
@@ -48,6 +48,8 @@ export function CandidateList({ candidates, selectedId, onSelect, longForm = fal
 interface ItemProps {
   c: Candidate;
   index: number;
+  /** Position in the shown list, for the staggered entrance (defaults to index). */
+  order?: number;
   selected: boolean;
   onSelect: (id: string) => void;
   longForm?: boolean;
@@ -58,9 +60,9 @@ interface ItemProps {
 }
 
 /** One detected candidate: time, reasons, peak numbers and, when selected, its evidence. */
-export function CandidateItem({ c, index, selected, onSelect, longForm = false, badge, renderActions, renderDetail }: ItemProps) {
+export function CandidateItem({ c, index, order, selected, onSelect, longForm = false, badge, renderActions, renderDetail }: ItemProps) {
   return (
-    <li className="candidate" data-selected={selected || undefined} data-source="rule">
+    <li className="candidate" data-selected={selected || undefined} data-source="rule" style={{ "--i": order ?? index } as CSSProperties}>
       <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(c.id)}>
         <span className="candidate-time timecode">
           {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}

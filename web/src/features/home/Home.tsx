@@ -10,6 +10,7 @@ import { timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
 import { Link, navigate } from "../../shared/navigation";
 import { useJob } from "../../shared/useJob";
+import { RevealWords } from "../../shared/motion/RevealWords";
 
 const connectionText: Record<ConnectionState, string> = {
   connecting: "연결하는 중",
@@ -38,8 +39,12 @@ export function Home() {
   return (
     <main className="page">
       <header>
-        <h1 className="page-title">MomentForge</h1>
-        <p className="page-lede">방송 채팅에서 편집할 순간을 찾습니다.</p>
+        <h1 className="page-title">
+          <RevealWords text="MomentForge" />
+        </h1>
+        <p className="page-lede">
+          <RevealWords text="방송 채팅에서 편집할 순간을 찾습니다." start={1} />
+        </p>
       </header>
 
       <section className="section" aria-labelledby="collect-title">
@@ -61,7 +66,16 @@ export function Home() {
         <h2 id="sessions-title" className="section-title">
           저장한 작업
         </h2>
-        {sessions.data && sessions.data.length > 0 ? (
+        {sessions.isPending ? (
+          <ul className="sessions" aria-busy="true" aria-label="저장한 작업을 불러오는 중">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="skeleton-row" aria-hidden="true">
+                <span className="skeleton skeleton-title" />
+                <span className="skeleton skeleton-line" />
+              </li>
+            ))}
+          </ul>
+        ) : sessions.data && sessions.data.length > 0 ? (
           <ul className="sessions">
             {sessions.data.map((s) => (
               <SessionRow key={s.id} s={s} />
