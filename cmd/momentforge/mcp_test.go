@@ -91,7 +91,7 @@ func buildEvalData(t *testing.T, dir string) {
 	for _, it := range tl.Items {
 		ids = append(ids, it.ID)
 	}
-	core.SetAIKey("evalai", "k")
+	core.SetAIKey("evalai", "k", false)
 	pv, err := core.PreviewAI(ctx, app.AIPreviewRequest{SessionID: demo.ID, Provider: "evalai", Model: "eval-model", ItemIDs: ids})
 	if err != nil {
 		t.Fatal(err)

@@ -112,7 +112,7 @@ momentforge/
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
 ├─ web/                           Vite + React + TS (embed.go: 빌드 결과를 Go 패키지로 내장)
-│  ├─ src/features/{vod,live,timeline,ai,settings}/
+│  ├─ src/features/{home,session,live,settings}/
 │  └─ dist/ → go:embed
 ├─ e2e/                           Python Playwright 정상 작동 테스트 (개발용)
 ├─ .claude/
@@ -338,7 +338,7 @@ Claude 구현 규칙 (claude-api 스킬 기준, `internal/ai/anthropic`):
 | 비용 한도 | 미리보기에서 최대 비용이 한도를 넘는 요청은 "비용 한도"로 빼고, 바로 보내기 중에는 실제 비용 + 다음 요청 최대 비용이 한도를 넘으면 멈춤(`COST_CAP`). 가격을 모르는 모델은 한도·자동 선택을 쓸 수 없음 |
 | 오류 처리 | `errors.As`로 `*anthropic.Error`를 꺼내 상태 코드별 분기: 429·5xx·529와 전송 전 연결 실패는 재시도, 400·401·403·404는 즉시 실패 후 원인 표시. 전송 뒤 결과를 모르면 중복 비용을 막으려 재전송하지 않음 |
 | 거절 | `stop_reason: refusal`은 `AI_REFUSAL`로 표시. 서버 측 대체 모델(fallbacks)은 켜지 않음: 미리보기에서 확인한 모델이 아닌 모델로 채팅이 전송되기 때문 |
-| 인증 | API 키는 서버 메모리에만 보관. 환경변수 `ANTHROPIC_API_KEY`가 있으면 사용. 파일·DB·로그에 쓰지 않음 |
+| 인증 | API 키는 서버 메모리에 보관. 사용자가 "이 컴퓨터에도 저장"을 고른 키만 데이터 폴더의 `.env`(0600)에 쓰고 다음 실행 때 먼저 읽음. 없으면 환경변수 `ANTHROPIC_API_KEY` 사용. DB·로그에 쓰지 않음 (15절) |
 
 공통 흐름은 유지: **미리보기(전송 내용·최대 비용) → 사용자 확인 → 실행**. 수집이 끝나면 확인 없이 저절로 보내는 자동 분석은 하지 않습니다(15절). 생방송 기록도 같은 흐름이며, 수집 중에는 미리보기를 만든 순간까지 저장된 채팅과 확정된 후보만 계획에 넣습니다(15절).
 
@@ -406,7 +406,7 @@ type JobManager interface {
 - WAL 모드, 쓰기는 작업별 단일 writer goroutine, 읽기는 커넥션 풀. MCP 서버는 읽기 전용 연결로 같은 DB를 엶.
 - 마이그레이션은 `store/migrations/NNNN_*.sql` + `PRAGMA user_version`.
 - DB가 원본 기준이고 TXT는 DB에서 재생성 가능하다는 원칙 유지.
-- 데이터 폴더: 실행한 위치의 `.momentforge/` (`--data`로 변경). 하위에 `data/`(DB·백업), `exports/`, `runtime/`(접근 키, 서버 락).
+- 데이터 폴더: 실행한 위치의 `.momentforge/` (`--data`로 변경). 하위에 `data/`(DB·백업), `exports/`, `runtime/`(접근 키, 서버 락), `settings.env`(설정 화면의 기본값), `.env`(이 컴퓨터에 저장을 고른 API 키만, 0600). 설정은 DB가 아니라 이 두 파일에 두므로 스키마를 바꾸지 않음.
 
 ## 8. HTTP API
 
@@ -448,6 +448,8 @@ type JobManager interface {
 | `POST /api/ai/preview` `{sessionId: <LIVE 기록>, …, toEnd}` | 생방송 기록도 같은 세 방식. 후보는 확정·부분 문맥 마감만, 구간은 분석 완료 위치까지(`toEnd`: 끝을 서버의 분석 완료 위치로), 채팅은 미리보기 순간의 최대 seq까지 (15절) | 6+ |
 | `POST /api/ai/preview/count` `{previewId, fingerprint}` | 정확한 입력 토큰과 최대 비용. 미리보기의 채팅을 제공자 토큰 계산 API로 보냄(사용자가 누를 때만) | 5 |
 | `GET /api/sessions/{id}/ai/runs`, `GET /api/ai/compare?a=&b=` | 세션의 AI 실행 목록, 두 실행 비교(겹침·한쪽에만 있는 추천) | 5 |
+| `GET /api/settings`, `POST /api/settings` `{aiProvider, aiModels, sensitive, includeComments, viewerAdaptive}` | 설정 화면의 기본값과 두 파일 위치. 저장은 모든 값을 함께 보내야 함(빠지면 `INPUT`) | 설정 |
+| `POST /api/ai/key` `{provider, key, persist}` | `persist`면 키를 데이터 폴더 `.env`에도 씀. 빈 키는 메모리와 `.env`에서 지움. 응답과 `GET /api/ai`는 키 대신 `keySource`(env·file·memory)와 `keyName`만 | 설정 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
 
@@ -459,7 +461,7 @@ type JobManager interface {
 - SSE 구독 훅 하나(`useEvents`)로 LIVE 채팅·후보·진행률 갱신.
 - LIVE 채팅 목록은 가상 스크롤.
 - HLS 재생은 `hls.js` npm 의존성으로 교체 (vendor 파일 제거).
-- 화면 구성: 앱 틀(왼쪽 작업 목록) 안에 새 작업(다시보기·생방송 탭) / 다시보기 작업대(영상·채팅·타임라인 + 후보·AI 검토·댓글·파일 탭) / 생방송 작업대(실시간 채팅·타임라인 + 후보·AI 검토·수집 상태·파일 탭). 2026-10-17 개정, 자세한 배치는 `docs/DESIGN-SYSTEM.md` 4절.
+- 화면 구성: 앱 틀(왼쪽 작업 목록) 안에 새 작업(다시보기·생방송 탭) / 다시보기 작업대(영상·채팅·타임라인 + 후보·AI 검토·댓글·파일 탭) / 생방송 작업대(방송 영상·실시간 채팅·타임라인 + 후보·AI 검토·수집 상태·파일 탭) / 설정(`/settings`, 작업 목록 아래: AI 검토 탭 = 기본 제공자·제공자별 기본 모델·API 키·OpenCode 준비 상태, 새 작업 기본값 탭 = 민감도·댓글 수집·시청자 수 보정). 처음 계획의 "설정(탐지 파라미터·AI 제공자)" 중 탐지 파라미터는 넣지 않음(15절). 2026-10-17 개정, 자세한 배치는 `docs/DESIGN-SYSTEM.md` 4절.
 
 디자인 진행 순서 (스킬의 "계획 → 검토 → 구현 → 자체 점검" 절차)
 
@@ -651,5 +653,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | 화면 움직임 (사용자 요청) | 참고 사이트 두 곳(Lucian UX/UI Prompt, Tracwell)의 코드를 분석해 작업 도구에 맞는 움직임만 적용(사용자 선택: "작업 도구에 맞게"). 원칙 3을 "상태 변화에 대한 응답"으로 넓히고 홈 제목 등장 하나만 예외로 둠. 패턴·토큰·규칙은 DESIGN-SYSTEM.md 8절. 후보 출처 선택 상자를 선택 알약(라디오 묶음)으로 바꿈. E2E는 움직임 줄이기 환경에서 돌리고 `test_motion.py`가 움직임을 켜고 확인 |
 | 2026-10-17 | 생방송 영상 재생 (사용자 요청, 기존에 없던 기능) | 다시보기용 `PlaybackSource`와 따로 선택 인터페이스 `LivePlaybackSource`를 둠(생방송만·다시보기만 재생하는 플랫폼을 구분하고, E2E 가짜 다시보기 화면을 바꾸지 않기 위함). 같은 `GET /api/sessions/{id}/playback`이 작업 종류에 따라 고름. 치지직은 `LiveMeta`가 읽는 같은 `live-detail`(v2)의 `livePlaybackJson`에서 `mediaId` HLS(없으면 LLHLS)를 쓰고, 다시보기와 같은 `paidLive`·`playbackAuthType` 검사에 방송 중·연령 제한·유료 상품 검사를 더함. 화면 요청이라 재시도 없이 한 번(8초) 요청. 실제 확인에서 생방송 CDN이 요청마다 바뀌는 것(GCDN `ex-nlive-streaming.navercdn.com`, LCDN `livecloud.pstatic.net`, NVELOP `nvelop-livecloud.pstatic.net`)을 발견해 생방송에만 `*.pstatic.net`을 허용하고 치지직 CSP 미디어 출처에 더함(다시보기는 `*.navercdn.com`만). 재생 주소는 기존처럼 돌려주기만 하고 저장하지 않음. 화면은 생방송 무대에 '영상' 카드를 두되 수집 중일 때만 재생기를 띄움(멈춘 기록에서 열면 그때가 아니라 지금 방송이 나오고 외부 요청도 생기기 때문). hls.js는 재생을 누를 때 받기 시작하고 멈추면 받기를 멈춤(`autoStartLoad: false`, 몇 시간 띄워 두는 작업이라). 치지직 생방송 재생 목록은 10초 조각이라 선언하고 2초 조각을 담으므로, 기본 지연(목표 길이 3배 = 30초 창의 맨 앞) 대신 초 단위 지연을 씀(실제 약 11초). 그 재생 목록의 `EXT-X-DATERANGE` 때문에 hls.js가 `data:` 트랙을 만들어 CSP에 막히므로 시간 메타데이터 큐를 끔(다시보기도 같이). 무대가 좁아 영상 위·채팅 아래로 나뉘면 생방송은 채팅에 더 많은 높이를 줌. E2E는 가짜 플랫폼이 루프백 서버에서 만드는 무음 AAC 생방송 HLS를 실제로 재생해 확인(외부 연결 없음) |
 | 2026-10-17 | 생방송 기록의 AI 검토 (사용자 선택) | 그동안 다시보기 작업대에만 있던 AI 검토를 생방송 작업대에도 둠. 사용자 선택: **수집 중에도** 열고, 보낼 범위는 **다시보기와 같은 세 방식**(고른 후보, 확정 후보 전체 자동 선택 + 비용 한도 필수, 채팅 구간 직접 지정). 자동 전송은 없고 매번 미리보기 → 확인으로만 보냄. 계획은 미리보기를 만든 순간 저장된 채팅(최대 seq)으로 고정해 그 뒤 들어온 채팅은 넣지 않음(계획에 채팅 본문이 들어 있어 보내는 내용은 미리보기와 같음). 후보는 `confirmed`·`partial`만 고를 수 있음(`generating`·`waiting_context`는 편집 구간이 아직 늘어나서 제외). 구간은 분석이 끝난 위치까지만 지정. 늦게 받은 채팅도 그 시각의 채팅이라 함께 보냄. AI 추천은 통합 타임라인(LIVE는 자동 탐지 후보 + AI 추천)으로 받아 후보 탭(출처 선택)과 반응 타임라인 마커에 표시. 제공자·키·비용 한도·배치·결과 비교는 다시보기와 같고, 화면 코드는 `web/src/shared/ai/`로 옮겨 두 작업대가 함께 씀 |
+| 2026-10-17 | 설정 화면 (사용자 선택) | 작업 목록 아래 **설정**(`/settings`). 항목은 제안대로: 기본 AI 제공자, 제공자별 기본 모델, 제공자별 API 키 입력·지우기와 상태, OpenCode CLI 준비 상태, 새 작업 수집 옵션 기본값 3개. 탐지 임계값은 넣지 않음(같은 채팅이면 같은 후보라는 규칙 버전 원칙). 비밀이 아닌 기본값은 DB 마이그레이션이나 브라우저 저장 대신 사용자가 고른 **데이터 폴더의 `settings.env`**(KEY=값, 0600)에 둠. 데이터 폴더마다 따로이고 `.gitignore` 대상. 화면 양식은 이 값으로 시작하고 양식에서 바꾼 값은 그 작업에만 씀 |
+| 2026-10-17 | API 키 파일 저장 (사용자 선택, 규칙 변경) | 기존 "키는 메모리에만" 규칙을 사용자가 바꿈: 키를 저장할 때 **이 컴퓨터에도 저장**을 고르면 그 키를 데이터 폴더의 `.env`에 평문으로 씀(0600, 임시 파일을 바꿔 끼워 씀, 줄 이름은 `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`, 그 밖의 제공자는 `MOMENTFORGE_<ID>_API_KEY`). 기본은 꺼짐. 시작할 때 `.env`가 환경변수보다 먼저(앱에서 한 마지막 선택). 키 지우기와 고르지 않은 새 키 저장은 그 줄을 지우고, 마지막 줄이면 파일도 지움. DB·로그·브라우저 저장소·API 응답에는 여전히 두지 않음. CLAUDE.md, privacy-security.md, PRIVACY.md 함께 수정 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

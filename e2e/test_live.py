@@ -166,6 +166,10 @@ def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
     expect(ai_items.first).to_contain_text("가짜 AI 추천")
     expect(ai_items.first.locator(".candidate-source")).to_have_text("AI 추천")
     expect(page.locator(".timeline-marker[data-kind='ai']").first).to_be_attached()
+    # The summary counts every source, as the list does.
+    shown = page.locator("ol.candidates > li").count()
+    expect(page.locator(".stat", has_text="편집 후보").locator("dd")).to_have_text(f"{shown}개")
+    page.wait_for_timeout(100)  # a shown tab replays its rows' entrance; let the frame settle for the picture
     page.screenshot(path=str(SHOTS / "live-ai.png"), full_page=True)
     page.get_by_label("AI 추천", exact=True).check()  # the source filter
     expect(page.locator("ol.candidates > li:not([data-source='ai'])")).to_have_count(0)

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../api/client";
+import type { Settings } from "../../api/types";
 import type { UrlFieldProps } from "./Home";
 
 /** Collects a VOD's chat (and its comments) and finds the moments to edit. */
-export function CollectForm({ url, onUrl, onPaste, focus, moved, hint, busy }: UrlFieldProps & { busy: boolean }) {
-  const [sensitive, setSensitive] = useState(false);
-  const [withComments, setWithComments] = useState(true);
+export function CollectForm({ url, onUrl, onPaste, focus, moved, hint, busy, defaults }: UrlFieldProps & { busy: boolean; defaults: Settings }) {
+  // The options start from the settings screen's defaults; a change here is for this job only.
+  const [sensitive, setSensitive] = useState(defaults.sensitive);
+  const [withComments, setWithComments] = useState(defaults.includeComments);
   const input = useRef<HTMLInputElement>(null);
   const collect = useMutation({ mutationFn: () => api.collect(url.trim(), sensitive, withComments) });
   const commentsOnly = useMutation({ mutationFn: () => api.startComments({ url: url.trim() }) });

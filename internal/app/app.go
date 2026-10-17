@@ -42,6 +42,7 @@ type App struct {
 	live       liveJobs
 	liveTiming liveTiming
 	ai         aiState
+	settings   settingsState
 }
 
 // New returns an App ready to serve requests.
@@ -55,6 +56,7 @@ func New(cfg Config) *App {
 	ctx, stop := context.WithCancel(context.Background())
 	a := &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus},
 		liveTiming: defaultLiveTiming()}
+	a.initSettings()
 	a.initAI()
 	return a
 }

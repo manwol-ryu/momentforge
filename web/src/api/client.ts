@@ -1,6 +1,7 @@
 import type {
   AIComparison,
   AIDelivery,
+  AIKeySource,
   AIModel,
   AIPreview,
   AIProvider,
@@ -21,6 +22,8 @@ import type {
   Playback,
   PlayheadChats,
   Session,
+  Settings,
+  SettingsInfo,
   Status,
   UnifiedTimeline,
 } from "./types";
@@ -90,7 +93,11 @@ export const api = {
   comments: (sessionId: string) => getJSON<CommentsView | null>(`/api/sessions/${enc(sessionId)}/comments`),
   timeline: (sessionId: string) => getJSON<UnifiedTimeline>(`/api/sessions/${enc(sessionId)}/timeline`),
   aiProviders: () => getJSON<{ providers: AIProvider[] }>("/api/ai"),
-  aiKey: (provider: string, key: string) => postJSON<{ configured: boolean }>("/api/ai/key", { provider, key }),
+  /** With persist the key is also kept in the data folder's .env; an empty key clears it everywhere. */
+  aiKey: (provider: string, key: string, persist = false) =>
+    postJSON<{ configured: boolean; keySource: AIKeySource | "" }>("/api/ai/key", { provider, key, persist }),
+  settings: () => getJSON<SettingsInfo>("/api/settings"),
+  saveSettings: (s: Settings) => postJSON<SettingsInfo>("/api/settings", s),
   aiModels: (provider: string) => postJSON<{ models: AIModel[] }>("/api/ai/models", { provider }),
   aiPreview: (req: {
     sessionId: string;

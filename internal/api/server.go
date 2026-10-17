@@ -41,7 +41,9 @@ type Core interface {
 	Comments(ctx context.Context, sid string) (*app.CommentsView, error)
 	Timeline(ctx context.Context, sid string) (*app.UnifiedTimeline, error)
 	AIProviders() []app.AIProvider
-	SetAIKey(provider, key string) (bool, error)
+	SetAIKey(provider, key string, persist bool) (string, error)
+	Settings() app.SettingsInfo
+	SaveSettings(s app.Settings) (app.SettingsInfo, error)
 	PreviewAI(ctx context.Context, req app.AIPreviewRequest) (app.AIPreview, error)
 	StartAI(ctx context.Context, previewID, fingerprint string, regenerate bool) (string, error)
 	AIRun(ctx context.Context, id string) (app.AIRunView, error)
@@ -131,6 +133,8 @@ func NewHandler(cfg Config) http.Handler {
 			r.Get("/candidates/{cid}/chats", h.liveCandidateChats)
 			r.Post("/checkpoint", h.liveCheckpoint)
 		})
+		r.Get("/settings", h.settings)
+		r.Post("/settings", h.saveSettings)
 		r.Get("/ai", h.aiProviders)
 		r.Post("/ai/key", h.aiKey)
 		r.Post("/ai/models", h.aiModels)

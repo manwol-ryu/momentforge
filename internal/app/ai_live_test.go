@@ -107,7 +107,7 @@ func TestAIPreviewLiveCapture(t *testing.T) {
 		AuthorKey: "a9", Text: "늦게 받은 채팅"}, ReceivedAtMs: 101000, EventTimeMs: 30500, TimeQuality: "provider", Late: true}}, map[string]int{}); err != nil {
 		t.Fatal(err)
 	}
-	a.SetAIKey("fakeai", "k")
+	a.SetAIKey("fakeai", "k", false)
 	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
 	if err != nil {
 		t.Fatal(err)

@@ -38,6 +38,9 @@ export function LiveView({ id }: { id: string }) {
   const status = useQuery({ queryKey: ["live", id], queryFn: () => api.liveStatus(id) });
   const feed = useLiveFeed(id);
   const [tab, setTab] = useState<PanelTab>("candidates");
+  // The summary counts every source, like the 후보 tab (the same cached timeline query the workspace reads).
+  const timeline = useQuery({ queryKey: ["timeline", id], queryFn: () => api.timeline(id) });
+  const itemCount = feed.candidates.length + (timeline.data?.items ?? []).filter((i) => i.source === "ai").length;
   useAppState(status.isSuccess && feed.loaded ? "ready" : status.isError ? "error" : "loading");
   const v = status.data;
   useDocumentTitle(v?.session.title);
@@ -67,7 +70,7 @@ export function LiveView({ id }: { id: string }) {
         <Stats
           items={[
             { label: "채팅", value: <><RollingNumber value={v.session.chatCount} />건</> },
-            { label: "편집 후보", value: <><RollingNumber value={feed.candidates.length} />개</> },
+            { label: "편집 후보", value: <><RollingNumber value={itemCount} />개</> },
             { label: "시청자", value: v.viewerCount !== null ? <><RollingNumber value={v.viewerCount} />명</> : "-" },
             {
               label: "분석한 위치",

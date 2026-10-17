@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIDelivery, AIModel, AIPreview, AIRun, AITokenCount, Session } from "../../api/types";
+import { AIKeyField } from "./AIKeyField";
 import { useEvents } from "../events";
 import { timecode, tokens, usd } from "../format";
 import { Segmented } from "../motion/Segmented";
+import { Link } from "../navigation";
+import { startModel, useSettings } from "../settings";
 
 const runStateText: Record<AIRun["state"], string> = {
   running: "보내는 중",
@@ -86,11 +89,11 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
+  const settings = useSettings();
   const runs = useQuery({ queryKey: ["aiRuns", s.id], queryFn: () => api.aiRuns(s.id) });
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [models, setModels] = useState<AIModel[]>([]);
-  const [key, setKey] = useState("");
   const [mode, setMode] = useState<"candidates" | "all" | "range">("candidates");
   const [from, setFrom] = useState("0:00:00");
   const live = liveEndMs !== undefined;
@@ -102,10 +105,12 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
   const [runId, setRunId] = useState<string | null>(null);
 
   const list = providers.data?.providers ?? [];
-  const current = list.find((p) => p.id === provider) ?? list[0];
-  // A new provider starts from its own default model and options.
+  // The settings screen's provider and model come first; the tab can change them for this review.
+  const current = list.find((p) => p.id === (provider || settings.data?.aiProvider)) ?? list[0];
+  const firstModel = startModel(settings.data, current);
+  // A new provider starts from its default model and its own options.
   useEffect(() => {
-    setModel(current?.defaultModel ?? "");
+    setModel(firstModel);
     setModels([]);
     if (!current?.canBatch) setDelivery("single");
     if (!current?.hasPrices) {
@@ -113,7 +118,7 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
       setCap("");
       setMode((m) => (m === "all" ? "candidates" : m));
     }
-  }, [current?.id, current?.defaultModel, current?.canBatch, current?.hasPrices]);
+  }, [current?.id, firstModel, current?.canBatch, current?.hasPrices]);
   // Any change to what would be sent drops the preview.
   const inputs = useMemo(
     () => JSON.stringify([current?.id, model, mode, from, to, selection, delivery, cap]),
@@ -133,14 +138,6 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
   const capValue = cap.trim() === "" ? undefined : Number(cap);
   const capInvalid = capValue !== undefined && (!Number.isFinite(capValue) || capValue <= 0);
 
-  const saveKey = useMutation({
-    mutationFn: (value: string) => api.aiKey(current!.id, value),
-    onSuccess: () => {
-      setKey("");
-      void queryClient.invalidateQueries({ queryKey: ["aiProviders"] });
-      void queryClient.invalidateQueries({ queryKey: ["aiRuns", s.id] });
-    },
-  });
   const loadModels = useMutation({
     mutationFn: () => api.aiModels(current!.id),
     onSuccess: (r) => setModels(r.models),
@@ -188,8 +185,13 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
     [subscribe, queryClient, s.id],
   );
 
+  const listModels = current?.canListModels && current.configured && (
+    <button type="button" className="link-button" onClick={() => loadModels.mutate()} disabled={loadModels.isPending}>
+      {models.length > 0 ? `모델 ${models.length}개 불러옴` : "쓸 수 있는 모델 불러오기"}
+    </button>
+  );
   const r = run.data;
-  const failed = makePreview.error ?? start.error ?? saveKey.error ?? cancel.error ?? loadModels.error ?? count.error;
+  const failed = makePreview.error ?? start.error ?? cancel.error ?? loadModels.error ?? count.error;
   if (list.length === 0) return null;
   const plan = preview?.plan;
   const needsCap = mode === "all" && capValue === undefined;
@@ -200,8 +202,8 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
       </h2>
       <p className="field-help">
         고른 후보 앞뒤 채팅이나 지정한 구간의 채팅만 외부 AI API로 보냅니다. 보내기 전에 보낼 내용과 최대 비용을 그대로 보여
-        드리고, 확인해야 보냅니다. API 키는 앱이 실행되는 동안 메모리에만 둡니다. 제공자의 데이터 보관 정책이 따로 적용될 수
-        있습니다.
+        드리고, 확인해야 보냅니다. API 키는 앱이 실행되는 동안 메모리에 두고, ‘이 컴퓨터에도 저장’을 고른 키만 데이터 폴더의
+        .env에 남깁니다. 제공자의 데이터 보관 정책이 따로 적용될 수 있습니다.
         {live && " 생방송은 수집 중에도 저절로 보내지 않으며, 미리보기를 만든 순간까지 저장된 채팅만 보내고 그 뒤에 받은 채팅은 넣지 않습니다."}
       </p>
       <div className="ai-grid">
@@ -234,39 +236,27 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
             ))}
           </datalist>
         </label>
-        {current?.selfAuth ? (
+        {current?.selfAuth && (
           <div className="field">
             <span className="field-label">로그인</span>
             <span className="ai-auth" data-ready={current.configured || undefined}>
               {current.configured ? "자체 로그인으로 보냄 (계정과 구독은 실행할 때 확인)" : current.notReady}
             </span>
           </div>
-        ) : (
-          <label className="field">
-            <span className="field-label">
-              {current?.name} API 키 {current?.configured ? "(메모리에 있음)" : "(없음)"}
-            </span>
-            <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
-          </label>
         )}
       </div>
       {current?.selfAuth && current.authHelp && <p className="field-help">{current.authHelp}</p>}
-      <p className="actions">
-        {!current?.selfAuth && (
-          <button type="button" className="button button-quiet" onClick={() => saveKey.mutate(key)} disabled={!key.trim() || saveKey.isPending}>
-            키 저장
-          </button>
-        )}
-        {current?.configured && !current.selfAuth && (
-          <button type="button" className="link-button" onClick={() => saveKey.mutate("")} disabled={saveKey.isPending}>
-            메모리의 키 지우기
-          </button>
-        )}
-        {current?.canListModels && current.configured && (
-          <button type="button" className="link-button" onClick={() => loadModels.mutate()} disabled={loadModels.isPending}>
-            {models.length > 0 ? `모델 ${models.length}개 불러옴` : "쓸 수 있는 모델 불러오기"}
-          </button>
-        )}
+      {current && !current.selfAuth && (
+        <AIKeyField
+          key={current.id}
+          provider={current}
+          extra={listModels}
+          onChanged={() => void queryClient.invalidateQueries({ queryKey: ["aiRuns", s.id] })}
+        />
+      )}
+      {current?.selfAuth && listModels && <p className="actions">{listModels}</p>}
+      <p className="field-help">
+        기본 제공자·모델과 이 컴퓨터에 저장할 키는 <Link href="/settings">설정</Link>에서 정합니다.
       </p>
       <div className="ai-mode">
         <Segmented

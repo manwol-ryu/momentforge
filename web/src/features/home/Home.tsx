@@ -8,6 +8,7 @@ import { RevealWords } from "../../shared/motion/RevealWords";
 import { Tabs } from "../../shared/motion/Tabs";
 import { navigate, useDocumentTitle } from "../../shared/navigation";
 import { isRunningLive } from "../../shared/sessionText";
+import { builtInSettings, useSettings } from "../../shared/settings";
 import { useJob } from "../../shared/useJob";
 import { CollectForm } from "./CollectForm";
 import { LiveForm } from "./LiveForm";
@@ -49,13 +50,20 @@ function guessKind(text: string): Mode | null {
 export function Home() {
   const status = useQuery({ queryKey: ["status"], queryFn: api.status });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
+  const settings = useSettings();
   const job = useJob();
   const [mode, setMode] = useState<Mode>("vod");
   const [url, setUrl] = useState("");
   const [moved, setMoved] = useState(false);
   const runningLive = sessions.data?.find(isRunningLive);
   useDocumentTitle("새 작업");
-  useAppState(queryState({ isSuccess: status.isSuccess && sessions.isSuccess, isError: status.isError || sessions.isError }));
+  // Unreadable settings are not fatal: the forms then start from the built-in defaults.
+  useAppState(
+    queryState({ isSuccess: status.isSuccess && sessions.isSuccess && !settings.isPending, isError: status.isError || sessions.isError }),
+  );
+  const defaults = settings.data ?? builtInSettings;
+  // The forms read their defaults when they mount, so they mount again once the saved ones arrive.
+  const formKey = settings.isSuccess ? "saved" : "built-in";
 
   const choose = (m: Mode) => {
     setMode(m);
@@ -105,8 +113,16 @@ export function Home() {
               value={mode}
               onChange={choose}
               tabs={[
-                { id: "vod", label: "다시보기", content: <CollectForm {...field("vod")} busy={job.data?.busy ?? false} /> },
-                { id: "live", label: "생방송", content: <LiveForm {...field("live")} running={runningLive} /> },
+                {
+                  id: "vod",
+                  label: "다시보기",
+                  content: <CollectForm key={formKey} {...field("vod")} busy={job.data?.busy ?? false} defaults={defaults} />,
+                },
+                {
+                  id: "live",
+                  label: "생방송",
+                  content: <LiveForm key={formKey} {...field("live")} running={runningLive} defaults={defaults} />,
+                },
               ]}
             />
           </div>

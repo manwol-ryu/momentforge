@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Session } from "../../api/types";
+import type { Session, Settings } from "../../api/types";
 import { Link, navigate } from "../../shared/navigation";
 import type { UrlFieldProps } from "./Home";
 
 /** Checks a channel and starts a LIVE capture; the capture opens in its own view. */
-export function LiveForm({ url, onUrl, onPaste, focus, moved, hint, running }: UrlFieldProps & { running?: Session }) {
+export function LiveForm({
+  url,
+  onUrl,
+  onPaste,
+  focus,
+  moved,
+  hint,
+  running,
+  defaults,
+}: UrlFieldProps & { running?: Session; defaults: Settings }) {
   const queryClient = useQueryClient();
-  const [sensitive, setSensitive] = useState(false);
-  const [viewerAdaptive, setViewerAdaptive] = useState(true);
+  // The options start from the settings screen's defaults; a change here is for this capture only.
+  const [sensitive, setSensitive] = useState(defaults.sensitive);
+  const [viewerAdaptive, setViewerAdaptive] = useState(defaults.viewerAdaptive);
   const input = useRef<HTMLInputElement>(null);
   const inspect = useMutation({ mutationFn: () => api.inspectLive(url.trim()) });
   const start = useMutation({

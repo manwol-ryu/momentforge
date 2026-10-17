@@ -9,6 +9,7 @@ import { Home } from "./features/home/Home";
 import { LiveView } from "./features/live/LiveView";
 import { useLiveSessionUpdates } from "./features/live/useLiveFeed";
 import { SessionView } from "./features/session/SessionView";
+import { SettingsView } from "./features/settings/SettingsView";
 import "./styles/app.css";
 
 const queryClient = new QueryClient({
@@ -37,6 +38,7 @@ function Page({ path }: { path: string }) {
   if (session) return <SessionView key={session[1]} id={session[1]!} />;
   const live = /^\/live\/([0-9a-f]{32})$/.exec(path);
   if (live) return <LiveView key={live[1]} id={live[1]!} />;
+  if (path === "/settings") return <SettingsView />;
   return <Home />;
 }
 
