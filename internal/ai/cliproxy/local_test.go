@@ -95,6 +95,22 @@ api-keys:
 		t.Fatal("listening on every interface is not pointed out")
 	}
 
+	// As CLIProxyAPI rewrites it: comments at column 0 inside sections, the key hashed.
+	writeConfig(t, home, "config-version: 8\nserver:\n# this computer only\n  host: \"127.0.0.1\"\n  port: 9124\nmanagement:\n"+
+		"  allow-remote: false\n# key\n  secret-key: \"$2a$10$abc\"\n  disable-control-panel: false\naccess:\n  api-keys:\n    - \"mf-k\"\n")
+	c, err := readLocalConfig(filepath.Join(home, configName))
+	if err != nil || c.port != 9124 || !c.dashboard || len(c.keys) != 1 || c.keys[0] != "mf-k" {
+		t.Fatalf("rewritten config %+v %v", c, err)
+	}
+	writeConfig(t, home, "management:\n  secret-key: \"\"\n  disable-control-panel: false\n")
+	if c, _ := readLocalConfig(filepath.Join(home, configName)); c.dashboard {
+		t.Fatal("no management key: no dashboard")
+	}
+	writeConfig(t, home, "management:\n  secret-key: \"x\"\n  disable-control-panel: true\n")
+	if c, _ := readLocalConfig(filepath.Join(home, configName)); c.dashboard {
+		t.Fatal("control panel turned off: no dashboard")
+	}
+
 	// No config: the usual address and no key.
 	p = New(WithHome(t.TempDir()))
 	if p.DefaultEndpoint() != DefaultEndpoint {
@@ -123,6 +139,18 @@ func TestStartAndStopCLIProxyAPI(t *testing.T) {
 	st = p.ServiceStatus(ctx)
 	if !st.Running || !st.Managed {
 		t.Fatalf("after start %+v", st)
+	}
+	if st.Dashboard != "" || !st.DashboardOff {
+		t.Fatalf("no management key in this config: %+v", st)
+	}
+	// Turned on in the config (read fresh), with the login key's file next to it.
+	writeConfig(t, home, fmt.Sprintf("server:\n  host: \"127.0.0.1\"\n  port: %d\nmanagement:\n  secret-key: \"k\"\n"+
+		"  disable-control-panel: false\naccess:\n  api-keys:\n    - \"k\"\n", port))
+	os.WriteFile(filepath.Join(home, mgmtKeyName), []byte("k\n"), 0o600)
+	st = p.ServiceStatus(ctx)
+	if st.Dashboard != fmt.Sprintf("http://127.0.0.1:%d/management.html", port) || st.DashboardOff ||
+		st.DashboardKey != filepath.Join(home, mgmtKeyName) {
+		t.Fatalf("dashboard %+v", st)
 	}
 	b, err := os.ReadFile(filepath.Join(home, pidName))
 	if err != nil || strings.TrimSpace(string(b)) == "" {

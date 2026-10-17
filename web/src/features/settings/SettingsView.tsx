@@ -381,10 +381,27 @@ function ServiceRow({ p }: { p: AIProvider }) {
             {p.name} 켜기
           </button>
         )}
+        {s?.dashboard && (
+          <a className="button button-quiet" href={s.dashboard} target="_blank" rel="noreferrer">
+            {p.name} 대시보드 열기
+          </a>
+        )}
         <button type="button" className="link-button" onClick={() => void status.refetch()} disabled={busy}>
           상태 다시 확인
         </button>
       </p>
+      {s?.dashboard && (
+        <p className="field-help">
+          대시보드는 새 탭에서 열리며 로그인에 관리 키가 필요합니다.
+          {s.dashboardKey ? ` 관리 키는 ${s.dashboardKey} 파일에 있습니다.` : " 관리 키는 CLIProxyAPI 설정의 management.secret-key로 정한 값입니다."}
+        </p>
+      )}
+      {s?.dashboardOff && (
+        <p className="field-help">
+          대시보드가 꺼져 있습니다. {s.config ?? "CLIProxyAPI 설정 파일"}에서 management.secret-key(관리 키)를 정하고
+          disable-control-panel을 false로 둔 뒤 CLIProxyAPI를 다시 켜면 열 수 있습니다.
+        </p>
+      )}
       {s?.running && !s.managed && (
         <p className="field-help">MomentForge가 켜지 않은 {p.name}입니다. 끄려면 실행한 터미널에서 끄세요.</p>
       )}

@@ -27,6 +27,10 @@ const (
 	pidName     = "cli-proxy-api.pid"
 	logName     = "cli-proxy-api.log"
 	defaultPort = 8317
+	// mgmtKeyName holds the dashboard's login key: CLIProxyAPI keeps only a
+	// hash of it in its config (MomentForge's setup writes it, README).
+	mgmtKeyName   = "management-key.txt"
+	dashboardPath = "/management.html"
 )
 
 const (
@@ -41,6 +45,8 @@ type localConfig struct {
 	port int
 	tls  bool
 	keys []string // access.api-keys: the client keys
+	// dashboard: a management key is set and the control panel is not turned off.
+	dashboard bool
 }
 
 // endpoint is the address the config makes CLIProxyAPI listen on, as this
@@ -120,6 +126,10 @@ func readLocalConfig(path string) (localConfig, error) {
 		c.port = p
 	}
 	c.tls, _ = strconv.ParseBool(firstOf(scalars, "server.tls.enable", "tls.enable"))
+	// The management key (v8 management, v7 remote-management) turns the
+	// management API on; without it the dashboard is a 404.
+	panelOff, _ := strconv.ParseBool(firstOf(scalars, "management.disable-control-panel", "remote-management.disable-control-panel"))
+	c.dashboard = firstOf(scalars, "management.secret-key", "remote-management.secret-key") != "" && !panelOff
 	return c, nil
 }
 
@@ -244,6 +254,16 @@ func (p *CLIProxy) answers(ctx context.Context) bool {
 	return true
 }
 
+// dashboardURL is the dashboard next to the API: the address without /v1.
+func (p *CLIProxy) dashboardURL() string {
+	u, err := url.Parse(p.Endpoint())
+	if err != nil {
+		return ""
+	}
+	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/v1") + dashboardPath
+	return u.String()
+}
+
 // local reports whether the address is this computer, the only place
 // MomentForge can start the program for.
 func (p *CLIProxy) local() bool {
@@ -268,6 +288,19 @@ func (p *CLIProxy) ServiceStatus(ctx context.Context) ai.ServiceStatus {
 	}
 	st.Running = p.answers(ctx)
 	st.Managed = st.Running && p.managedPID() > 0
+	// The dashboard, read fresh from the config (CLIProxyAPI rewrites it).
+	if st.Running && p.local() {
+		if c, err := readLocalConfig(p.configPath()); err == nil {
+			if c.dashboard {
+				st.Dashboard = p.dashboardURL()
+			} else {
+				st.DashboardOff = true
+			}
+		}
+		if _, err := os.Stat(filepath.Join(p.home, mgmtKeyName)); err == nil {
+			st.DashboardKey = filepath.Join(p.home, mgmtKeyName)
+		}
+	}
 	switch {
 	case st.Installed && st.Config == "":
 		st.Note = "CLIProxyAPI 설정 파일이 없습니다: " + p.configPath() + ". README의 CLIProxyAPI 준비 방법대로 만드세요."

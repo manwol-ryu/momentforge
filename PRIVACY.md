@@ -98,7 +98,8 @@ CLIProxyAPI는 사용자가 실행하는 프록시로, 거기에 로그인한 �
 - CLIProxyAPI는 기본으로 모든 네트워크 인터페이스에서 받으므로, 같은 네트워크의 다른 기기가 쓰지 못하게 CLIProxyAPI 설정의 `access.api-keys`로 키를 정하고 `host`를 `127.0.0.1`로 두는 것을 권합니다.
 - 앱을 켤 때 CLIProxyAPI 설정 파일(`~/.cli-proxy-api/config.yaml`)에서 주소와 첫 클라이언트 키(`access.api-keys`)를 읽습니다. 읽은 키는 **메모리에만** 두고 다른 곳에 쓰지 않으며, 설정에서 저장한 키나 환경변수가 있으면 그것을 씁니다. 직접 넣은 키는 다른 API 키와 같이 메모리에 두고, **이 컴퓨터에도 저장**을 고른 경우에만 `.env`에 `MOMENTFORGE_CLIPROXY_API_KEY`로 씁니다.
 - 설정 화면의 **CLIProxyAPI 켜기**는 이 컴퓨터의 `cli-proxy-api`를 그 설정 파일로 실행하고, 출력은 `~/.cli-proxy-api/cli-proxy-api.log`, 프로세스 번호는 같은 폴더의 `cli-proxy-api.pid`에 씁니다. **끄기**는 MomentForge가 켰거나 pid 파일에 적힌 프로세스가 실제로 `cli-proxy-api`일 때만 끝냅니다. 실행 상태는 설정 화면을 열거나 다시 확인할 때만 묻고(키 없는 요청 하나), 계속 묻지 않습니다.
-- 실제 CLIProxyAPI 8.0.32로 키 확인·오류 문구·모델 목록·켜기·끄기를 확인했습니다(2026-10-17). 계정을 연결한 뒤의 실제 AI 응답은 아직 확인하지 못했습니다.
+- 설정 화면의 **CLIProxyAPI 대시보드 열기**는 CLIProxyAPI가 제공하는 관리 화면(`/management.html`)을 브라우저 새 탭으로 여는 링크일 뿐이며, MomentForge는 관리 키를 읽거나 보내지 않습니다(키 파일의 위치만 표시). 대시보드 파일은 CLIProxyAPI가 처음 열 때 공식 GitHub 저장소에서 내려받습니다. 관리 화면에서는 CLIProxyAPI 설정과 계정을 바꿀 수 있으므로 `management.allow-remote: false`로 이 컴퓨터에서만 열리게 두기를 권합니다.
+- 실제 CLIProxyAPI 8.0.32로 키 확인·오류 문구·모델 목록·켜기·끄기·대시보드 열기를 확인했습니다(2026-10-17). 계정을 연결한 뒤의 실제 AI 응답은 아직 확인하지 못했습니다.
 
 ## MCP 서버
 

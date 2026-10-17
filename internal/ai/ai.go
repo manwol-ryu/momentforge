@@ -119,6 +119,10 @@ type ServiceStatus struct {
 	Config    string // the configuration file it runs with
 	Log       string // where its output goes when MomentForge starts it
 	Note      string // something the user should know (it listens on every network interface, ...)
+	// The program's own dashboard, when it runs and has one turned on.
+	Dashboard    string // its address
+	DashboardOff bool   // it runs, but its dashboard is turned off in its config
+	DashboardKey string // a file holding the dashboard's login key, when there is one
 }
 
 // Model is a model a key can use.

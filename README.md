@@ -142,7 +142,7 @@ cd momentforge && make build
 | AI 검토 | 제공자별 기본 모델 ID | 비우면 제공자의 기본 모델을 씁니다. 키가 있으면 **쓸 수 있는 모델 불러오기**로 고를 수 있습니다 |
 | AI 검토 | 제공자별 API 키 | 상태(키 있음·없음), **키 저장**, **키 지우기**. OpenCode는 키 대신 OpenCode CLI 준비 상태와 연결 방법을 보여 줍니다 |
 | AI 검토 | CLIProxyAPI 주소 | CLIProxyAPI를 실행한 OpenAI 호환 주소. 비우면 CLIProxyAPI 설정 파일의 주소(없으면 `http://127.0.0.1:8317/v1`) |
-| AI 검토 | CLIProxyAPI 실행 상태 | 실행 중·꺼짐·설치되지 않음과 **CLIProxyAPI 켜기**·**CLIProxyAPI 끄기**, **상태 다시 확인** |
+| AI 검토 | CLIProxyAPI 실행 상태 | 실행 중·꺼짐·설치되지 않음과 **CLIProxyAPI 켜기**·**CLIProxyAPI 끄기**, **상태 다시 확인**, 대시보드가 켜져 있으면 **CLIProxyAPI 대시보드 열기** |
 | 새 작업 기본값 | 항상 가장 민감하게, 영상 댓글의 시청자 추천도 수집, 시청자 수 변화 보정 | 새 작업의 다시보기·생방송 양식이 이 값으로 시작합니다. 양식에서 바꾼 값은 그 작업에만 씁니다 |
 
 - 기본값은 데이터 폴더의 `settings.env`에 씁니다. 비밀이 아닌 값만 있고, `KEY=값` 형식이라 직접 고쳐도 됩니다(앱을 다시 실행하면 읽음).
@@ -193,7 +193,8 @@ AI는 채팅 반응을 요약해 편집할 만한 구간을 다시 고르는 선
 - **CLIProxyAPI**는 사용자가 실행하는 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)에 OpenAI 호환 Chat Completions로 보냅니다. 설정의 **CLIProxyAPI 주소**(비우면 `http://127.0.0.1:8317/v1`)와 CLIProxyAPI 설정의 `access.api-keys`에 있는 키를 넣고, **쓸 수 있는 모델 불러오기**로 모델을 고르세요. 어느 서비스·계정으로 갈지는 CLIProxyAPI와 모델 ID가 정합니다. 구독 계정(Claude Code·Codex·Gemini CLI 등)을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있어 계정이 제한될 수 있습니다. 비용은 알 수 없어 토큰만 표시하고 비용 한도를 쓸 수 없습니다. CLIProxyAPI가 꺼져 있으면 "연결하지 못했습니다"와 주소를 보여 주고, 이때는 아무것도 보내지 않은 것입니다.
   - 준비(macOS 예): [릴리스](https://github.com/router-for-me/CLIProxyAPI/releases)의 `CLIProxyAPI_<버전>_darwin_aarch64.tar.gz`에서 `cli-proxy-api`를 `~/.local/bin`에 두고, `~/.cli-proxy-api/config.yaml`에 `server.host: "127.0.0.1"`, `server.port: 8317`, `access.api-keys`(MomentForge에 넣을 키)를 적은 뒤 `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`로 실행합니다.
   - 켜고 끄기: 설정 화면 CLIProxyAPI 카드의 **CLIProxyAPI 켜기**는 위 명령과 같이 백그라운드로 실행하고 출력은 `~/.cli-proxy-api/cli-proxy-api.log`, 프로세스 번호는 `~/.cli-proxy-api/cli-proxy-api.pid`에 씁니다. MomentForge를 꺼도 CLIProxyAPI는 계속 실행됩니다. **CLIProxyAPI 끄기**는 MomentForge가 켰거나 pid 파일에 적힌, 실제로 `cli-proxy-api`인 프로세스만 끕니다. 다른 방법으로 실행한 CLIProxyAPI는 실행한 터미널에서 끄세요. 주소가 이 컴퓨터가 아니면 켜고 끌 수 없습니다.
-  - 계정 연결: 같은 명령에 `-claude-login`, `-codex-login`, `-antigravity-login` 같은 옵션을 붙여 실행하면 브라우저에서 그 서비스에 로그인합니다. 로그인한 계정이 없으면 모델 목록이 비어 있고, MomentForge는 "CLIProxyAPI가 알려 준 모델이 없습니다"라고 알립니다.
+  - 대시보드: CLIProxyAPI 설정의 `management.secret-key`(관리 키)를 정하고 `disable-control-panel: false`로 두면, 실행 중일 때 카드에 **CLIProxyAPI 대시보드 열기**가 나와 `http://127.0.0.1:8317/management.html`(CLIProxyAPI Management Center)을 새 탭으로 엽니다. 로그인에는 관리 키가 필요하며, CLIProxyAPI는 시작할 때 설정 파일의 관리 키를 해시로 바꿔 두므로 원래 키는 `~/.cli-proxy-api/management-key.txt` 같은 별도 파일에 두세요(카드가 이 파일 위치를 알려 줌). 대시보드 파일은 CLIProxyAPI가 처음 열 때 공식 GitHub 저장소에서 내려받습니다. `management.allow-remote: false`로 두면 이 컴퓨터에서만 열립니다. 대시보드가 꺼져 있으면 카드가 켜는 방법을 안내합니다.
+  - 계정 연결: 같은 명령에 `-claude-login`, `-codex-login`, `-antigravity-login` 같은 옵션을 붙여 실행하면 브라우저에서 그 서비스에 로그인합니다. 대시보드에서도 계정을 연결하고 관리할 수 있습니다. 로그인한 계정이 없으면 모델 목록이 비어 있고, MomentForge는 "CLIProxyAPI가 알려 준 모델이 없습니다"라고 알립니다.
 
 ### 비용 미리보기와 정확한 토큰 계산
 

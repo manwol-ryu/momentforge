@@ -16,6 +16,10 @@ type AIService struct {
 	Config    string // the configuration file it runs with
 	Log       string // where its output goes when MomentForge starts it
 	Note      string // something the user should know
+	// The program's own dashboard (CLIProxyAPI's management center).
+	Dashboard    string // its address, when it runs with the dashboard on
+	DashboardOff bool   // it runs, but the dashboard is turned off in its config
+	DashboardKey string // the file holding the dashboard's login key
 }
 
 func (a *App) aiService(provider string) (ai.Service, error) {
@@ -32,7 +36,7 @@ func (a *App) aiService(provider string) (ai.Service, error) {
 
 func toAIService(s ai.ServiceStatus) AIService {
 	return AIService{Installed: s.Installed, Running: s.Running, Managed: s.Managed, Program: s.Program,
-		Config: s.Config, Log: s.Log, Note: s.Note}
+		Config: s.Config, Log: s.Log, Note: s.Note, Dashboard: s.Dashboard, DashboardOff: s.DashboardOff, DashboardKey: s.DashboardKey}
 }
 
 // AIServiceStatus says whether a provider's local program is installed and running.

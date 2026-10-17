@@ -326,6 +326,12 @@ export interface AIService {
   config?: string;
   log?: string;
   note?: string;
+  /** The program's own dashboard (CLIProxyAPI's management center), when it runs with it turned on. */
+  dashboard?: string;
+  /** It runs, but its dashboard is turned off in its config. */
+  dashboardOff: boolean;
+  /** The file holding the dashboard's login key. */
+  dashboardKey?: string;
 }
 
 export type AIKeySource = "env" | "file" | "memory" | "tool";

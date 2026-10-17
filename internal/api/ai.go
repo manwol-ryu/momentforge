@@ -212,6 +212,10 @@ type aiServiceJSON struct {
 	Config    string `json:"config,omitempty"`
 	Log       string `json:"log,omitempty"`
 	Note      string `json:"note,omitempty"`
+	// CLIProxyAPI's own dashboard.
+	Dashboard    string `json:"dashboard,omitempty"`
+	DashboardOff bool   `json:"dashboardOff"`
+	DashboardKey string `json:"dashboardKey,omitempty"`
 }
 
 // aiService reports whether a provider's local program (CLIProxyAPI) runs.
