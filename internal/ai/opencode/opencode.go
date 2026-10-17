@@ -32,7 +32,18 @@ const (
 	modelPrefix = "opencode-go/"
 	// DefaultModel is a low-cost Go model; the screen lists the others.
 	DefaultModel = modelPrefix + "deepseek-v4.1-flash"
+	// zenPrefix is OpenCode's own models, the free ones among them. OpenCode
+	// serves its free tier only to OpenCode's default coding agent: with this
+	// provider's no-tools review agent the server answers 403 FreeTierError
+	// (checked 2026-10-17, CLI v2.0.32). Passing as that agent would get
+	// around OpenCode's rule and hand untrusted chat to an agent with tools,
+	// so these models are explained, not used.
+	zenPrefix = "opencode/"
 )
+
+var errFreeTier = domain.NewUserError("AI_FREE_TIER",
+	"OpenCode 무료 모델(opencode/…)은 OpenCode가 자기 앱 안에서만 쓰도록 막아 두어 MomentForge에서 보낼 수 없습니다. "+
+		"OpenCode Go 모델(opencode-go/…)이나 다른 AI 제공자를 고르세요.")
 
 const (
 	agentName      = "momentforge-review"
@@ -71,7 +82,21 @@ func (*OpenCode) MaxOutputTokens() int { return maxOutput }
 // AuthHelp tells the user how OpenCode signs in.
 func (*OpenCode) AuthHelp() string {
 	return "OpenCode에 로그인된 계정과 OpenCode Go 구독을 씁니다. 키는 MomentForge에 넣지 않습니다. " +
-		"터미널에서 opencode를 실행해 /connect로 OpenCode Go를 연결하세요."
+		"터미널에서 opencode를 실행해 /connect로 OpenCode Go를 연결하세요. " +
+		"OpenCode 무료 모델(opencode/…)은 OpenCode 앱 안에서만 쓸 수 있어 목록에 없습니다."
+}
+
+// CheckModel accepts Go models only, and says why OpenCode's own (free)
+// models cannot be used from here.
+func (*OpenCode) CheckModel(model string) error {
+	switch {
+	case strings.HasPrefix(model, zenPrefix):
+		return errFreeTier
+	case !strings.HasPrefix(model, modelPrefix) || len(model) == len(modelPrefix):
+		return domain.NewUserError("INPUT",
+			"OpenCode Go 모델 ID는 opencode-go/로 시작합니다 (예: "+DefaultModel+"). 모델 목록에서 고르세요.")
+	}
+	return nil
 }
 
 // Ready reports whether the opencode executable can be found.
@@ -133,9 +158,8 @@ func message(chunk ai.Chunk) string {
 
 // Review runs one chunk through `opencode run` and returns the JSON answer.
 func (o *OpenCode) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
-	if !strings.HasPrefix(model, modelPrefix) || len(model) == len(modelPrefix) {
-		return nil, ai.Usage{}, domain.NewUserError("INPUT",
-			"OpenCode Go 모델 ID는 opencode-go/로 시작합니다 (예: "+DefaultModel+"). 모델 목록에서 고르세요.")
+	if err := o.CheckModel(model); err != nil {
+		return nil, ai.Usage{}, err
 	}
 	bin, err := o.executable()
 	if err != nil {
@@ -337,6 +361,8 @@ func runError(raw json.RawMessage, message string) error {
 	retryable := status == 429 || status >= 500 || e.Data.IsRetryable
 	text := fmt.Sprintf("OpenCode가 요청을 처리하지 못했습니다: %s", msg)
 	switch {
+	case strings.Contains(string(raw), "FreeTierError"):
+		text = errFreeTier.Message
 	case status == 401 || status == 403 || strings.Contains(kind, "auth"):
 		text = fmt.Sprintf("OpenCode 계정이나 Go 구독을 확인해 주세요: %s", msg)
 	case strings.Contains(kind, "no-route") || strings.Contains(kind, "model"):

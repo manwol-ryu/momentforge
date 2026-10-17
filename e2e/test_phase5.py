@@ -101,3 +101,15 @@ def test_opencode_go_uses_its_own_login(page: Page, base_url: str) -> None:
     expect(page.get_by_role("button", name="키 저장")).to_have_count(0)
     expect(page.locator("input[type=password]")).to_have_count(0)
     page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "ai-opencode.png"))
+
+    # OpenCode's own free models answer only OpenCode's app: the preview says so before anything is sent.
+    expect(page.get_by_text("무료 모델(opencode/…)은 OpenCode 앱 안에서만", exact=False)).to_be_visible()
+    page.get_by_label("모델 ID").fill("opencode/deepseek-v4.1-flash-free")
+    page.get_by_label("채팅 구간 직접 지정", exact=False).check()
+    page.get_by_role("button", name="보낼 내용 미리보기").click()
+    expect(page.get_by_role("alert")).to_contain_text("OpenCode 무료 모델(opencode/…)은 OpenCode가 자기 앱 안에서만")
+    expect(page.locator(".ai-preview")).to_have_count(0)
+
+
+# The refused free-model preview is an expected 400.
+test_opencode_go_uses_its_own_login.allow_console = ["status of 400"]

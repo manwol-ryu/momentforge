@@ -41,6 +41,9 @@ run)
     ;;
   crash)
     exit 2 ;;
+  freetier)
+    printf '%s\n' '{"type":"error","timestamp":1,"sessionID":"ses_5","error":{"type":"provider.auth","message":"OpenCode free tier can only be used from within OpenCode.","status":403,"response":{"body":"{\"type\":\"error\",\"error\":{\"type\":\"FreeTierError\"}}"}}}'
+    exit 1 ;;
   esac ;;
 session)
   printf '%s\n' "$@" >> "$FAKE_LOG/deleted" ;;
@@ -158,6 +161,41 @@ func TestReviewErrors(t *testing.T) {
 	}
 	if _, _, err := o.Review(context.Background(), "", "kimi-k3", chunk); !isCode(err, "INPUT") {
 		t.Fatalf("model without the Go prefix: %v", err)
+	}
+}
+
+// OpenCode's free models answer only OpenCode's own agent, so they are
+// explained before a run and when OpenCode refuses one anyway.
+func TestFreeTierModelsAreExplained(t *testing.T) {
+	o, logDir := fake(t, "ok")
+	for model, code := range map[string]string{
+		"opencode/deepseek-v4.1-flash-free": "AI_FREE_TIER",
+		"opencode/glm-5.3-flash-free":       "AI_FREE_TIER",
+		"kimi-k3":                           "INPUT",
+		"opencode-go/":                      "INPUT",
+	} {
+		if err := o.CheckModel(model); !isCode(err, code) {
+			t.Fatalf("%s: %v", model, err)
+		}
+	}
+	if err := o.CheckModel(DefaultModel); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := o.Review(context.Background(), "", "opencode/deepseek-v4.1-flash-free", chunk); !isCode(err, "AI_FREE_TIER") {
+		t.Fatalf("free model: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "args")); !os.IsNotExist(err) {
+		t.Fatal("the CLI ran for a free model")
+	}
+	if !strings.Contains(o.AuthHelp(), "무료 모델") {
+		t.Fatal("the sign-in help does not mention the free models")
+	}
+
+	o, _ = fake(t, "freetier")
+	_, _, err := o.Review(context.Background(), "", DefaultModel, chunk)
+	var pe *ai.ProviderError
+	if !errors.As(err, &pe) || pe.Code != "AI_HTTP_403" || pe.Retryable || !strings.Contains(pe.Message, "무료 모델") {
+		t.Fatalf("free-tier refusal: %v", err)
 	}
 }
 

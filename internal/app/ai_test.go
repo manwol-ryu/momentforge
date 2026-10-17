@@ -456,3 +456,30 @@ func TestSelfAuthenticatedProviderNeedsNoKey(t *testing.T) {
 		t.Fatalf("run %+v cost %v", v, v.CostUSD)
 	}
 }
+
+// checkedAI refuses one model ID, like a provider that knows it can never send there.
+type checkedAI struct{ *fakeAI }
+
+func (c *checkedAI) CheckModel(model string) error {
+	if model == "never" {
+		return domain.NewUserError("AI_FREE_TIER", "이 모델로는 보낼 수 없습니다.")
+	}
+	return nil
+}
+
+func TestPreviewAsksTheProviderAboutTheModel(t *testing.T) {
+	a := newAIApp(t, &fakeAI{})
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(&checkedAI{fakeAI: &fakeAI{}})
+	a.initAI()
+	ctx := context.Background()
+	demo, _ := a.CreateDemo(ctx, false)
+	req := AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "never", StartMs: 0, EndMs: 600000}
+	if _, err := a.PreviewAI(ctx, req); !isCode(err, "AI_FREE_TIER") {
+		t.Fatalf("refused model: %v", err)
+	}
+	req.Model = "m"
+	if _, err := a.PreviewAI(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+}

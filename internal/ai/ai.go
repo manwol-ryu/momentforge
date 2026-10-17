@@ -69,6 +69,11 @@ type (
 	ModelLister interface {
 		Models(ctx context.Context, key string) ([]Model, error)
 	}
+	// ModelChecker rejects a model ID the provider can never send to, so the
+	// preview says why before anything is sent.
+	ModelChecker interface {
+		CheckModel(model string) error
+	}
 	// SelfAuthenticated providers sign in with another program's own login
 	// (the OpenCode CLI); MomentForge holds no key for them and passes "".
 	SelfAuthenticated interface {

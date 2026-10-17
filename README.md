@@ -183,6 +183,7 @@ AI는 채팅 반응을 요약해 편집할 만한 구간을 다시 고르는 선
 - Claude는 공식 Go SDK로 보내며, `ANTHROPIC_BASE_URL` 같은 환경 설정은 무시하고 화면에서 받은 키(또는 `ANTHROPIC_API_KEY`)만 씁니다. 고정 지시문은 프롬프트 캐싱을 쓰고, 실행 기록에 캐시 적중 토큰을 보여 줍니다. 미리보기에서 고른 모델이 아닌 다른 모델로 넘기는 서버 측 대체 기능은 켜지 않습니다.
 - OpenAI는 Responses API에 `store: false`로 보냅니다. 가격표가 없어 토큰만 표시하고 비용 한도를 쓸 수 없습니다.
 - **OpenCode Go**는 [OpenCode](https://opencode.ai) CLI를 설치하고, 터미널에서 `opencode`를 실행해 `/connect`로 OpenCode Go를 연결한 뒤 씁니다. 활성 OpenCode Go 구독이 필요합니다. MomentForge가 OpenCode를 직접 실행해 요청을 보내게 하며, `opencode`는 `PATH`, `~/.local/bin`, `~/.opencode/bin`, `/opt/homebrew/bin`, `/usr/local/bin` 순서로 찾습니다. 비용은 OpenCode가 알려 준 값으로 표시합니다. OpenCode Go는 코딩 에이전트용 구독이고 채팅 검토는 코딩 요청이 아니므로, 구독 제한을 받을 위험이 있다는 점을 알고 쓰세요.
+- OpenCode의 무료 모델(`opencode/deepseek-v4.1-flash-free`, `opencode/glm-5.3-flash-free` 같은 `opencode/…`)은 쓸 수 없습니다. OpenCode는 무료 등급을 OpenCode 앱 안에서만 쓰게 하며, MomentForge가 쓰는 도구 없는 검토 에이전트로 보내면 403(`FreeTierError`)으로 거절합니다. 그래서 목록에 보이지 않고, 모델 ID를 직접 넣으면 미리보기에서 이유를 알려 줍니다. 같은 모델의 OpenCode Go 판(`opencode-go/deepseek-v4.1-flash`, `opencode-go/glm-5.3-flash`)은 Go 구독으로 쓸 수 있습니다.
 
 ### 비용 미리보기와 정확한 토큰 계산
 

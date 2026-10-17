@@ -310,6 +310,11 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	if !ok {
 		return AIPreview{}, domain.NewUserError("INPUT", "AI 제공자를 선택해 주세요.")
 	}
+	if mc, ok := provider.(ai.ModelChecker); ok {
+		if err := mc.CheckModel(req.Model); err != nil {
+			return AIPreview{}, err
+		}
+	}
 	switch req.Delivery {
 	case "", ai.DeliverySingle:
 		req.Delivery = ai.DeliverySingle

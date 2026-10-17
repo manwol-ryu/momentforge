@@ -292,6 +292,7 @@ type Provider interface {
 type Priced interface{ Price(model string) (Price, bool) }                       // 공시 가격
 type TokenCounter interface{ CountTokens(ctx, key, model string, c Chunk) (int, error) }
 type ModelLister interface{ Models(ctx, key string) ([]Model, error) }
+type ModelChecker interface{ CheckModel(model string) error }                      // 보낼 수 없는 모델 ID를 미리보기에서 거절
 type BatchProvider interface {
     SubmitBatch(ctx, key, model string, reqs []BatchRequest) (batchID string, err error)
     BatchStatus(ctx, key, batchID string) (BatchStatus, error)
@@ -655,5 +656,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | 생방송 기록의 AI 검토 (사용자 선택) | 그동안 다시보기 작업대에만 있던 AI 검토를 생방송 작업대에도 둠. 사용자 선택: **수집 중에도** 열고, 보낼 범위는 **다시보기와 같은 세 방식**(고른 후보, 확정 후보 전체 자동 선택 + 비용 한도 필수, 채팅 구간 직접 지정). 자동 전송은 없고 매번 미리보기 → 확인으로만 보냄. 계획은 미리보기를 만든 순간 저장된 채팅(최대 seq)으로 고정해 그 뒤 들어온 채팅은 넣지 않음(계획에 채팅 본문이 들어 있어 보내는 내용은 미리보기와 같음). 후보는 `confirmed`·`partial`만 고를 수 있음(`generating`·`waiting_context`는 편집 구간이 아직 늘어나서 제외). 구간은 분석이 끝난 위치까지만 지정. 늦게 받은 채팅도 그 시각의 채팅이라 함께 보냄. AI 추천은 통합 타임라인(LIVE는 자동 탐지 후보 + AI 추천)으로 받아 후보 탭(출처 선택)과 반응 타임라인 마커에 표시. 제공자·키·비용 한도·배치·결과 비교는 다시보기와 같고, 화면 코드는 `web/src/shared/ai/`로 옮겨 두 작업대가 함께 씀 |
 | 2026-10-17 | 설정 화면 (사용자 선택) | 작업 목록 아래 **설정**(`/settings`). 항목은 제안대로: 기본 AI 제공자, 제공자별 기본 모델, 제공자별 API 키 입력·지우기와 상태, OpenCode CLI 준비 상태, 새 작업 수집 옵션 기본값 3개. 탐지 임계값은 넣지 않음(같은 채팅이면 같은 후보라는 규칙 버전 원칙). 비밀이 아닌 기본값은 DB 마이그레이션이나 브라우저 저장 대신 사용자가 고른 **데이터 폴더의 `settings.env`**(KEY=값, 0600)에 둠. 데이터 폴더마다 따로이고 `.gitignore` 대상. 화면 양식은 이 값으로 시작하고 양식에서 바꾼 값은 그 작업에만 씀 |
 | 2026-10-17 | API 키 파일 저장 (사용자 선택, 규칙 변경) | 기존 "키는 메모리에만" 규칙을 사용자가 바꿈: 키를 저장할 때 **이 컴퓨터에도 저장**을 고르면 그 키를 데이터 폴더의 `.env`에 평문으로 씀(0600, 임시 파일을 바꿔 끼워 씀, 줄 이름은 `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`, 그 밖의 제공자는 `MOMENTFORGE_<ID>_API_KEY`). 기본은 꺼짐. 시작할 때 `.env`가 환경변수보다 먼저(앱에서 한 마지막 선택). 키 지우기와 고르지 않은 새 키 저장은 그 줄을 지우고, 마지막 줄이면 파일도 지움. DB·로그·브라우저 저장소·API 응답에는 여전히 두지 않음. CLAUDE.md, privacy-security.md, PRIVACY.md 함께 수정 |
+| 2026-10-17 | OpenCode 무료 모델 (사용자 문의) | 사용자가 `opencode/glm-5.3-flash-free`·`opencode/deepseek-v4.1-flash-free`가 보이지 않는다고 물음. 원인은 둘: 이 제공자는 OpenCode Go(`opencode-go/`)로만 보내도록 만들었고, OpenCode 서버가 무료 등급(`opencode/`, OpenCode Zen)을 OpenCode 자체 기본 에이전트의 요청에만 응답함. CLI v2.0.32로 작은 시험 요청(수집 채팅 없음)을 보내 확인: 이 앱의 도구 없는 검토 에이전트로 보내면 `--standalone` 여부와 관계없이 403 `FreeTierError`("free tier can only be used from within OpenCode"), 기본 에이전트로 보내면 응답함. 기본 에이전트로 보내면 OpenCode의 무료 등급 제한을 우회하는 셈이고 신뢰할 수 없는 채팅을 도구가 있는 코딩 에이전트에 넘기게 되므로 쓰지 않음. 대신 선택 인터페이스 `ai.ModelChecker`로 미리보기 단계에서 이유를 알리고(`AI_FREE_TIER`), 실행 중 같은 거절이 와도 같은 문구로 보여 주며, OpenCode 로그인 안내에 무료 모델이 목록에 없는 이유를 적음. 이 컴퓨터의 OpenCode Go 연결은 Go 무료 모델(`opencode-go/beam-free` 등)도 401 "Invalid credential"로 거절되어 Go 구독·연결이 먼저 필요함. 시험 세션은 모두 지움 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.
