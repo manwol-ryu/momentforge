@@ -3,7 +3,8 @@
 MomentForge: 방송 채팅을 수집해 편집할 순간(후보)을 찾는 로컬 앱. CzzEdit(Python)를 포크해 **Go + React/TypeScript로 전면 재작성 중**이며, 이름도 MomentForge로 바꿨습니다. 실행파일·Go 모듈·데이터 폴더 이름은 `momentforge`입니다 (모듈 경로 `github.com/manwol-ryu/momentforge`).
 
 - 설계 기준: [docs/REDESIGN.md](docs/REDESIGN.md). 구조·단계·완료 기준은 이 문서를 따르고, 설계를 바꾸면 문서도 함께 고칩니다.
-- 기존 Python 코드: `legacy-python` 브랜치. main에 남은 `czzedit/`, `README.md`, `ARCHITECTURE.md`는 0.3.2 기준이며, 해당 기능을 옮긴 뒤 정리합니다.
+- 기존 Python 코드: `legacy-python` 브랜치 (`git show legacy-python:czzedit/<파일>`로 읽음).
+- 사용자 문서: [README.md](README.md)(사용법), [PRIVACY.md](PRIVACY.md)(외부 전송·로컬 저장 범위). 해당 동작을 바꾸면 함께 고칩니다.
 - 보류한 기능은 구현하지 않습니다: 본인 시청 계정 로그인 VOD, 공식 API 시청자 수 기록.
 - 사용자와는 한국어로 소통하고, 화면 문구도 한국어로 작성합니다. 코드 식별자와 커밋 메시지는 영어로 씁니다.
 

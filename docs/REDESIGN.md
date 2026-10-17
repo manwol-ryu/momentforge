@@ -609,8 +609,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-16 | 샘플 세션 (2단계) | 저장된 샘플이 있으면 새로 만들지 않고 그 세션을 염 |
 | 2026-10-16 | 재생 위치 채팅 조회 (2단계) | 재생 위치를 10초 단위로 묶어 조회(앞뒤 30초, 앞뒤 150건). 재생이 이어질 때 요청이 10초에 한 번 이하 |
 | 2026-10-16 | 2단계 실제 확인 | 사용자가 준 치지직 다시보기(4시간 32분)로 확인. 42페이지·채팅 8,257건 수집(격리·공백·작성자 누락 없음), 후보 16개. 같은 채팅을 CzzEdit 탐지기에 넣은 결과와 후보 16개·창 3,266개 모든 필드 일치. 앱 내장 브라우저에서 후보 클릭 → 편집 구간 시작으로 영상 이동·재생, 재생 위치 채팅 동기화 확인 |
-
-새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.
 | 2026-10-17 | LIVE 동시 수집 수 (3단계) | 기존처럼 한 번에 하나(`LIVE_BUSY`). VOD 작업과는 별개로 동시에 실행됨. 6.4절의 다채널 동시 수집은 6+단계로 미룸 |
 | 2026-10-17 | LIVE 저장 구조 (3단계) | `chat_events`를 VOD와 함께 쓰고 LIVE 전용 열(받은 시각, 연결 번호, 늦음, 시간 품질, 재전송 키)을 추가(마이그레이션 0003). 상태는 `live_state`, 후보는 revision을 가진 `live_candidates` |
 | 2026-10-17 | 재접속 때 다시 오는 채팅 (3단계) | 연결 직후 받은 과거 채팅을 HMAC 재전송 키로 이전 연결분과 비교해 같은 횟수만큼 버림. 플랫폼 메시지 ID 원문은 저장하지 않음 |
@@ -644,3 +642,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | OpenCode Go 제공자 (사용자 요청) | Go 공식 문서는 Go를 "OpenCode와 다른 코딩 에이전트용"으로 두고, 직접 호출하는 프로그램에 코딩 에이전트 트래픽·자체 User-Agent·세션 헤더를 요구하며 남용을 감시함. 사용자 제안대로 API를 직접 부르지 않고 OpenCode CLI를 하네스로 실행(6.3). Go가 제공하는 모델을 형식(채팅 완성·Messages·Responses) 구분 없이 모두 씀. 채팅이 비코딩 요청이라는 점은 그대로이므로, 구독 제한 위험은 사용자가 알고 선택함 |
 | 2026-10-17 | OpenCode 하네스 확인 (실제 실행) | 설치된 OpenCode v2.0.32로 작은 요청(수집 채팅 없음)을 보내 확인: 표준 입력을 닫지 않으면 무한 대기, 표준 입력이 메시지로 쓰임(세션 내보내기로 확인), 오류 이벤트 형식, `session delete`로 정리됨. 세션 DB를 따로 두면(`OPENCODE_DB`) 로그인 정보도 빠져 쓸 수 없음. 사용자 계정에 활성 Go 구독이 없어 403("An active OpenCode Go subscription is required")이었고, 무료 모델은 `opencode run`에서 "OpenCode 안에서만"이라며 거절해 **성공 응답 형식과 도구 차단은 실제로 확인하지 못함**. 출력 해석은 v1 공개 형식과 v2 오류 형식을 함께 받도록 만들고 가짜 CLI로 시험 |
 | 2026-10-17 | OpenCode 기록과 전송 범위 | OpenCode 개인 서버가 사용자의 전역 설정(AGENTS.md·스킬·플러그인)을 읽으므로 그 내용도 지시문에 함께 들어갈 수 있음. 채팅은 OpenCode를 거쳐 모델 제공자로 전송되고(모델별 보관: 대부분 0일, 일부 30일, Gemini Argon·Muse Spark는 학습 사용), 실행 뒤 OpenCode 세션은 지움 |
+| 2026-10-17 | CzzEdit 0.3.2 남은 파일 정리 (사용자 확인) | 13절 기능 동등 항목이 모두 끝나 루트의 `czzedit/`, `ARCHITECTURE.md`, `RELEASE_NOTES.md`, `read.md`, `Image/`, `pyproject.toml`, `requirements.txt`, `requirements-login.txt`, 설치·실행 스크립트(`install.sh`·`.ps1`·`.cmd`, `run.sh`·`.cmd`, `설치.command`, `실행.command`)를 삭제. 모두 `legacy-python` 브랜치에 같은 내용으로 남아 있고, 기존 결과 비교 스크립트는 `git archive legacy-python czzedit`로 브랜치에서 읽음. `LICENSE`(MIT)와 `.gitignore`(`.czzedit/` 제외 포함)는 유지. README·PRIVACY는 MomentForge 기준으로 새로 쓰고 외부 전송 범위(플랫폼, 제공자별 AI 요청, 정확한 토큰 계산, OpenCode CLI, MCP)를 명시해 14절 MCP 위험 대응을 마침. `read.md`의 TXT 수동 활용법은 옮기지 않음: MCP 서버와 앱 안 AI가 대신하고, 내보내기 파일 구성은 README에 둠 |
+
+새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

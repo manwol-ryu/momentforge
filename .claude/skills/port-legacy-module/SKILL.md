@@ -25,7 +25,7 @@ git show legacy-python:czzedit/<파일>
 git grep -n "<함수명>" legacy-python -- czzedit/
 ```
 
-작업 폴더의 `czzedit/`는 정리 대상이므로 기준으로 삼지 않습니다. 항상 `legacy-python` 브랜치를 읽습니다.
+main에는 `czzedit/`가 없습니다(2026-10-17 정리). 항상 `legacy-python` 브랜치를 읽습니다.
 
 ### 3. 동작 목록 작성
 
