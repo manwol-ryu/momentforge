@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -400,5 +401,56 @@ func TestMatchRecs(t *testing.T) {
 	if len(m) != 2 || m[0].B.ID != "b2" || m[1].B.ID != "b1" || m[1].OverlapMs != 50 || len(onlyA) != 1 || onlyA[0].ID != "a3" ||
 		len(onlyB) != 1 || onlyB[0].ID != "b3" {
 		t.Fatalf("matched %+v onlyA %v onlyB %v", m, onlyA, onlyB)
+	}
+}
+
+// selfAuthAI signs in by itself, like the OpenCode CLI: no key in MomentForge.
+type selfAuthAI struct {
+	*fakeAI
+	ready error
+}
+
+func (s *selfAuthAI) ID() string       { return "selfauth" }
+func (s *selfAuthAI) Ready() error     { return s.ready }
+func (s *selfAuthAI) AuthHelp() string { return "자체 로그인을 씁니다" }
+func (s *selfAuthAI) Review(ctx context.Context, key, model string, c ai.Chunk) (json.RawMessage, ai.Usage, error) {
+	out, u, err := s.fakeAI.Review(ctx, key, model, c)
+	u.CostUSD = 0.01 // reported by the provider
+	return out, u, err
+}
+
+func TestSelfAuthenticatedProviderNeedsNoKey(t *testing.T) {
+	sa := &selfAuthAI{fakeAI: &fakeAI{}, ready: domain.NewUserError("AI_UNAVAILABLE", "CLI를 찾지 못했습니다.")}
+	a, _ := newTestApp(t, &fakeVOD{duration: 1000, pages: 1})
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(sa)
+	a.initAI()
+	ctx := context.Background()
+	demo, _ := a.CreateDemo(ctx, false)
+	p := a.AIProviders()[0]
+	if !p.SelfAuth || p.Configured || p.NotReady != "CLI를 찾지 못했습니다." || p.AuthHelp == "" {
+		t.Fatalf("provider %+v", p)
+	}
+	if _, err := a.SetAIKey("selfauth", "k"); !isCode(err, "INPUT") {
+		t.Fatalf("a key for a self-authenticated provider: %v", err)
+	}
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "selfauth", Model: "m", StartMs: 0, EndMs: 600000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false); !isCode(err, "AI_UNAVAILABLE") {
+		t.Fatalf("not ready: %v", err)
+	}
+	sa.ready = nil
+	if !a.AIProviders()[0].Configured {
+		t.Fatal("a ready provider counts as configured")
+	}
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitAI(t, a, id)
+	if v.State != store.AICompleted || sa.keys[0] != "" || v.CostUSD == nil || math.Abs(*v.CostUSD-0.01*float64(v.RequestCount)) > 1e-9 {
+		t.Fatalf("run %+v cost %v", v, v.CostUSD)
 	}
 }

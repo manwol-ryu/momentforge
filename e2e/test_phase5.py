@@ -81,3 +81,18 @@ def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> N
     page.set_viewport_size({"width": 390, "height": 900})
     compare.scroll_into_view_if_needed()
     compare.screenshot(path=str(SHOTS / "ai-compare-mobile.png"))
+
+
+def test_opencode_go_uses_its_own_login(page: Page, base_url: str) -> None:
+    """OpenCode Go signs in through the OpenCode CLI: no key field. The E2E
+    binary points it at a missing CLI, so the screen explains how to set up."""
+    open_home(page, base_url)
+    page.get_by_role("button", name="샘플로 먼저 체험").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_label("AI 제공자").select_option(label="OpenCode Go")
+    expect(page.get_by_label("모델 ID")).to_have_value(re.compile(r"^opencode-go/"))
+    expect(page.locator(".ai-auth")).to_contain_text("OpenCode CLI(opencode)를 찾지 못했습니다")
+    expect(page.get_by_text("키는 MomentForge에 넣지 않습니다", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="키 저장")).to_have_count(0)
+    expect(page.locator("input[type=password]")).to_have_count(0)
+    page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "ai-opencode.png"))

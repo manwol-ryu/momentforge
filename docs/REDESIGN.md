@@ -106,7 +106,8 @@ momentforge/
 │  ├─ store/                      SQLite(modernc, CGO 없음)·마이그레이션
 │  ├─ ai/                         Provider 인터페이스·프롬프트·검증
 │  │  ├─ anthropic/               anthropic-sdk-go
-│  │  └─ openai/                  기존 기능 동등용
+│  │  ├─ openai/                  기존 기능 동등용
+│  │  └─ opencode/                OpenCode CLI 하네스로 OpenCode Go 모델 사용
 │  ├─ export/                     TXT/JSONL/CSV/JSON·checkpoint
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
@@ -298,7 +299,28 @@ type BatchProvider interface {
 }
 ```
 
-`Usage`는 입력을 가격별로 나눠 둡니다(캐시 없음·캐시 읽기·캐시 쓰기, 출력). Claude는 네 가지를 모두 구현하고, OpenAI는 기존 기능(바로 보내기)만 구현합니다.
+`Usage`는 입력을 가격별로 나눠 둡니다(캐시 없음·캐시 읽기·캐시 쓰기, 출력). 제공자가 비용을 직접 알려 주면 `CostUSD`에 담고, app은 가격표가 없을 때 그 값을 씁니다. Claude는 네 가지 선택 기능을 모두 구현하고, OpenAI는 기존 기능(바로 보내기)만 구현합니다.
+
+```go
+// 다른 프로그램의 로그인을 쓰는 제공자: MomentForge는 키를 받지 않고 ""를 넘김
+type SelfAuthenticated interface {
+    Ready() error     // 그 프로그램을 쓸 수 있으면 nil
+    AuthHelp() string // 로그인 방법 (화면 안내)
+}
+```
+
+OpenCode Go (`internal/ai/opencode`): OpenCode Go 구독 모델(`opencode-go/…`, 목록은 `opencode models`)을 **OpenCode CLI를 하네스로** 씁니다. Go 공식 문서가 직접 호출하는 프로그램에 "일반적인 코딩 에이전트 트래픽, 자체 User-Agent, 대화별 `x-opencode-session`"을 요구하므로, API를 직접 부르지 않고 OpenCode 자체가 요청을 보내게 합니다. 키는 OpenCode의 로그인(`/connect`)을 쓰고 MomentForge는 받지 않습니다(`SelfAuthenticated`).
+
+| 항목 | 규칙 |
+|---|---|
+| 실행 | 요청마다 빈 임시 폴더에서 `opencode run --standalone --format json --agent momentforge-review -m <모델>`. 공유 백그라운드 서버 대신 개인 서버를 써서 폴더의 설정이 적용되게 함 |
+| 도구 차단 | 그 폴더의 `opencode.json`이 전역과 에이전트 권한을 모두 `{action:"*", resource:"*", effect:"deny"}`로 두고, 에이전트는 `steps: 1`, 지시문은 `ai.Prompt`. 결과에 완료된 도구 실행이 있으면 답을 쓰지 않음(`AI_TOOL_USE`) |
+| 입력 | 지시·스키마·입력 JSON을 표준 입력으로 넘김(명령줄에 채팅을 두지 않음). 표준 입력을 닫지 않으면 CLI가 기다리므로 항상 내용을 넘기고 닫음 |
+| 출력 | JSON 줄 이벤트에서 `text`의 `part.text`를 모아 JSON 객체를 꺼내고(코드 블록 허용) `Validate`로 확인. `step_finish`의 `part.tokens`·`part.cost`를 사용량으로 기록. 오류 이벤트는 두 세대 형식(`{type,message,status}`, `{name,data:{message,statusCode}}`)을 모두 읽음 |
+| 정리 | 끝나면 `opencode session delete --standalone <세션>`으로 OpenCode 기록에서 지우고 임시 폴더를 삭제 |
+| 재시도 | 429·5xx만 재시도. 구독·인증(401·403)·모델 없음은 OpenCode 문구를 그대로 보여 주고 멈춤. 10분 안에 끝나지 않거나 결과를 모르면 재전송하지 않음 |
+| 찾기 | `PATH`, 그다음 `~/.local/bin`, `~/.opencode/bin`, `/opt/homebrew/bin`, `/usr/local/bin`. 환경변수로 실행파일을 바꾸는 기능은 두지 않음 |
+| 미지원 | 토큰 계산 API·배치·가격표가 없어 비용 한도·자동 선택·배치를 쓸 수 없음. 비용은 OpenCode가 알려 준 값으로 표시 |
 
 Claude 구현 규칙 (claude-api 스킬 기준, `internal/ai/anthropic`):
 
@@ -619,3 +641,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | MCP 서버 (5단계) | `momentforge mcp --data`, stdio, SQLite 읽기 전용 연결. 테스트에서 저장소를 직접 만들 수 없는 구조 규칙(`internal/mcp` → `app`, `domain`만) 때문에 MCP 통합 테스트와 평가 확인은 `cmd/momentforge`에 둠 |
 | 2026-10-17 | MCP 평가 실행 방법 (5단계) | 공식 평가 스크립트(`mcp-builder/scripts/evaluation.py`)는 Anthropic API 키가 필요하고 이 환경의 `claude` CLI는 실행되지 않아, 정답을 모르는 별도 에이전트가 MCP 도구만 쓰는 stdio 도우미로 질문 10개를 풀게 함: 1차 10/10. 1차 의견(작성자 필터 없음, 최대 개수 안내 없음, 근거 수·겹침·AI 실행 ID 없음, 창이 영상 끝을 넘음, 구간 경계 설명 없음)을 반영한 뒤 2차도 10/10(작성자 필터·겹침 정보로 호출 수 감소). 2차 의견 중 Markdown 후보 목록에 근거 수·겹침·배율을 더함 |
 | 2026-10-17 | 5단계 E2E | 가짜 AI 제공자 두 개(가격·토큰 계산·모델 목록·배치를 갖춘 것, 바로 보내기만 하는 것)로 비용 미리보기 → 정확한 토큰 계산 → 비용 한도 배치 → 다른 제공자로 같은 후보 → 비교까지 외부 연결 없이 확인. E2E 서버는 API 키 환경변수를 지우고 실행하고, 배치 확인 간격은 E2E 실행파일에서만 0.2초 |
+| 2026-10-17 | OpenCode Go 제공자 (사용자 요청) | Go 공식 문서는 Go를 "OpenCode와 다른 코딩 에이전트용"으로 두고, 직접 호출하는 프로그램에 코딩 에이전트 트래픽·자체 User-Agent·세션 헤더를 요구하며 남용을 감시함. 사용자 제안대로 API를 직접 부르지 않고 OpenCode CLI를 하네스로 실행(6.3). Go가 제공하는 모델을 형식(채팅 완성·Messages·Responses) 구분 없이 모두 씀. 채팅이 비코딩 요청이라는 점은 그대로이므로, 구독 제한 위험은 사용자가 알고 선택함 |
+| 2026-10-17 | OpenCode 하네스 확인 (실제 실행) | 설치된 OpenCode v2.0.32로 작은 요청(수집 채팅 없음)을 보내 확인: 표준 입력을 닫지 않으면 무한 대기, 표준 입력이 메시지로 쓰임(세션 내보내기로 확인), 오류 이벤트 형식, `session delete`로 정리됨. 세션 DB를 따로 두면(`OPENCODE_DB`) 로그인 정보도 빠져 쓸 수 없음. 사용자 계정에 활성 Go 구독이 없어 403("An active OpenCode Go subscription is required")이었고, 무료 모델은 `opencode run`에서 "OpenCode 안에서만"이라며 거절해 **성공 응답 형식과 도구 차단은 실제로 확인하지 못함**. 출력 해석은 v1 공개 형식과 v2 오류 형식을 함께 받도록 만들고 가짜 CLI로 시험 |
+| 2026-10-17 | OpenCode 기록과 전송 범위 | OpenCode 개인 서버가 사용자의 전역 설정(AGENTS.md·스킬·플러그인)을 읽으므로 그 내용도 지시문에 함께 들어갈 수 있음. 채팅은 OpenCode를 거쳐 모델 제공자로 전송되고(모델별 보관: 대부분 0일, 일부 30일, Gemini Argon·Muse Spark는 학습 사용), 실행 뒤 OpenCode 세션은 지움 |

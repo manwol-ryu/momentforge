@@ -17,6 +17,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/ai/anthropic"
 	"github.com/manwol-ryu/momentforge/internal/ai/openai"
+	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
 	"github.com/manwol-ryu/momentforge/internal/api"
 	"github.com/manwol-ryu/momentforge/internal/app"
 	"github.com/manwol-ryu/momentforge/internal/detect"
@@ -159,6 +160,9 @@ var (
 	extraPlatforms []platform.Platform
 	extraAI        []ai.Provider
 	extraBatchPoll time.Duration // 0: the app's default
+	// opencodeOptions configure the OpenCode provider (the E2E binary points
+	// it at a missing CLI so a test can never reach the real service).
+	opencodeOptions []opencode.Option
 )
 
 func registerAI(override []ai.Provider) *ai.Registry {
@@ -168,7 +172,7 @@ func registerAI(override []ai.Provider) *ai.Registry {
 		return r
 	}
 	// Claude first: the screen offers the first provider by default.
-	r.Register(anthropic.New(), openai.New())
+	r.Register(anthropic.New(), openai.New(), opencode.New(opencodeOptions...))
 	r.Register(extraAI...)
 	return r
 }

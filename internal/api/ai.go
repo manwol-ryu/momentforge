@@ -14,6 +14,9 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		Configured    bool   `json:"configured"`
+		SelfAuth      bool   `json:"selfAuth"`
+		AuthHelp      string `json:"authHelp,omitempty"`
+		NotReady      string `json:"notReady,omitempty"`
 		DefaultModel  string `json:"defaultModel"`
 		CanCount      bool   `json:"canCount"`
 		CanListModels bool   `json:"canListModels"`

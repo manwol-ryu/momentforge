@@ -289,7 +289,13 @@ export interface UnifiedTimeline {
 export interface AIProvider {
   id: string;
   name: string;
+  /** A key is in memory, or (selfAuth) the provider's own program is there. */
   configured: boolean;
+  /** Signs in with another program (OpenCode CLI); no key goes into MomentForge. */
+  selfAuth: boolean;
+  authHelp?: string;
+  /** Why a selfAuth provider cannot be used now. */
+  notReady?: string;
   /** Filled in for the user; empty when the user must enter a model. */
   defaultModel: string;
   canCount: boolean;

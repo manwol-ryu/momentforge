@@ -39,13 +39,16 @@ type Usage struct {
 	CacheWriteTokens int `json:"cache_creation_input_tokens,omitempty"`
 	OutputTokens     int `json:"output_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
+	// CostUSD is the cost the provider itself reported (0 when it reports
+	// none); the app prefers its own price table when it has one.
+	CostUSD float64 `json:"cost_usd,omitempty"`
 }
 
 // Add returns the sum of two usages.
 func (u Usage) Add(v Usage) Usage {
 	return Usage{InputTokens: u.InputTokens + v.InputTokens, CacheReadTokens: u.CacheReadTokens + v.CacheReadTokens,
 		CacheWriteTokens: u.CacheWriteTokens + v.CacheWriteTokens, OutputTokens: u.OutputTokens + v.OutputTokens,
-		TotalTokens: u.TotalTokens + v.TotalTokens}
+		TotalTokens: u.TotalTokens + v.TotalTokens, CostUSD: u.CostUSD + v.CostUSD}
 }
 
 // AllInput is every input token, cached or not.
@@ -65,6 +68,12 @@ type (
 	// ModelLister lists the models the key can use.
 	ModelLister interface {
 		Models(ctx context.Context, key string) ([]Model, error)
+	}
+	// SelfAuthenticated providers sign in with another program's own login
+	// (the OpenCode CLI); MomentForge holds no key for them and passes "".
+	SelfAuthenticated interface {
+		Ready() error     // nil when the program is there to use
+		AuthHelp() string // how the user signs in, shown on screen
 	}
 	// BatchProvider sends many chunks as one discounted batch whose results
 	// arrive later, matched by request ID (in any order).

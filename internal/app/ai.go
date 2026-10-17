@@ -89,7 +89,10 @@ func (a *App) initAI() {
 type AIProvider struct {
 	ID            string
 	Name          string
-	Configured    bool // a key is in memory
+	Configured    bool // a key is in memory, or the provider's own login program is there
+	SelfAuth      bool // signs in with another program (no key here)
+	AuthHelp      string
+	NotReady      string // why a self-authenticated provider cannot be used now
 	DefaultModel  string
 	CanCount      bool // exact token counts
 	CanListModels bool
@@ -107,8 +110,19 @@ func (a *App) AIProviders() []AIProvider {
 		_, models := p.(ai.ModelLister)
 		_, batch := p.(ai.BatchProvider)
 		_, priced := p.(ai.Priced)
-		out = append(out, AIProvider{ID: p.ID(), Name: p.Name(), Configured: a.ai.keys[p.ID()] != "",
-			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced})
+		v := AIProvider{ID: p.ID(), Name: p.Name(), Configured: a.ai.keys[p.ID()] != "",
+			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced}
+		if sa, ok := p.(ai.SelfAuthenticated); ok {
+			v.SelfAuth, v.AuthHelp = true, sa.AuthHelp()
+			err := sa.Ready()
+			v.Configured = err == nil
+			if ue, ok := domain.AsUserError(err); ok {
+				v.NotReady = ue.Message
+			} else if err != nil {
+				v.NotReady = "사용할 수 없습니다."
+			}
+		}
+		out = append(out, v)
 	}
 	return out
 }
@@ -116,8 +130,12 @@ func (a *App) AIProviders() []AIProvider {
 // SetAIKey keeps (or, when empty, forgets) a provider's key in memory. A
 // new key also resumes batches of that provider waiting for their results.
 func (a *App) SetAIKey(provider, key string) (bool, error) {
-	if _, ok := a.cfg.AI.Get(provider); !ok {
+	p, ok := a.cfg.AI.Get(provider)
+	if !ok {
 		return false, domain.NewUserError("INPUT", "AI 제공자를 선택해 주세요.")
+	}
+	if _, self := p.(ai.SelfAuthenticated); self {
+		return false, domain.NewUserError("INPUT", "이 제공자는 MomentForge에 키를 넣지 않고 자체 로그인을 씁니다.")
 	}
 	if len(key) > 1024 || strings.ContainsAny(key, "\r\n") {
 		return false, domain.NewUserError("INPUT", "API 키 형식을 확인해 주세요.")
@@ -135,10 +153,19 @@ func (a *App) SetAIKey(provider, key string) (bool, error) {
 	return key != "", nil
 }
 
-func (a *App) aiKey(provider string) string {
+// providerKey returns the key to pass to a provider: the one in memory, or
+// "" for a provider that signs in by itself (when its program is there).
+func (a *App) providerKey(p ai.Provider) (string, error) {
+	if sa, ok := p.(ai.SelfAuthenticated); ok {
+		return "", sa.Ready()
+	}
 	a.ai.mu.Lock()
-	defer a.ai.mu.Unlock()
-	return a.ai.keys[provider]
+	key := a.ai.keys[p.ID()]
+	a.ai.mu.Unlock()
+	if key == "" {
+		return "", domain.NewUserError("CREDENTIALS", "API 키를 설정해 주세요.")
+	}
+	return key, nil
 }
 
 // AIModel is a model a key can use.
@@ -155,9 +182,9 @@ func (a *App) AIModels(ctx context.Context, provider string) ([]AIModel, error) 
 	if !ok {
 		return nil, domain.NewUserError("UNSUPPORTED", "이 제공자는 모델 목록을 제공하지 않습니다. 모델 ID를 직접 입력해 주세요.")
 	}
-	key := a.aiKey(provider)
-	if key == "" {
-		return nil, domain.NewUserError("CREDENTIALS", "API 키를 설정해 주세요.")
+	key, err := a.providerKey(p)
+	if err != nil {
+		return nil, err
 	}
 	return lister.Models(ctx, key)
 }
@@ -335,15 +362,16 @@ func (a *App) CountAIPreview(ctx context.Context, previewID, fingerprint string)
 		a.ai.mu.Unlock()
 		return AITokenCount{}, err
 	}
-	plan, key := pv.plan, a.ai.keys[pv.plan.Provider]
+	plan := pv.plan
 	a.ai.mu.Unlock()
 	p, _ := a.cfg.AI.Get(plan.Provider)
 	counter, ok := p.(ai.TokenCounter)
 	if !ok {
 		return AITokenCount{}, domain.NewUserError("UNSUPPORTED", "이 제공자는 토큰 계산을 지원하지 않습니다.")
 	}
-	if key == "" {
-		return AITokenCount{}, domain.NewUserError("CREDENTIALS", "API 키를 설정해 주세요.")
+	key, err := a.providerKey(p)
+	if err != nil {
+		return AITokenCount{}, err
 	}
 	counted := make([]int, len(plan.Chunks))
 	errs := make([]error, len(plan.Chunks))
@@ -393,8 +421,13 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 		return pv.runID, nil
 	}
 	plan := pv.plan
-	key := a.ai.keys[plan.Provider]
-	if key == "" {
+	provider, _ := a.cfg.AI.Get(plan.Provider)
+	key := a.ai.keys[plan.Provider] // a.ai.mu is held: read the key here, not through providerKey
+	if sa, ok := provider.(ai.SelfAuthenticated); ok {
+		if err := sa.Ready(); err != nil {
+			return "", err
+		}
+	} else if key == "" {
 		return "", domain.NewUserError("CREDENTIALS", "API 키를 설정해 주세요.")
 	}
 	// Reusing a completed run of the same plan sends nothing, so it never waits.
@@ -421,7 +454,6 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 	if batch && batches >= aiMaxBatches {
 		return "", domain.NewUserError("BUSY", "결과를 기다리는 배치가 너무 많습니다. 끝난 뒤 다시 시도해 주세요.")
 	}
-	provider, _ := a.cfg.AI.Get(plan.Provider)
 	run := store.AIRun{SessionID: plan.SessionID, Provider: plan.Provider, Model: plan.Model, Fingerprint: plan.Fingerprint,
 		Delivery: plan.Delivery, RequestCount: plan.RequestCount, PlanJSON: ai.Encode(plan)}
 	if plan.CostCapUSD > 0 {
@@ -612,8 +644,12 @@ func (a *App) runAI(act *aiActive, run store.AIRun, plan ai.Plan, provider ai.Pr
 func setUsage(run *store.AIRun, total ai.Usage, price *ai.Price, batch bool) {
 	run.InputTokens, run.CacheReadTokens, run.CacheWriteTokens = total.InputTokens, total.CacheReadTokens, total.CacheWriteTokens
 	run.OutputTokens = total.OutputTokens
-	if price != nil {
+	switch {
+	case price != nil:
 		c := price.Cost(total, batch)
+		run.CostUSD = &c
+	case total.CostUSD > 0: // what the provider reported
+		c := total.CostUSD
 		run.CostUSD = &c
 	}
 }

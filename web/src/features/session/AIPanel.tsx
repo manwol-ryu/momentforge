@@ -205,18 +205,30 @@ export function AIPanel({ s, selection }: Props) {
             ))}
           </datalist>
         </label>
-        <label className="field">
-          <span className="field-label">
-            {current?.name} API 키 {current?.configured ? "(메모리에 있음)" : "(없음)"}
-          </span>
-          <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
-        </label>
+        {current?.selfAuth ? (
+          <div className="field">
+            <span className="field-label">로그인</span>
+            <span className="ai-auth" data-ready={current.configured || undefined}>
+              {current.configured ? `${current.name} 로그인 사용` : current.notReady}
+            </span>
+          </div>
+        ) : (
+          <label className="field">
+            <span className="field-label">
+              {current?.name} API 키 {current?.configured ? "(메모리에 있음)" : "(없음)"}
+            </span>
+            <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
+          </label>
+        )}
       </div>
+      {current?.selfAuth && current.authHelp && <p className="field-help">{current.authHelp}</p>}
       <p className="actions">
-        <button type="button" className="button button-quiet" onClick={() => saveKey.mutate(key)} disabled={!key.trim() || saveKey.isPending}>
-          키 저장
-        </button>
-        {current?.configured && (
+        {!current?.selfAuth && (
+          <button type="button" className="button button-quiet" onClick={() => saveKey.mutate(key)} disabled={!key.trim() || saveKey.isPending}>
+            키 저장
+          </button>
+        )}
+        {current?.configured && !current.selfAuth && (
           <button type="button" className="link-button" onClick={() => saveKey.mutate("")} disabled={saveKey.isPending}>
             메모리의 키 지우기
           </button>
@@ -338,7 +350,9 @@ export function AIPanel({ s, selection }: Props) {
             >
               확인한 내용으로 AI 실행
             </button>
-            {!current?.configured && <span className="field-help">먼저 API 키를 저장하세요.</span>}
+            {!current?.configured && (
+              <span className="field-help">{current?.selfAuth ? current.notReady : "먼저 API 키를 저장하세요."}</span>
+            )}
           </p>
         </div>
       )}

@@ -76,6 +76,7 @@ func registerAll(r *app.Registry) {
 | 플랫폼 도메인·엔드포인트 (`chzzk.naver.com`, `naver.com` 등) | `internal/platform/<플랫폼>/` |
 | Claude 모델 ID (`"claude-...`) | `internal/ai/anthropic/` |
 | OpenAI 모델 ID·엔드포인트 | `internal/ai/openai/` |
+| OpenCode Go 모델 ID (`opencode-go/…`) | `internal/ai/opencode/` |
 | 탐지 임계값 숫자 | `internal/detect`의 `Params` 기본값 |
 | `0.0.0.0` 바인딩 | 어디에도 두지 않음 |
 

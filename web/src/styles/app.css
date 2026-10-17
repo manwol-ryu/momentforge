@@ -874,6 +874,16 @@ textarea {
   font-weight: 600;
 }
 
+/* A provider that signs in by itself: its state in place of the key field. */
+.ai-auth {
+  padding: var(--space-2) 0;
+  color: var(--alert);
+}
+
+.ai-auth[data-ready] {
+  color: var(--ink);
+}
+
 .ai-cap input {
   max-width: 10em;
 }
