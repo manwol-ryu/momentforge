@@ -31,12 +31,16 @@ const usage = `MomentForge — 방송 채팅에서 편집할 순간을 찾는 �
 
 사용법:
   momentforge [serve] [옵션]   로컬 서버를 실행하고 브라우저를 엽니다
+  momentforge mcp [--data 폴더] 수집한 데이터를 MCP 클라이언트(Claude 등)에 읽기 전용으로 엽니다
   momentforge version          버전을 출력합니다
 
 serve 옵션:
   --port 8765          사용할 포트 (127.0.0.1에만 열립니다)
   --data .momentforge  데이터 폴더 (채팅 DB·내보내기·실행 정보)
   --no-browser         브라우저를 자동으로 열지 않습니다
+
+mcp 옵션:
+  --data .momentforge  읽을 데이터 폴더. MCP 클라이언트에 등록할 때는 절대 경로로 적으세요
 `
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -47,6 +51,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "serve":
 		return serve(args, stdout, stderr)
+	case "mcp":
+		return runMCP(args, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "momentforge", version)
 		return 0

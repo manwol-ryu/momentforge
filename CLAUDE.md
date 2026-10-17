@@ -38,11 +38,13 @@ make build        # web 빌드 → go:embed → bin/momentforge
 make test         # 구조 검사 + gofmt + go vet + go test + 화면 타입 검사
 make e2e          # 가짜 생방송을 넣은 bin/momentforge-e2e 빌드 후 e2e/ Playwright 정상 작동 테스트
 python3 -I .claude/skills/momentforge-architecture/scripts/check_layers.py   # 구조 검사만
+./bin/momentforge mcp --data /절대/경로/.momentforge   # MCP 서버(stdio, 읽기 전용). Claude Desktop·Code에 이 명령으로 등록
+MF_MCP_EVAL_DATA=<빈 폴더> go test ./cmd/momentforge -run TestMCPEvalAnswers   # e2e/mcp-eval.xml용 평가 데이터 만들기
 ```
 
 개발 환경: Go 1.26 이상, Node 20.19 이상, Python 3.9 이상(검사 스크립트·E2E). 실행 결과물은 `bin/momentforge` 하나이며, 사용자는 Go·Node·Python이 필요 없습니다.
 
-실행 시 데이터 폴더는 현재 폴더의 `.momentforge/`입니다(`--data`로 변경). E2E는 `e2e/.data/`, 포트 18765를 씁니다.
+실행 시 데이터 폴더는 현재 폴더의 `.momentforge/`입니다(`--data`로 변경). E2E는 `e2e/.data/`, 포트 18765를 쓰며, API 키 환경변수를 지운 채 서버를 띄웁니다.
 
 ## 항상 지킬 것
 

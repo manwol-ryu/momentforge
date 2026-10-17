@@ -26,6 +26,9 @@ type Config struct {
 	Rules     []detect.Rule      // registered detection rules
 	Platforms *platform.Registry // registered platform adapters
 	AI        *ai.Registry       // registered AI providers
+	// AIBatchPoll is the first wait before checking a submitted batch
+	// (30 s when 0; the E2E binary shortens it).
+	AIBatchPoll time.Duration
 }
 
 // App is the application core.

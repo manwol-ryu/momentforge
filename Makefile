@@ -71,8 +71,9 @@ e2e-deps: $(E2E_VENV)/.installed
 e2e: web e2e-deps
 	CGO_ENABLED=0 $(GO) build -trimpath -tags e2efake -ldflags "$(LDFLAGS)" -o $(E2E_BIN) ./cmd/momentforge
 	rm -rf e2e/.data
+	# API keys from the environment are dropped: E2E never reaches a real AI service.
 	$(E2E_PY) e2e/with_server.py \
-		--server "./$(E2E_BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data" --port $(E2E_PORT) \
+		--server "env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY ./$(E2E_BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data" --port $(E2E_PORT) \
 		-- $(E2E_PY) e2e/run.py --base-url http://127.0.0.1:$(E2E_PORT)
 
 clean:

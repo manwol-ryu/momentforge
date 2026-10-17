@@ -134,3 +134,47 @@ func TestServerLockIsExclusive(t *testing.T) {
 	}
 	again.Release()
 }
+
+func TestOpenReadOnlyRefusesWritesAndSearches(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "폴더 이름 #1%")
+	if _, err := OpenReadOnly(ctx, dir); err == nil {
+		t.Fatal("a missing database must be refused")
+	}
+	rw, err := Open(ctx, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	s, err := rw.CreateSession(ctx, NewSession{Platform: "demo", Kind: "vod", TargetID: "t", Title: "x", DurationMs: 60000, Salt: []byte("salt")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []domain.ChatEvent{{ID: "e1", OffsetMs: 1000, AuthorKey: "a", Text: "ㅋㅋ 100%_진짜"},
+		{ID: "e2", OffsetMs: 2000, AuthorKey: "b", Text: "LOL"}, {ID: "e3", OffsetMs: 61000, AuthorKey: "a", Text: "lol"}}
+	if _, err := rw.SavePage(ctx, s.ID, Page{Raw: []byte(`{}`), Events: events, Next: 60000, Finished: true}); err != nil {
+		t.Fatal(err)
+	}
+	ro, err := OpenReadOnly(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if _, err := ro.CreateSession(ctx, NewSession{Platform: "demo", Kind: "vod", TargetID: "u", Salt: []byte("s")}); err == nil {
+		t.Fatal("the read-only store wrote a session")
+	}
+	got, total, err := ro.SearchChats(ctx, s.ID, "lol", "", 0, 60000, 10, 0)
+	if err != nil || total != 1 || len(got) != 1 || got[0].ID != "e2" {
+		t.Fatalf("search %v total %d err %v", got, total, err)
+	}
+	if got, _, _ := ro.SearchChats(ctx, s.ID, "%_", "", 0, 1<<40, 10, 0); len(got) != 1 || got[0].ID != "e1" {
+		t.Fatalf("LIKE wildcards must match literally: %v", got)
+	}
+	if got, total, _ := ro.SearchChats(ctx, s.ID, "", "a", 0, 1<<40, 10, 0); total != 2 || got[1].ID != "e3" {
+		t.Fatalf("by author: %v", got)
+	}
+	act, err := ro.ChatActivity(ctx, s.ID, 60000, 0, 1<<40)
+	if err != nil || len(act) != 2 || act[0].Chats != 2 || act[0].Authors != 2 || act[1].Index != 1 {
+		t.Fatalf("activity %+v err %v", act, err)
+	}
+}

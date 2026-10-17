@@ -1,0 +1,52 @@
+<!--
+  MCP evaluation (mcp-builder skill format): 10 read-only questions over the
+  synthetic evaluation data built by cmd/momentforge/mcp_test.go
+  (buildEvalData: the built-in sample chat analyzed with the default rules,
+  three pasted viewer comments, and one review by a deterministic AI).
+  TestMCPEvalAnswers re-derives every answer through the MCP tools.
+  To run it with a model, build the data set into an empty folder with
+  MF_MCP_EVAL_DATA=DIR go test ./cmd/momentforge -run TestMCPEvalAnswers
+  and start the server for the evaluator as: momentforge mcp, data option DIR.
+-->
+<evaluation>
+  <qa_pair>
+    <question>MomentForge 샘플 세션에서 "ㅋㅋㅋㅋ"라는 메시지를 가장 많이 보낸 작성자는 누구인가요? 작성자 가명만 답하세요.</question>
+    <answer>spammer</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 작성자 한 명이 혼자 웃음을 도배한 일이 있습니다. 그 작성자가 보낸 메시지는 몇 개이고, 그 도배 구간이 자동 탐지(규칙) 후보의 편집 구간에 들어갔나요? "메시지 수, 예" 또는 "메시지 수, 아니오" 형식으로만 답하세요.</question>
+    <answer>100, 아니오</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 장면을 다시 보고 싶다는 뜻의 같은 문장을 여러 사람이 반복했습니다. 그 문장을 보낸 서로 다른 작성자는 몇 명인가요? 숫자만 답하세요.</question>
+    <answer>18</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 시청자가 영상 댓글로 추천한 시각 가운데, 자동 탐지(규칙) 후보의 편집 구간과 전혀 겹치지 않는 추천은 언제 시작하나요? H:MM:SS 형식으로 답하세요.</question>
+    <answer>0:02:00</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션의 AI 검토 기록에서 프롬프트 캐시에서 읽은 입력 토큰은 모두 몇 개인가요? 숫자만 답하세요.</question>
+    <answer>10000</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 0:07:25부터 0:07:35 전까지 올라온 채팅 가운데 놀람을 나타내는 한 글자 반응이 아닌 메시지는 몇 개인가요? 숫자만 답하세요.</question>
+    <answer>10</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션을 1분 단위로 나누면 대부분의 1분 구간은 채팅 수가 같습니다. 그보다 채팅이 많은 1분 구간은 몇 개인가요? 숫자만 답하세요.</question>
+    <answer>4</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션의 자동 탐지 후보 가운데 감정 반응 규칙으로 잡힌 후보가 있습니다. 그 후보의 편집 구간 채팅 중 판정 근거로 표시된 채팅은 몇 개인가요? 숫자만 답하세요.</question>
+    <answer>210</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 AI가 우선순위를 가장 높게 매긴 추천 장면들에서 시청자들이 반복해 보낸 메시지는 무엇인가요? 메시지 글자만 답하세요.</question>
+    <answer>헐</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>샘플 세션에서 여러 사람이 같은 문장을 반복한 것으로 판정된 자동 탐지 후보가 있습니다. 그 후보의 편집 구간 안에 시작과 끝이 모두 들어가는 AI 추천은 몇 개인가요? 숫자만 답하세요.</question>
+    <answer>2</answer>
+  </qa_pair>
+</evaluation>

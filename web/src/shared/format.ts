@@ -21,3 +21,13 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** US dollars: cents for amounts of a cent or more, otherwise four decimals. */
+export function usd(v: number): string {
+  return `$${v >= 0.01 || v === 0 ? v.toFixed(2) : v.toFixed(4)}`;
+}
+
+/** Token counts with thousands separators. */
+export function tokens(n: number): string {
+  return n.toLocaleString("ko-KR");
+}

@@ -50,6 +50,10 @@ func (*OpenAI) ID() string     { return "openai" }
 func (*OpenAI) Name() string   { return "OpenAI" }
 func (*OpenAI) KeyEnv() string { return "OPENAI_API_KEY" }
 
+// DefaultModel is empty: as in CzzEdit, the user enters a model their account can use.
+func (*OpenAI) DefaultModel() string { return "" }
+func (*OpenAI) MaxOutputTokens() int { return ai.MaxOutputTokens }
+
 const maxResponse = 4 << 20
 
 // Review sends one chunk. store=false asks OpenAI not to keep the request.
@@ -128,13 +132,24 @@ func parse(raw []byte) (json.RawMessage, ai.Usage, error) {
 				Text string `json:"text"`
 			} `json:"content"`
 		} `json:"output"`
-		Usage ai.Usage `json:"usage"`
+		Usage struct {
+			InputTokens        int `json:"input_tokens"`
+			OutputTokens       int `json:"output_tokens"`
+			TotalTokens        int `json:"total_tokens"`
+			InputTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, ai.Usage{}, domain.NewUserError("AI_FORMAT", "AI 응답을 읽지 못했습니다.")
 	}
+	// OpenAI counts cached tokens inside input_tokens; split them out.
+	u := data.Usage
+	cached := min(max(u.InputTokensDetails.CachedTokens, 0), u.InputTokens)
+	usage := ai.Usage{InputTokens: u.InputTokens - cached, CacheReadTokens: cached, OutputTokens: u.OutputTokens, TotalTokens: u.TotalTokens}
 	if data.Status != "completed" {
-		return nil, data.Usage, domain.NewUserError("AI_INCOMPLETE", "AI 응답이 끝나지 않았습니다. 추천으로 반영하지 않습니다.")
+		return nil, usage, domain.NewUserError("AI_INCOMPLETE", "AI 응답이 끝나지 않았습니다. 추천으로 반영하지 않습니다.")
 	}
 	var text strings.Builder
 	for _, o := range data.Output {
@@ -144,7 +159,7 @@ func parse(raw []byte) (json.RawMessage, ai.Usage, error) {
 		for _, p := range o.Content {
 			switch p.Type {
 			case "refusal":
-				return nil, data.Usage, domain.NewUserError("AI_REFUSAL", "AI가 분석을 거절했습니다.")
+				return nil, usage, domain.NewUserError("AI_REFUSAL", "AI가 분석을 거절했습니다.")
 			case "output_text":
 				text.WriteString(p.Text)
 			}
@@ -152,9 +167,9 @@ func parse(raw []byte) (json.RawMessage, ai.Usage, error) {
 	}
 	out := json.RawMessage(text.String())
 	if !json.Valid(out) {
-		return nil, data.Usage, domain.NewUserError("AI_FORMAT", "AI 추천 JSON을 읽지 못했습니다.")
+		return nil, usage, domain.NewUserError("AI_FORMAT", "AI 추천 JSON을 읽지 못했습니다.")
 	}
-	return out, data.Usage, nil
+	return out, usage, nil
 }
 
 var _ ai.Provider = (*OpenAI)(nil)

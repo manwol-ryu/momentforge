@@ -275,37 +275,53 @@ type WindowRule interface {                               // 창 전체를 판�
 
 ### 6.3 AI 제공자 (확장 1순위, claude-api 스킬 적용)
 
+5단계 구현 기준입니다. 제공자는 보내기만 하고, 보낼 내용(`ai.Prepare`)과 받은 내용 검증(`ai.Validate`)은 제공자와 무관한 `internal/ai`가 맡습니다.
+
 ```go
 type Provider interface {
-    ID() string                                            // "anthropic", "openai"
-    Models(ctx context.Context) ([]Model, error)           // Models API로 실시간 조회
-    Estimate(ctx context.Context, req ReviewRequest) (Cost, error)   // 토큰 수·예상 비용
-    Review(ctx context.Context, req ReviewRequest) (ReviewResult, error)
+    ID() string; Name() string
+    KeyEnv() string              // 시작할 때 읽는 키 환경변수 (ANTHROPIC_API_KEY 등)
+    DefaultModel() string        // 화면에 미리 채우는 모델 ("" 이면 사용자가 입력)
+    MaxOutputTokens() int        // 요청 하나의 출력 상한 (사고 포함)
+    Review(ctx context.Context, key, model string, chunk Chunk) (json.RawMessage, Usage, error)
 }
 
-// 선택 기능: 지원하는 제공자만 구현
+// 선택 기능: 지원하는 제공자만 구현하고, app이 타입 단언으로 확인
+type Priced interface{ Price(model string) (Price, bool) }                       // 공시 가격
+type TokenCounter interface{ CountTokens(ctx, key, model string, c Chunk) (int, error) }
+type ModelLister interface{ Models(ctx, key string) ([]Model, error) }
 type BatchProvider interface {
-    SubmitBatch(ctx context.Context, reqs []ReviewRequest) (BatchID, error)
-    BatchResults(ctx context.Context, id BatchID) (iter.Seq2[ReviewResult, error], error)
+    SubmitBatch(ctx, key, model string, reqs []BatchRequest) (batchID string, err error)
+    BatchStatus(ctx, key, batchID string) (BatchStatus, error)
+    BatchResults(ctx, key, batchID string) ([]BatchResult, error) // 요청 ID로 맞춤, 순서 보장 없음
+    CancelBatch(ctx, key, batchID string) error
 }
 ```
 
-Claude 구현 규칙 (claude-api 스킬 기준):
+`Usage`는 입력을 가격별로 나눠 둡니다(캐시 없음·캐시 읽기·캐시 쓰기, 출력). Claude는 네 가지를 모두 구현하고, OpenAI는 기존 기능(바로 보내기)만 구현합니다.
+
+Claude 구현 규칙 (claude-api 스킬 기준, `internal/ai/anthropic`):
 
 | 항목 | 규칙 |
 |---|---|
-| SDK | `github.com/anthropics/anthropic-sdk-go`. 표준 라이브러리로 직접 HTTP를 호출하지 않음 |
-| 기본 모델 | `claude-opus-5-5`. 대량 1차 분류는 `claude-haiku-5-5` 선택 가능. 모델 목록은 하드코딩하지 않고 Models API로 조회 |
-| 사고·effort | 적응형 사고(기본값). Opus 5.5의 effort 기본값이 `medium`이므로 `OutputConfig.Effort`를 **명시적으로 설정** (후보 검토는 `high`, 대량 분류는 `low`). `budget_tokens`·사고 비활성화는 사용하지 않음 (400 오류) |
-| 출력 형식 | 구조화 출력 `output_config.format`(JSON 스키마)으로 받음. 어시스턴트 응답 미리 채우기(prefill)와 `tool_choice` 강제는 최신 모델에서 400 오류이므로 사용하지 않음 |
-| 프롬프트 캐싱 | 순서를 **고정 시스템 프롬프트(판정 기준·출력 규칙) → 세션 공통 자료 → 후보별 채팅**으로 두고 앞쪽에 `cache_control`. 시스템 프롬프트에 현재 시각·무작위 ID를 넣지 않음. `usage.cache_read_input_tokens`로 캐시 적중 확인 |
-| 긴 요청 | 입력·출력이 길면 스트리밍 사용 (요청 시간 초과 방지) |
-| 미리보기 | 실행 전 토큰 카운트 API로 입력 토큰과 예상 비용을 미리보기 화면에 표시 |
-| 자동 분석 | VOD 전체 후보처럼 급하지 않은 작업은 **배치 API(비용 50%)**. 결과는 `custom_id`(후보 ID) 기준으로 매칭 (순서 보장 없음) |
-| 오류 처리 | `errors.As`로 `*anthropic.Error`를 꺼내 상태 코드별 분기: 429·5xx·연결 오류는 재시도, 400·404는 즉시 실패 후 사용자에게 원인 표시 |
-| 인증 | API 키는 서버 메모리에만 보관 (기존 원칙). 환경변수 `ANTHROPIC_API_KEY`가 있으면 사용. 설정 파일에 저장하지 않음 |
+| SDK | `github.com/anthropics/anthropic-sdk-go`. 표준 라이브러리로 직접 HTTP를 호출하지 않음. 클라이언트는 환경 기본값을 끄고(`ANTHROPIC_BASE_URL`·프로필 무시) 사용자가 준 키만 쓰며, SDK 자동 재시도도 끔(재시도는 app이 횟수를 세며 함) |
+| 기본 모델 | `claude-opus-5-5`. 모델 ID 상수와 가격표는 이 패키지에만 둠. 화면의 모델 목록은 Models API로 조회 |
+| 사고·effort | 사고는 모델 기본값(현재 모델은 적응형)을 그대로 씀. effort는 항상 `high`로 명시(Opus 5.5 기본값은 `medium`). `budget_tokens`·사고 비활성화는 쓰지 않음 (400 오류). 사고가 출력 상한을 함께 쓰므로 요청당 출력 상한은 8,000 |
+| 출력 형식 | 구조화 출력 `output_config.format`(JSON 스키마). prefill과 `tool_choice` 강제는 쓰지 않음 |
+| 프롬프트 캐싱 | 고정 지시문(`ai.Prompt`, 2판)에 `cache_control`. 지시문에 시각·무작위 값이 없고 1,200자 이상이라 Claude의 캐시 최소 길이(512토큰)를 넘음(`TestPromptIsCacheable`). 보낼 세션 공통 자료가 없어 "세션 공통 자료" 층은 두지 않음. `cache_read_input_tokens`를 실행마다 기록 |
+| 긴 요청 | 요청은 10KB 이하·출력 8,000토큰 이하라 스트리밍 없이 보냄(SDK가 출력 상한에 맞춰 시간 제한을 정함) |
+| 미리보기 | 보낼 내용과 **최대 비용**을 항상 표시: 바이트 기반 입력 상한 × 공시 가격(입력은 캐시 쓰기 가격, 출력은 상한까지). 토큰 카운트 API로 정확한 입력 토큰을 세는 일은 사용자가 미리보기를 본 뒤 누를 때만 함(카운트 요청에도 채팅이 전송되므로) |
+| 자동 분석 | "모든 후보 자동 선택" + 비용 한도(필수) + 미리보기 확인 후 실행. 배치 API(가격 50%)를 고를 수 있음. 요청 ID는 계획 안의 순번 `chunk-NNN`(요청 하나가 후보 하나가 아니라 시간 창이라서) |
+| 비용 한도 | 미리보기에서 최대 비용이 한도를 넘는 요청은 "비용 한도"로 빼고, 바로 보내기 중에는 실제 비용 + 다음 요청 최대 비용이 한도를 넘으면 멈춤(`COST_CAP`). 가격을 모르는 모델은 한도·자동 선택을 쓸 수 없음 |
+| 오류 처리 | `errors.As`로 `*anthropic.Error`를 꺼내 상태 코드별 분기: 429·5xx·529와 전송 전 연결 실패는 재시도, 400·401·403·404는 즉시 실패 후 원인 표시. 전송 뒤 결과를 모르면 중복 비용을 막으려 재전송하지 않음 |
+| 거절 | `stop_reason: refusal`은 `AI_REFUSAL`로 표시. 서버 측 대체 모델(fallbacks)은 켜지 않음: 미리보기에서 확인한 모델이 아닌 모델로 채팅이 전송되기 때문 |
+| 인증 | API 키는 서버 메모리에만 보관. 환경변수 `ANTHROPIC_API_KEY`가 있으면 사용. 파일·DB·로그에 쓰지 않음 |
 
-공통 흐름은 유지: **미리보기(전송 내용·예상 비용) → 사용자 확인 → 실행**. 자동 분석은 사용자가 켜고 비용 한도를 정한 경우에만 동작합니다.
+공통 흐름은 유지: **미리보기(전송 내용·최대 비용) → 사용자 확인 → 실행**. 수집이 끝나면 확인 없이 저절로 보내는 자동 분석은 하지 않습니다(15절).
+
+배치 실행: 접수한 배치 ID를 `ai_runs`에 저장하고 30초부터 최대 5분 간격으로 결과를 확인합니다. 앱을 끄면 확인만 멈추고 배치는 계속 처리되며, 다음 실행 때 키가 메모리에 있으면(환경변수 또는 화면에서 다시 저장) 결과를 가져옵니다. 결과를 기다리는 배치가 있어도 다른 AI 실행을 할 수 있고(최대 5개), 바로 보내기는 한 번에 하나입니다.
+
+결과 비교: 같은 세션의 두 실행을 고르면 시간이 가장 많이 겹치는 추천끼리 1:1로 짝짓고, 한쪽에만 있는 추천을 따로 보여줍니다. 두 실행이 같은 채팅을 보냈는지도 표시합니다. 화면은 편집 프로그램의 두 트랙처럼 그립니다.
 
 ### 6.4 작업(Job) 관리
 
@@ -336,6 +352,20 @@ type JobManager interface {
 | 개인정보 | 가명 작성자 키만 노출. 원문 응답(`raw_pages`)은 제공하지 않음 |
 | 평가 | 데모 데이터 기준 질문 10개를 `e2e/mcp-eval.xml`로 작성 (스킬의 평가 형식) |
 
+5단계 구현: `momentforge mcp --data <데이터 폴더>`. DB를 SQLite 읽기 전용(`mode=ro`, `query_only`)으로 열어 `momentforge serve`가 수집하는 동안에도 쓸 수 있고, 서버 락·마이그레이션을 건드리지 않습니다(DB 버전이 다르면 안내 후 종료). 키를 읽지 않고 AI 제공자도 등록하지 않습니다.
+
+| 도구 | 입력 (모두 `response_format`: markdown·json) | 돌려주는 것 |
+|---|---|---|
+| `mf_list_sessions` | `include_hidden`, `limit`(20/100), `cursor` | 세션 ID·제목·종류·길이·채팅 수 |
+| `mf_get_session` | `session_id` | 출처별 후보 수, 수집 공백, 영상 댓글 요약, AI 검토 기록(토큰·캐시 적중·비용) |
+| `mf_search_chats` | `query`(부분 일치)·`author`(가명) 중 하나 이상, `start`, `end`, `limit`(50/200) | 일치 채팅과 전체 수 |
+| `mf_get_chats_around` | `time`, `window_seconds`(30, 최대 600), `limit`(100/200) | 앞뒤 채팅 (영상 길이 안으로 자름) |
+| `mf_list_candidates` | `source`(all·rule·viewer_comment·ai), `limit`(50/200) | 편집 구간, 규칙·최고점 통계·근거 수, AI 실행 ID, 겹치는 다른 출처 후보 |
+| `mf_get_candidate_context` | `candidate_id`, `limit`(100/200) | 후보와 편집 구간 채팅 (근거 표시) |
+| `mf_get_timeline` | `bucket_seconds`(60), `start`, `end`, `limit`(100/500) | 구간별 채팅·작성자 수, 가장 많은 5구간, 공백 |
+
+평가: 데모 데이터에 붙여넣은 시청자 댓글 3개와 결정적인 가짜 AI 검토를 더한 데이터(`cmd/momentforge/mcp_test.go`의 `buildEvalData`)로 질문 10개를 만들고, `TestMCPEvalAnswers`가 도구 호출만으로 답을 다시 구해 확인합니다(`make test`에 포함). 모델로 푸는 평가는 15절 기록 참고.
+
 ## 7. 데이터 모델 (SQLite, 새 스키마 v1)
 
 | 테이블 | 주요 컬럼 | 비고 |
@@ -348,7 +378,7 @@ type JobManager interface {
 | `candidates` | analysis_id, id, start_ms, end_ms, rules, score, state(생성중/대기/확정/부분), evidence_ids | |
 | `comments` | session_id, offset_ms, text, source | 시청자 추천 |
 | `viewer_samples` | session_id, at, count, source | 현재는 공개 웹 시청자 수만. `source`는 이후 공식 API 재개에 대비 |
-| `ai_runs` | id, session_id, provider, model, mode(single/batch), state, request_json, result_json, input_tokens, cache_read_tokens, output_tokens | 비용·캐시 적중 기록 |
+| `ai_runs` | id, session_id, provider, model, fingerprint, state, delivery(single/batch), batch_id, request_count, plan_json, recommendations_json, usage_json, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, cost_usd, cost_cap_usd | 비용·캐시 적중 기록 (0005, 0006) |
 
 - WAL 모드, 쓰기는 작업별 단일 writer goroutine, 읽기는 커넥션 풀. MCP 서버는 읽기 전용 연결로 같은 DB를 엶.
 - 마이그레이션은 `store/migrations/NNNN_*.sql` + `PRAGMA user_version`.
@@ -357,7 +387,7 @@ type JobManager interface {
 
 ## 8. HTTP API
 
-4단계까지 구현된 경로입니다. 모든 `/api` 요청은 접근 키 헤더가 필요하고, 쓰기 요청 본문은 16KB 이하 JSON입니다.
+5단계까지 구현된 경로입니다. 모든 `/api` 요청은 접근 키 헤더가 필요하고, 쓰기 요청 본문은 16KB 이하 JSON입니다.
 
 | 메서드·경로 | 용도 | 단계 |
 |---|---|---|
@@ -388,7 +418,12 @@ type JobManager interface {
 | `GET /api/sessions/{id}/timeline` | 통합 타임라인 (자동 탐지·시청자 추천·AI 추천, 시각순) | 4 |
 | `GET /api/ai`, `POST /api/ai/key` | AI 제공자와 키 설정 여부, 키를 메모리에 저장·삭제 (응답에 키를 돌려주지 않음) | 4 |
 | `POST /api/ai/preview` | 보낼 내용 전체(지시문·구간·채팅)와 추정치. 아무것도 보내지 않음, 10분 뒤 만료 | 4 |
-| `POST /api/ai/runs` `{previewId, fingerprint}`, `GET /api/ai/runs/{id}`, `POST …/cancel` | 확인한 미리보기만 실행, 진행·결과, 중단. SSE `ai` 이벤트 | 4 |
+| `POST /api/ai/runs` `{previewId, fingerprint}`, `GET /api/ai/runs/{id}`, `POST …/cancel` | 확인한 미리보기만 실행, 진행·결과(토큰·캐시 적중·비용), 중단(배치는 제공자에서 취소). SSE `ai` 이벤트 | 4, 5 |
+| `GET /api/ai` | 제공자별 기본 모델과 지원 기능(토큰 계산·모델 목록·배치·가격) | 5 |
+| `POST /api/ai/models` `{provider}` | 키로 쓸 수 있는 모델 목록 (키만 보냄) | 5 |
+| `POST /api/ai/preview` `{…, mode: candidates\|all\|range, delivery: single\|batch, costCapUsd}` | 미리보기에 가격·최대 비용·비용 한도로 뺀 요청 포함 | 5 |
+| `POST /api/ai/preview/count` `{previewId, fingerprint}` | 정확한 입력 토큰과 최대 비용. 미리보기의 채팅을 제공자 토큰 계산 API로 보냄(사용자가 누를 때만) | 5 |
+| `GET /api/sessions/{id}/ai/runs`, `GET /api/ai/compare?a=&b=` | 세션의 AI 실행 목록, 두 실행 비교(겹침·한쪽에만 있는 추천) | 5 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
 
@@ -477,7 +512,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | **2. VOD** ✅ | 치지직 VOD 메타·채팅 수집·이어받기, 분석, 후보 화면, HLS 재생·채팅 동기화, 내보내기 | frontend-design, webapp-testing, skill-creator(`add-platform`) | 실제 VOD URL로 수집 → 후보 클릭 → 해당 시각 재생 |
 | **3. LIVE** ✅ | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** (구현 완료, 실제 확인 대기) | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
-| **5. AI 강화 (확장 1순위)** | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
+| **5. AI 강화 (확장 1순위)** (구현 완료, 실제 확인 대기) | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
 | 6+. 이후 확장 | 탐지 파라미터 UI·규칙 추가 → LIVE 다채널·LIVE→VOD 연결 → 다른 플랫폼(SOOP·유튜브) | `add-detection-rule`, `add-platform` | 단계별 별도 계획 |
 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
@@ -574,3 +609,13 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | 4단계 E2E | E2E 전용 가짜 플랫폼에 가짜 다시보기·댓글(`https://live.e2e.test/video/번호`)과 가짜 AI 제공자를 더해, 수집→댓글→통합 타임라인→AI 미리보기·실행을 외부 연결 없이 확인 |
 | 2026-10-17 | 테스트의 외부 연결 방지 (4단계) | 서버 통합 테스트가 다시보기 수집 뒤 댓글 단계에서 실제 네이버 댓글 API에 영상 번호 1234로 공개 조회를 한 번 보낸 것을 발견. 테스트용 `WithAPIBase`가 댓글 주소도 가짜 서버로 돌리도록 바꿔 재발을 막음 |
 | 2026-10-17 | 4단계 실제 확인 (영상 댓글) | 사용자가 지정한 2단계 다시보기(15554542)를 채팅부터 다시 받고 댓글까지 읽음. 채팅 수집·분석 정상(새 판정 기준으로 후보 24개, 6.2.1 실험값과 같음), 공개 댓글 1페이지·4개(플랫폼 보고 수와 같음, 누락 없음), 작성자는 모두 가명, 내보낸 댓글 파일에 닉네임·원본 ID 없음, 화면 정상. 이 영상 댓글에는 시각이 없어 시청자 추천 0개이며 기존 파서도 같은 결과. **실제 댓글의 시각 추출은 시각이 적힌 다시보기로 다시 확인해야 함**. 확인 중 수집 작업의 페이지 수가 댓글 페이지 수로 덮이던 표시 문제를 고침 |
+| 2026-10-17 | Claude 제공자 (5단계) | 공식 Go SDK, 기본 모델 `claude-opus-5-5`, effort `high` 명시, 사고는 모델 기본(적응형), 구조화 출력, 고정 지시문에 `cache_control`, 출력 상한 8,000(사고 포함). SDK의 환경변수 기본값(`ANTHROPIC_BASE_URL`·프로필)과 자동 재시도를 끔. 화면 기본 제공자는 Claude, OpenAI는 선택 |
+| 2026-10-17 | AI 지시문 2판 (5단계) | CzzEdit 지시문 앞부분은 그대로 두고 입력 형식·판단 기준·출력 규칙을 더함. Claude 캐시 최소 길이(512토큰)를 넘기기 위한 것이기도 하며, 두 제공자가 같은 지시문을 씀(비교 공정성). 같은 계획이라도 1판과 지문(fingerprint)이 달라짐 |
+| 2026-10-17 | 정확한 토큰 계산 시점 (5단계) | 설계(6.3)는 "실행 전 토큰 카운트 API"였으나, 카운트 요청에도 채팅이 전송되므로 사용자가 미리보기를 본 뒤 "정확한 토큰 수 계산"을 누를 때만 보냄. 미리보기의 최대 비용은 전송 없이 바이트 기반 상한으로 항상 계산 |
+| 2026-10-17 | 자동 분석의 범위 (5단계) | "모든 후보 자동 선택" + 비용 한도 필수 + 미리보기 확인 후 실행. 수집이 끝나면 확인 없이 저절로 보내는 방식은 "AI 전송은 사용자가 미리보기를 확인한 뒤에만" 원칙(CLAUDE.md)과 맞지 않아 구현하지 않음 |
+| 2026-10-17 | 배치 (5단계) | Message Batches. 요청 ID는 `chunk-NNN`(설계의 "후보 ID" 대신: 요청 하나가 시간 창이고 후보 여러 개를 담거나 겹치는 창에 같은 후보가 들어갈 수 있음). 요청 한도는 바로 보내기 20개, 배치 100개(비용 한도가 대신 제한). 앱을 꺼도 배치는 계속, 재시작 후 키가 있으면 결과를 가져오고 다시 보내지 않음 |
+| 2026-10-17 | 가격표 (5단계) | `internal/ai/anthropic`에 2026-10 공시 가격(Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50, Fable 5.1 $10/$50, 캐시 쓰기 1.25배, 배치 50%)을 두고 화면에 기준 시점을 표시. OpenAI 가격은 확인된 자료가 없어 두지 않음(토큰만 표시, 비용 한도 불가) |
+| 2026-10-17 | 거절 시 대체 모델 (5단계) | claude-api 스킬은 서버 측 대체 모델(fallbacks)을 기본으로 켜라고 권하지만, 사용자가 미리보기에서 확인하지 않은 모델로 채팅이 전송되므로 켜지 않음. 거절은 `AI_REFUSAL`로 표시하고 다른 구간·모델을 안내 |
+| 2026-10-17 | MCP 서버 (5단계) | `momentforge mcp --data`, stdio, SQLite 읽기 전용 연결. 테스트에서 저장소를 직접 만들 수 없는 구조 규칙(`internal/mcp` → `app`, `domain`만) 때문에 MCP 통합 테스트와 평가 확인은 `cmd/momentforge`에 둠 |
+| 2026-10-17 | MCP 평가 실행 방법 (5단계) | 공식 평가 스크립트(`mcp-builder/scripts/evaluation.py`)는 Anthropic API 키가 필요하고 이 환경의 `claude` CLI는 실행되지 않아, 정답을 모르는 별도 에이전트가 MCP 도구만 쓰는 stdio 도우미로 질문 10개를 풀게 함: 1차 10/10. 1차 의견(작성자 필터 없음, 최대 개수 안내 없음, 근거 수·겹침·AI 실행 ID 없음, 창이 영상 끝을 넘음, 구간 경계 설명 없음)을 반영한 뒤 2차도 10/10(작성자 필터·겹침 정보로 호출 수 감소). 2차 의견 중 Markdown 후보 목록에 근거 수·겹침·배율을 더함 |
+| 2026-10-17 | 5단계 E2E | 가짜 AI 제공자 두 개(가격·토큰 계산·모델 목록·배치를 갖춘 것, 바로 보내기만 하는 것)로 비용 미리보기 → 정확한 토큰 계산 → 비용 한도 배치 → 다른 제공자로 같은 후보 → 비교까지 외부 연결 없이 확인. E2E 서버는 API 키 환경변수를 지우고 실행하고, 배치 확인 간격은 E2E 실행파일에서만 0.2초 |

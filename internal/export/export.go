@@ -578,24 +578,30 @@ func orNone(id string) string {
 
 // AIManifest describes an AI run's files.
 type AIManifest struct {
-	RunID             string  `json:"run_id"`
-	SessionID         string  `json:"session_id"`
-	Provider          string  `json:"provider"`
-	Model             string  `json:"model"`
-	PromptVersion     int     `json:"prompt_version"`
-	Fingerprint       string  `json:"fingerprint"`
-	State             string  `json:"state"`
-	RequestCount      int     `json:"request_count"`
-	CompletedRequests int     `json:"completed_requests"`
-	Attempts          int     `json:"attempts"`
-	Rejected          int     `json:"rejected"`
-	InputTokens       int     `json:"input_tokens"`
-	OutputTokens      int     `json:"output_tokens"`
-	Error             string  `json:"error,omitempty"`
-	Ranges            any     `json:"ranges"`
-	Omitted           any     `json:"omitted"`
-	Unprocessed       []Range `json:"unprocessed_ranges"`
-	Note              string  `json:"note"`
+	RunID             string   `json:"run_id"`
+	SessionID         string   `json:"session_id"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	Delivery          string   `json:"delivery"` // single | batch
+	BatchID           string   `json:"batch_id,omitempty"`
+	PromptVersion     int      `json:"prompt_version"`
+	Fingerprint       string   `json:"fingerprint"`
+	State             string   `json:"state"`
+	RequestCount      int      `json:"request_count"`
+	CompletedRequests int      `json:"completed_requests"`
+	Attempts          int      `json:"attempts"`
+	Rejected          int      `json:"rejected"`
+	InputTokens       int      `json:"input_tokens"` // uncached
+	CacheReadTokens   int      `json:"cache_read_input_tokens"`
+	CacheWriteTokens  int      `json:"cache_creation_input_tokens"`
+	OutputTokens      int      `json:"output_tokens"`
+	CostUSD           *float64 `json:"cost_usd"`     // at list price; null when unknown
+	CostCapUSD        *float64 `json:"cost_cap_usd"` // the user's limit; null when none
+	Error             string   `json:"error,omitempty"`
+	Ranges            any      `json:"ranges"`
+	Omitted           any      `json:"omitted"`
+	Unprocessed       []Range  `json:"unprocessed_ranges"`
+	Note              string   `json:"note"`
 }
 
 // Range is a span of the video in milliseconds.

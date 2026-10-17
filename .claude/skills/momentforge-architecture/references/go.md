@@ -73,7 +73,10 @@ mcp-builder 스킬을 먼저 읽습니다. 이 프로젝트에서는 다음을 �
 - 모든 도구는 읽기 전용(`readOnlyHint: true`)입니다. 수집 시작·삭제 같은 도구는 만들지 않습니다.
 - 목록·검색 도구는 `limit`, `cursor`를 받습니다. 기본 `limit`는 100 이하입니다.
 - 오류 메시지에 다음에 호출할 도구를 적습니다.
-- 평가 질문은 `e2e/mcp-eval.xml`에 mcp-builder의 형식으로 둡니다.
+- 평가 질문은 `e2e/mcp-eval.xml`에 mcp-builder의 형식으로 둡니다. 질문을 바꾸면 `cmd/momentforge/mcp_test.go`의 `TestMCPEvalAnswers`에 도구만으로 답을 구하는 풀이를 함께 고칩니다.
+- MCP 서버는 `store.OpenReadOnly`로 DB를 읽기 전용으로 열고, `app`의 읽기 함수(`explore.go`)만 부릅니다. 키를 읽거나 AI 제공자를 등록하지 않습니다.
+- `internal/mcp`의 테스트는 저장소를 직접 만들 수 없으므로(의존 방향), 데이터가 필요한 MCP 테스트는 `cmd/momentforge`에 둡니다.
+- 도구 설명에 `limit`의 기본값·최댓값을 적고, 인자 오류는 `inputErr`로 그대로 보여 줍니다(내부 오류만 일반 문구로 가립니다).
 
 ## 8. 테스트
 

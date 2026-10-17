@@ -57,7 +57,7 @@ func TestPrepareBudgetsAndEmpty(t *testing.T) {
 			budget++
 		}
 	}
-	if p.RequestCount != maxRequests || budget == 0 {
+	if p.RequestCount != MaxRequests || budget == 0 {
 		t.Fatalf("requests %d, budget omissions %d", p.RequestCount, budget)
 	}
 	huge, _ := Prepare(PlanInput{Model: "m", Ranges: []Range{{0, 3000}}, Chats: chats(strings.Repeat("가", 4000))})
@@ -121,6 +121,66 @@ func TestValidate(t *testing.T) {
 	for _, bad := range []string{`not json`, `{"status":"maybe","recommendations":[]}`, `{"status":"ok"}`} {
 		if _, _, err := Validate(json.RawMessage(bad), chunk); err == nil {
 			t.Fatalf("%s accepted", bad)
+		}
+	}
+}
+
+func TestPrepareBatchBudgetAndCostCap(t *testing.T) {
+	long := []Range{{0, 4 * 3600000}}
+	batch, err := Prepare(PlanInput{Model: "m", Delivery: DeliveryBatch, Ranges: long, Chats: chats(strings.Repeat("가", 200))})
+	if err != nil || batch.Delivery != DeliveryBatch || batch.RequestCount <= MaxRequests || batch.CostUpperUSD != 0 {
+		t.Fatalf("batch plan: %d requests, cost %v, err %v", batch.RequestCount, batch.CostUpperUSD, err)
+	}
+	price := &Price{Input: 4, Output: 20, CacheRead: 0.2, CacheWrite: 5, BatchShare: 0.5}
+	full, _ := Prepare(PlanInput{Model: "m", Ranges: long, Price: price, MaxOutputTokens: 8000, Chats: chats("ㅋㅋ")})
+	perRequest := price.UpperCost(ChunkInputEstimate(full.Chunks[0]), 8000, false)
+	if full.CostUpperUSD < perRequest*float64(full.RequestCount)*0.9 || full.OutputTokenLimit != full.RequestCount*8000 {
+		t.Fatalf("cost %v for %d requests (one ≈ %v)", full.CostUpperUSD, full.RequestCount, perRequest)
+	}
+	capped, err := Prepare(PlanInput{Model: "m", Ranges: long, Price: price, MaxOutputTokens: 8000, CostCapUSD: perRequest * 3.5, Chats: chats("ㅋㅋ")})
+	if err != nil || capped.RequestCount != 3 || capped.CostUpperUSD > capped.CostCapUSD {
+		t.Fatalf("capped plan: %d requests, cost %v, err %v", capped.RequestCount, capped.CostUpperUSD, err)
+	}
+	if o := capped.Omitted[len(capped.Omitted)-1]; o.Reason != "cost_cap" {
+		t.Fatalf("omitted %v", capped.Omitted)
+	}
+	halfPrice, _ := Prepare(PlanInput{Model: "m", Delivery: DeliveryBatch, Ranges: long, Price: price, MaxOutputTokens: 8000,
+		CostCapUSD: perRequest * 3.5, Chats: chats("ㅋㅋ")})
+	if halfPrice.RequestCount != 7 {
+		t.Fatalf("a batch costs half: %d requests", halfPrice.RequestCount)
+	}
+	if _, err := Prepare(PlanInput{Model: "m", Ranges: long, Price: price, CostCapUSD: 0.000001, Chats: chats("ㅋㅋ")}); err == nil {
+		t.Fatal("a cap below one request must fail")
+	}
+	if _, err := Prepare(PlanInput{Model: "m", Ranges: long, CostCapUSD: 1, Chats: chats("ㅋㅋ")}); err == nil {
+		t.Fatal("a cap needs a known price")
+	}
+}
+
+func TestPriceCost(t *testing.T) {
+	p := Price{Input: 4, Output: 20, CacheRead: 0.2, CacheWrite: 5, BatchShare: 0.5}
+	u := Usage{InputTokens: 1_000_000, CacheReadTokens: 1_000_000, CacheWriteTokens: 1_000_000, OutputTokens: 1_000_000}
+	if got := p.Cost(u, false); got != 4+0.2+5+20 {
+		t.Fatalf("cost %v", got)
+	}
+	if got := p.Cost(u, true); got != (4+0.2+5+20)/2 {
+		t.Fatalf("batch cost %v", got)
+	}
+	if got := p.UpperCost(1_000_000, 0, false); got != 5 {
+		t.Fatalf("upper input cost %v (cache write price)", got)
+	}
+}
+
+// Claude caches a prompt prefix only from 512 tokens; the fixed instruction
+// alone must stay above that so repeated requests hit the cache. A token is
+// at most a few Korean characters, so 1,200 characters is a safe floor.
+func TestPromptIsCacheable(t *testing.T) {
+	if n := len([]rune(Prompt)); n < 1200 {
+		t.Fatalf("prompt has %d characters", n)
+	}
+	for _, varying := range []string{"%", "{{", "time.Now"} {
+		if strings.Contains(Prompt, varying) {
+			t.Fatalf("prompt contains %q: it must not vary between requests", varying)
 		}
 	}
 }

@@ -10,6 +10,7 @@ import { Link, navigate } from "../../shared/navigation";
 import { VideoPlayer, type PlayerHandle } from "../../shared/player/VideoPlayer";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { useJob } from "../../shared/useJob";
+import { AIComparePanel } from "./AIComparePanel";
 import { AIPanel } from "./AIPanel";
 import { CommentsPanel } from "./CommentsPanel";
 import { sourceLabel, UnifiedList } from "./UnifiedList";
@@ -92,6 +93,7 @@ export function SessionView({ id }: { id: string }) {
           )}
           {isVOD && <CommentsPanel s={s} busy={busy} />}
           {isVOD && (analysis.data || hasItems) && <AIPanel s={s} selection={[...aiSelection]} />}
+          {isVOD && <AIComparePanel s={s} />}
           <Files sessionId={s.id} analysisId={analysisId} timeline={timeline.data} updatedAt={s.updatedAt} />
         </>
       )}

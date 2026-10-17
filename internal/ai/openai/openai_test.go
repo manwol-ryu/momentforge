@@ -32,10 +32,11 @@ func TestReviewSendsStrictSchemaAndReadsOutput(t *testing.T) {
 		json.Unmarshal(b, &got)
 		w.Write([]byte(`{"status":"completed","output":[{"type":"reasoning"},{"type":"message","content":[` +
 			`{"type":"output_text","text":"{\"status\":\"ok\","},{"type":"output_text","text":"\"recommendations\":[]}"}]}],` +
-			`"usage":{"input_tokens":120,"output_tokens":30,"total_tokens":150}}`))
+			`"usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":100},"output_tokens":30,"total_tokens":150}}`))
 	})
 	out, usage, err := o.Review(context.Background(), "sk-test", "test-model", chunk)
-	if err != nil || string(out) != `{"status":"ok","recommendations":[]}` || usage.TotalTokens != 150 {
+	if err != nil || string(out) != `{"status":"ok","recommendations":[]}` || usage.TotalTokens != 150 ||
+		usage.InputTokens != 20 || usage.CacheReadTokens != 100 {
 		t.Fatalf("out %s usage %+v err %v", out, usage, err)
 	}
 	format := got["text"].(map[string]any)["format"].(map[string]any)

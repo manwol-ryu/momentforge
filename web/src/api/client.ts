@@ -1,7 +1,11 @@
 import type {
+  AIComparison,
+  AIDelivery,
+  AIModel,
   AIPreview,
   AIProvider,
   AIRun,
+  AITokenCount,
   Analysis,
   ApiErrorBody,
   Candidate,
@@ -87,15 +91,22 @@ export const api = {
   timeline: (sessionId: string) => getJSON<UnifiedTimeline>(`/api/sessions/${enc(sessionId)}/timeline`),
   aiProviders: () => getJSON<{ providers: AIProvider[] }>("/api/ai"),
   aiKey: (provider: string, key: string) => postJSON<{ configured: boolean }>("/api/ai/key", { provider, key }),
+  aiModels: (provider: string) => postJSON<{ models: AIModel[] }>("/api/ai/models", { provider }),
   aiPreview: (req: {
     sessionId: string;
     provider: string;
     model: string;
-    mode: "candidates" | "range";
+    mode: "candidates" | "all" | "range";
     itemIds?: string[];
     startMs?: number;
     endMs?: number;
+    delivery: AIDelivery;
+    costCapUsd?: number;
   }) => postJSON<AIPreview>("/api/ai/preview", req),
+  aiCount: (previewId: string, fingerprint: string) =>
+    postJSON<AITokenCount>("/api/ai/preview/count", { previewId, fingerprint }),
+  aiRuns: (sessionId: string) => getJSON<{ runs: AIRun[] }>(`/api/sessions/${enc(sessionId)}/ai/runs`),
+  aiCompare: (a: string, b: string) => getJSON<AIComparison>(`/api/ai/compare?a=${enc(a)}&b=${enc(b)}`),
   aiStart: (previewId: string, fingerprint: string, regenerate = false) =>
     postJSON<{ id: string }>("/api/ai/runs", { previewId, fingerprint, regenerate }),
   aiRun: (id: string) => getJSON<AIRun>(`/api/ai/runs/${enc(id)}`),

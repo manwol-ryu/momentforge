@@ -290,12 +290,36 @@ export interface AIProvider {
   id: string;
   name: string;
   configured: boolean;
+  /** Filled in for the user; empty when the user must enter a model. */
+  defaultModel: string;
+  canCount: boolean;
+  canListModels: boolean;
+  canBatch: boolean;
+  hasPrices: boolean;
+}
+
+export interface AIModel {
+  id: string;
+  name: string;
+}
+
+export type AIDelivery = "single" | "batch";
+
+/** List price in US dollars per million tokens. */
+export interface AIPrice {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  batch_share: number;
+  as_of: string;
 }
 
 /** Exactly what an AI run will send (snake_case as sent). */
 export interface AIPlan {
   provider: string;
   model: string;
+  delivery: AIDelivery;
   prompt: string;
   ranges: { start_ms: number; end_ms: number }[];
   chunks: unknown[];
@@ -306,7 +330,17 @@ export interface AIPlan {
   output_token_limit: number;
   request_attempt_limit: number;
   estimate_note: string;
+  /** Absent when the model's price is unknown. */
+  price?: AIPrice;
+  cost_upper_usd?: number;
+  cost_cap_usd?: number;
   fingerprint: string;
+}
+
+export interface AITokenCount {
+  inputTokens: number;
+  costUpperUsd: number;
+  hasPrice: boolean;
 }
 
 export interface AIPreview {
@@ -322,14 +356,45 @@ export interface AIRun {
   sessionId: string;
   provider: string;
   model: string;
+  delivery: AIDelivery;
   state: AIRunState;
   requestCount: number;
   completedRequests: number;
   attempts: number;
   rejected: number;
   recommendations: number;
+  /** All input tokens, cached or not. */
   inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   outputTokens: number;
+  /** At list price; null when the price is unknown. */
+  costUsd: number | null;
+  costCapUsd: number | null;
+  /** A submitted batch needs the key again to fetch its results. */
+  waitingForKey: boolean;
   errorCode?: string;
   errorMessage?: string;
+  createdAt: string;
+}
+
+export interface AIRecommendation {
+  id: string;
+  sourceCandidateIds: string[];
+  startMs: number;
+  endMs: number;
+  title: string;
+  rationale: string;
+  uncertainty: string;
+  priority: "high" | "medium" | "low";
+}
+
+export interface AIComparison {
+  a: AIRun;
+  b: AIRun;
+  /** Both runs sent exactly the same chats. */
+  sameInput: boolean;
+  matched: { a: AIRecommendation; b: AIRecommendation; overlapMs: number }[];
+  onlyA: AIRecommendation[];
+  onlyB: AIRecommendation[];
 }

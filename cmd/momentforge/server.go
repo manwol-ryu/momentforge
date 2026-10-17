@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/ai/anthropic"
 	"github.com/manwol-ryu/momentforge/internal/ai/openai"
 	"github.com/manwol-ryu/momentforge/internal/api"
 	"github.com/manwol-ryu/momentforge/internal/app"
@@ -104,7 +105,7 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 	core := app.New(app.Config{
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
 		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
-		AI: registerAI(opt.AI),
+		AI: registerAI(opt.AI), AIBatchPoll: extraBatchPoll,
 	})
 	if err := core.RecoverLive(ctx); err != nil {
 		return nil, err
@@ -157,6 +158,7 @@ func (s *server) Shutdown(ctx context.Context) error {
 var (
 	extraPlatforms []platform.Platform
 	extraAI        []ai.Provider
+	extraBatchPoll time.Duration // 0: the app's default
 )
 
 func registerAI(override []ai.Provider) *ai.Registry {
@@ -165,7 +167,8 @@ func registerAI(override []ai.Provider) *ai.Registry {
 		r.Register(override...)
 		return r
 	}
-	r.Register(openai.New())
+	// Claude first: the screen offers the first provider by default.
+	r.Register(anthropic.New(), openai.New())
 	r.Register(extraAI...)
 	return r
 }
