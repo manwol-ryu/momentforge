@@ -158,6 +158,40 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()
 
 
+def test_opencodex_needs_no_key_and_is_switched_in_settings(page: Page, base_url: str) -> None:
+    """OpenCodex: no key field; its card shows whether it runs and the switch.
+    The E2E binary points it at a missing ocx, so it cannot be turned on, and
+    the AI tab says where it would send."""
+    page.goto(base_url + "/settings")
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("radio", name="OpenCodex", exact=True).check()
+    card = page.locator("section.provider", has=page.get_by_role("heading", name="OpenCodex", exact=True))
+    service = card.get_by_role("group", name="OpenCodex 실행 상태")
+    expect(service.get_by_role("status")).to_have_text("설치되지 않음")
+    expect(service.get_by_role("button", name="OpenCodex 켜기")).to_be_disabled()
+    expect(service).to_contain_text("README의 OpenCodex 준비 방법")
+    expect(service.get_by_role("link", name="OpenCodex 대시보드 열기")).to_have_count(0)
+    expect(card.get_by_label("OpenCodex 주소")).to_have_attribute("placeholder", "http://127.0.0.1:1/v1")
+    expect(card).to_contain_text("키는 필요 없습니다")
+    expect(card.locator(".provider-state")).to_have_text("준비 안 됨")
+    expect(card.locator(".ai-auth")).to_contain_text("OpenCodex(ocx)를 찾지 못했습니다")
+    expect(card.locator("input[type=password]")).to_have_count(0)
+    card.screenshot(path=str(SHOTS / "settings-opencodex.png"))
+    # CLIProxyAPI's card keeps its own address text.
+    page.get_by_role("radio", name="CLIProxyAPI").check()
+    expect(page.locator("section.provider")).to_contain_text("access.api-keys")
+
+    page.get_by_role("link", name="새 작업").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("button", name="샘플로 먼저 체험").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="AI 검토").click()
+    page.get_by_label("AI 제공자").select_option(label="OpenCodex")
+    expect(page.locator(".ai-endpoint")).to_contain_text("http://127.0.0.1:1/v1")
+    expect(page.get_by_text("MomentForge에 키를 넣지 않습니다", exact=False)).to_be_visible()
+    expect(page.locator("input[type=password]")).to_have_count(0)
+
+
 def test_codex_uses_its_own_login(page: Page, base_url: str) -> None:
     """Codex signs in through the Codex CLI (ChatGPT): no key field. The E2E
     binary points it at a missing CLI, so the screen explains how to set up."""

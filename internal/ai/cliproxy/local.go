@@ -293,12 +293,17 @@ func (p *CLIProxy) ServiceStatus(ctx context.Context) ai.ServiceStatus {
 		if c, err := readLocalConfig(p.configPath()); err == nil {
 			if c.dashboard {
 				st.Dashboard = p.dashboardURL()
+				st.DashboardHelp = "대시보드는 새 탭에서 열리며 로그인에 관리 키가 필요합니다. "
+				if _, err := os.Stat(filepath.Join(p.home, mgmtKeyName)); err == nil {
+					st.DashboardHelp += "관리 키는 " + filepath.Join(p.home, mgmtKeyName) + " 파일에 있습니다."
+				} else {
+					st.DashboardHelp += "관리 키는 CLIProxyAPI 설정의 management.secret-key로 정한 값입니다."
+				}
 			} else {
 				st.DashboardOff = true
+				st.DashboardHelp = "대시보드가 꺼져 있습니다. " + p.configPath() + "에서 management.secret-key(관리 키)를 정하고 " +
+					"disable-control-panel을 false로 둔 뒤 CLIProxyAPI를 다시 켜면 열 수 있습니다."
 			}
-		}
-		if _, err := os.Stat(filepath.Join(p.home, mgmtKeyName)); err == nil {
-			st.DashboardKey = filepath.Join(p.home, mgmtKeyName)
 		}
 	}
 	switch {

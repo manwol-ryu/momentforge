@@ -107,7 +107,10 @@ momentforge/
 │  ├─ ai/                         Provider 인터페이스·프롬프트·검증
 │  │  ├─ anthropic/               anthropic-sdk-go
 │  │  ├─ openai/                  기존 기능 동등용
-│  │  └─ opencode/                OpenCode CLI 하네스로 OpenCode Go 모델 사용
+│  │  ├─ opencode/                OpenCode CLI 하네스로 OpenCode Go 모델 사용
+│  │  ├─ codex/                   Codex CLI 하네스(ChatGPT 로그인)
+│  │  ├─ cliproxy/                사용자가 실행하는 CLIProxyAPI(키, 켜고 끄기, 대시보드)
+│  │  └─ opencodex/               사용자가 실행하는 OpenCodex(키 없음, 켜고 끄기, 대시보드)
 │  ├─ export/                     TXT/JSONL/CSV/JSON·checkpoint
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
@@ -294,15 +297,16 @@ type TokenCounter interface{ CountTokens(ctx, key, model string, c Chunk) (int, 
 type ModelLister interface{ Models(ctx, key string) ([]Model, error) }
 type ModelChecker interface{ CheckModel(model string) error }                      // 보낼 수 없는 모델 ID를 미리보기에서 거절
 type KeyFinder interface{ FindKey() (key, where string) }                           // 자기 프로그램 설정의 키를 찾음 (CLIProxyAPI, 메모리에만)
-type Service interface {                                                           // 이 컴퓨터의 프로그램을 켜고 끔 (CLIProxyAPI)
+type Service interface {                                                           // 이 컴퓨터의 프로그램을 켜고 끔 (CLIProxyAPI, OpenCodex)
     ServiceStatus(ctx) ServiceStatus
     StartService(ctx) error
     StopService(ctx) error
 }
-type Endpointed interface {                                                        // 사용자가 정한 주소로 보냄 (CLIProxyAPI)
+type Endpointed interface {                                                        // 사용자가 정한 주소로 보냄 (CLIProxyAPI, OpenCodex)
     DefaultEndpoint() string
     Endpoint() string
     SetEndpoint(url string) error // ""이면 기본값, settings.env의 AI_ENDPOINT_<ID>
+    EndpointHelp() string         // 설정 화면에서 주소 아래에 보이는 설명 (제공자가 정함)
 }
 type BatchProvider interface {
     SubmitBatch(ctx, key, model string, reqs []BatchRequest) (batchID string, err error)
@@ -674,5 +678,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | 설치된 AI 도구 자동 등록과 시작 제공자 (사용자 선택) | 앱을 켤 때: Codex·OpenCode는 CLI와 로그인으로 "준비됨", CLIProxyAPI는 `~/.cli-proxy-api/config.yaml`의 host·port를 기본 주소로, `access.api-keys` 첫 키를 메모리 키(`KeyFromTool`)로 씀(설정의 키·주소·`.env`·환경변수가 우선, 찾은 키는 어디에도 쓰지 않음). 사용자가 "주소와 키 모두" 읽기를 고름. 저장한 기본 제공자가 없으면 시작할 때 한 번, 등록 순서(Claude → Codex → OpenCode → CLIProxyAPI → OpenAI) 중 지금 보낼 수 있는 첫 제공자를 고르고 설정 화면에 자동으로 골랐다고 알림(사용자가 "준비된 것 자동 선택"을 고름). 앱 코드에 제공자 ID 분기를 두지 않으려고 등록 순서로 정함. 테스트·E2E 실행파일은 이 컴퓨터의 Codex·OpenCode·CLIProxyAPI와 그 설정을 보지 않게 없는 경로와 닫힌 주소를 씀 |
 | 2026-10-17 | CLIProxyAPI 켜고 끄기 (사용자 요청) | 설정 화면 CLIProxyAPI 카드에 실행 상태(실행 중·꺼짐·설치되지 않음, 주소에 키 없는 요청 하나로 확인)와 켜기·끄기. 켜기는 `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`을 새 프로세스 그룹으로 실행해 MomentForge를 꺼도 계속 돌게 하고, 출력은 같은 폴더의 로그, 번호는 사용자가 쓰던 pid 파일에 씀. 끄기는 MomentForge가 켰거나 pid 파일의 프로세스가 실제로 `cli-proxy-api`일 때만 SIGTERM(다른 프로그램을 끄지 않게 `ps`로 확인, Windows는 이번 실행에서 켠 것만). 주소가 이 컴퓨터가 아니면 켜고 끌 수 없음. 상태는 카드를 열 때·켜고 끈 뒤·다시 확인할 때만 묻고 폴링하지 않음. 실제 CLIProxyAPI 8.0.32로 끄기·켜기 확인 |
 | 2026-10-17 | CLIProxyAPI 대시보드 (사용자 요청) | 설정 카드에 **CLIProxyAPI 대시보드 열기**(새 탭, `<주소의 /v1을 뺀 곳>/management.html`). 상태를 물을 때마다 CLIProxyAPI 설정을 새로 읽어(CLIProxyAPI가 관리 키를 해시로 바꾸며 파일을 다시 씀) 관리 키(`management.secret-key`, v7 `remote-management.secret-key`)가 있고 `disable-control-panel`이 아니면 링크를, 실행 중인데 꺼져 있으면 켜는 방법을 보여 줌. 로그인용 원래 관리 키는 CLIProxyAPI가 해시만 남기므로 `~/.cli-proxy-api/management-key.txt`(0600)에 두고 카드에는 그 위치만 표시(MomentForge는 관리 키를 읽거나 보내지 않음). 사용자 컴퓨터의 CLIProxyAPI는 사용자가 "켜기"를 골라 관리 키 생성·`allow-remote: false`·`disable-auto-update-panel: true`(대시보드 파일은 처음 한 번만 공식 GitHub에서 받음)로 설정하고 다시 켬. 실제로 대시보드가 새 탭으로 열리고 관리 키로 관리 API가 200, 키 없이는 401임을 확인 |
+| 2026-10-17 | OpenCodex 제공자 (사용자 요청) | 사용자가 opencodex도 CLIProxyAPI와 같은 기능으로 넣기를 요청. `internal/ai/opencodex`: OpenCodex(`ocx`, npm `@bitkyc08/opencodex`)에 OpenAI 호환 Chat Completions(`/chat/completions`, 글로 JSON 요청 후 `Validate`)와 `/models`. OpenCodex는 `127.0.0.1`에 묶이면 인증이 없으므로 **키 없는** `SelfAuthenticated` 제공자로 둠(`Ready`=`ocx` 설치 여부, 키 헤더를 보내지 않음). 127.0.0.1이 아닌 곳에서 받는 설정(키 필요)은 지원하지 않고 카드에 알림. 주소(`Endpointed`)의 기본값은 살아 있는 프로세스가 기록한 `~/.opencodex/runtime-port.json`의 포트(포트가 바쁘면 OpenCodex가 다른 포트로 옮기므로) → `config.json`의 `port`·`hostname` → `http://127.0.0.1:10100/v1`. 두 파일의 비밀값은 읽어 두지 않고 필요한 필드만 디코드. 실행 여부는 `/healthz`가 `service: "opencodex"`(또는 이전 형식 `status/version/uptime`)를 답할 때만 실행 중. 켜기는 `ocx start`(설정에 주소가 있으면 `--port`)를 자기 프로세스 그룹으로 백그라운드 실행, 출력은 `~/.opencodex/momentforge-start.log`, `ocx`가 Node 스크립트라 그 폴더를 PATH 앞에 둠. 끄기는 `ocx stop`(OpenCodex의 공식 종료, 어떻게 켰든 끄고 Codex 설정을 되돌림)이라 실행 중이고 설치되어 있고 주소가 이 컴퓨터면 끌 수 있음. 대시보드는 `ocx gui`처럼 `http://localhost:<포트>/`(이 컴퓨터는 로그인 없음). 이를 위해 화면의 CLIProxyAPI 전용 문구를 제공자로 옮김: `Endpointed.EndpointHelp()`, `ServiceStatus.DashboardHelp`(관리 키 파일·켜는 방법 포함, `DashboardKey` 대체). 시작 제공자 순서는 CLIProxyAPI 다음. 실제 OpenCodex 2.55.0-preview로 확인: 켜기 → 실행 중, 대시보드 `http://localhost:10100/`이 로그인 없이 열림, 모델 105개, 끄기 → 꺼짐(채팅은 보내지 않음) |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

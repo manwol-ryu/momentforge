@@ -115,6 +115,13 @@ func (p *CLIProxy) Endpoint() string {
 	return p.endpoint
 }
 
+// EndpointHelp explains the address field in 설정.
+func (p *CLIProxy) EndpointHelp() string {
+	return "CLIProxyAPI를 실행한 컴퓨터와 포트의 OpenAI 호환 주소입니다. 비우면 " + p.DefaultEndpoint() + "로 보냅니다. " +
+		"키는 CLIProxyAPI 설정의 access.api-keys에 있는 키를 넣습니다. 어느 서비스·계정으로 보낼지는 CLIProxyAPI와 모델 ID가 정하며, " +
+		"구독 계정을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있습니다."
+}
+
 // SetEndpoint changes the address; "" goes back to the default.
 func (p *CLIProxy) SetEndpoint(raw string) error {
 	u, err := ai.NormalizeEndpoint(raw)

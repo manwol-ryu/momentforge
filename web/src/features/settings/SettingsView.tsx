@@ -252,7 +252,7 @@ interface ProviderProps {
 
 /**
  * One provider: where it sends (for a proxy), its default model and its key
- * (or, for OpenCode, whether its own login is ready).
+ * (or, for a provider without one, whether it is ready).
  */
 function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderProps) {
   const [models, setModels] = useState<AIModel[]>([]);
@@ -290,11 +290,7 @@ function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderP
                 placeholder={p.defaultEndpoint}
               />
             </label>
-            <p className="field-help">
-              CLIProxyAPI를 실행한 컴퓨터와 포트의 OpenAI 호환 주소입니다. 비우면 {p.defaultEndpoint}로 보냅니다. 키는 CLIProxyAPI
-              설정의 access.api-keys에 있는 키를 넣습니다. 어느 서비스·계정으로 보낼지는 CLIProxyAPI와 모델 ID가 정하며, 구독
-              계정을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있습니다.
-            </p>
+            {p.endpointHelp && <p className="field-help">{p.endpointHelp}</p>}
           </>
         )}
         <label className="field">
@@ -342,8 +338,8 @@ const serviceText = (s: AIService | undefined) =>
   !s ? "확인하는 중" : s.running ? "실행 중" : s.installed ? "꺼짐" : "설치되지 않음";
 
 /**
- * Whether the provider's local program (CLIProxyAPI) runs, and the way to
- * start or stop it. Its state is asked when the card opens and after each
+ * Whether the provider's local program (CLIProxyAPI, OpenCodex) runs, the
+ * way to start or stop it, and its own dashboard. Its state is asked when the card opens and after each
  * action, or when the user asks again; nothing polls.
  */
 function ServiceRow({ p }: { p: AIProvider }) {
@@ -390,25 +386,14 @@ function ServiceRow({ p }: { p: AIProvider }) {
           상태 다시 확인
         </button>
       </p>
-      {s?.dashboard && (
-        <p className="field-help">
-          대시보드는 새 탭에서 열리며 로그인에 관리 키가 필요합니다.
-          {s.dashboardKey ? ` 관리 키는 ${s.dashboardKey} 파일에 있습니다.` : " 관리 키는 CLIProxyAPI 설정의 management.secret-key로 정한 값입니다."}
-        </p>
-      )}
-      {s?.dashboardOff && (
-        <p className="field-help">
-          대시보드가 꺼져 있습니다. {s.config ?? "CLIProxyAPI 설정 파일"}에서 management.secret-key(관리 키)를 정하고
-          disable-control-panel을 false로 둔 뒤 CLIProxyAPI를 다시 켜면 열 수 있습니다.
-        </p>
-      )}
+      {s?.running && s.dashboardHelp && <p className="field-help">{s.dashboardHelp}</p>}
       {s?.running && !s.managed && (
         <p className="field-help">MomentForge가 켜지 않은 {p.name}입니다. 끄려면 실행한 터미널에서 끄세요.</p>
       )}
       {s && (
         <dl className="service-paths">
           <dt>프로그램</dt>
-          <dd>{s.installed ? s.program : "찾지 못함. README의 CLIProxyAPI 준비 방법대로 설치하세요."}</dd>
+          <dd>{s.installed ? s.program : `찾지 못함. README의 ${p.name} 준비 방법대로 설치하세요.`}</dd>
           {s.config && (
             <>
               <dt>설정 파일</dt>

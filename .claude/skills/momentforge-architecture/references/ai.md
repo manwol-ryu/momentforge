@@ -9,8 +9,10 @@
 - `internal/ai/openai`: 선택 제공자 (기존 기능 동등용).
 - `internal/ai/opencode`: OpenCode Go 모델을 OpenCode CLI(`opencode run`)로 씁니다. 키는 OpenCode 로그인을 쓰는 `SelfAuthenticated` 제공자입니다. 요청마다 빈 임시 폴더의 설정으로 모든 도구를 거부하고(`steps: 1`), 채팅은 표준 입력으로 넘기며, 끝나면 OpenCode 세션을 지웁니다. OpenCode 무료 모델(`opencode/…-free`)은 OpenCode가 자체 기본 에이전트에만 응답하므로 기본 에이전트로 보내고, 모든 도구를 `ask`로 두어 `opencode run`이 자동 거부하게 합니다(지시문은 메시지에). 어느 모델이든 끝난 도구 실행이 있으면 결과를 버립니다.
 - `internal/ai/codex`: Codex CLI(`codex exec`)를 하네스로 씁니다(ChatGPT 로그인, `SelfAuthenticated`). 셸·브라우저·컴퓨터 사용·앱·플러그인·이미지 생성·웹 검색을 끄고, 사용자 설정·규칙을 읽지 않고, 읽기 전용 샌드박스·빈 폴더·`--ephemeral`·`--output-schema`로 실행합니다. 실행된 도구 항목이 있으면 결과를 버립니다. 테스트는 가짜 CLI 스크립트로만 합니다.
-- 이 컴퓨터의 프로그램을 쓰는 제공자(Codex, OpenCode, CLIProxyAPI)는 `cmd/momentforge`의 옵션 변수로 위치를 바꿀 수 있게 두고, cmd 테스트(`main_test.go`)와 E2E 실행파일(`e2efake.go`)은 없는 경로와 닫힌 주소를 줘 실제 도구와 설정을 보지 않게 합니다.
+- 이 컴퓨터의 프로그램을 쓰는 제공자(Codex, OpenCode, CLIProxyAPI, OpenCodex)는 `cmd/momentforge`의 옵션 변수로 위치를 바꿀 수 있게 두고, cmd 테스트(`main_test.go`)와 E2E 실행파일(`e2efake.go`)은 없는 경로와 닫힌 주소를 줘 실제 도구와 설정을 보지 않게 합니다.
 - `internal/ai/cliproxy`: 사용자가 실행하는 CLIProxyAPI에 OpenAI 호환 Chat Completions로 보냅니다. `~/.cli-proxy-api/config.yaml`에서 주소와 첫 클라이언트 키를 찾고(`KeyFinder`, 메모리에만), `cli-proxy-api`를 켜고 끕니다(`Service`, pid 파일의 프로세스가 실제로 그 프로그램일 때만 끔). 주소는 `ai.Endpointed`로 설정에서 정하고(`ai.NormalizeEndpoint`로 검사), 키는 CLIProxyAPI의 `access.api-keys`입니다. 테스트는 `httptest` 가짜 서버로만 하고 실제 CLIProxyAPI를 부르지 않습니다. 이 규칙을 바꾸면 REDESIGN.md 6.3절도 고칩니다. 테스트는 가짜 CLI 스크립트로만 하고 실제 `opencode`를 부르지 않습니다(E2E 실행파일은 없는 경로를 보게 함).
+- `internal/ai/opencodex`: 사용자가 실행하는 OpenCodex(`ocx`)에 OpenAI 호환 Chat Completions로 **키 없이** 보냅니다(이 컴퓨터의 OpenCodex는 인증이 없음, `SelfAuthenticated`). 주소는 `~/.opencodex/runtime-port.json`(살아 있는 프로세스일 때)과 `config.json`에서 포트·hostname만 읽고 비밀값은 두지 않습니다. 켜고 끄기는 OpenCodex 자신의 명령 `ocx start`·`ocx stop`으로 하고, 실행 여부는 `/healthz`가 OpenCodex라고 답할 때만 인정합니다. 테스트는 `httptest`와 테스트 실행파일을 가짜 `ocx`로 써서 하고 실제 OpenCodex를 부르지 않습니다.
+- 주소 칸 설명(`EndpointHelp`)과 대시보드 안내(`ServiceStatus.DashboardHelp`)는 제공자가 정합니다. 화면에 특정 제공자의 문구를 넣지 않습니다.
 - 새 제공자는 `internal/ai/<제공자>/`를 추가하고 `cmd/momentforge`에서 등록합니다.
 
 ## Claude 사용 방식

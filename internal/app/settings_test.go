@@ -233,6 +233,7 @@ type proxyAI struct {
 
 func (p *proxyAI) ID() string              { return "proxy" }
 func (p *proxyAI) DefaultEndpoint() string { return "http://127.0.0.1:8317/v1" }
+func (p *proxyAI) EndpointHelp() string    { return "가짜 프록시의 주소입니다." }
 func (p *proxyAI) Endpoint() string {
 	if p.endpoint == "" {
 		return p.DefaultEndpoint()
@@ -253,7 +254,8 @@ func TestSettingsKeepAProxyAddress(t *testing.T) {
 	a.cfg.AI = &ai.Registry{}
 	a.cfg.AI.Register(p)
 	a.initAI()
-	if got := a.AIProviders()[0]; got.Endpoint != p.DefaultEndpoint() || got.DefaultEndpoint != p.DefaultEndpoint() {
+	if got := a.AIProviders()[0]; got.Endpoint != p.DefaultEndpoint() || got.DefaultEndpoint != p.DefaultEndpoint() ||
+		got.EndpointHelp != p.EndpointHelp() {
 		t.Fatalf("provider %+v", got)
 	}
 	if _, err := a.SaveSettings(Settings{AIEndpoints: map[string]string{"proxy": "ftp://x"}}); !isCode(err, "INPUT") {

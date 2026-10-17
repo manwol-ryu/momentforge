@@ -7,7 +7,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
 
-// AIService is how a provider's local program (CLIProxyAPI) stands.
+// AIService is how a provider's local program (CLIProxyAPI, OpenCodex) stands.
 type AIService struct {
 	Installed bool   // the program was found
 	Running   bool   // something answers at the provider's address
@@ -16,10 +16,10 @@ type AIService struct {
 	Config    string // the configuration file it runs with
 	Log       string // where its output goes when MomentForge starts it
 	Note      string // something the user should know
-	// The program's own dashboard (CLIProxyAPI's management center).
-	Dashboard    string // its address, when it runs with the dashboard on
-	DashboardOff bool   // it runs, but the dashboard is turned off in its config
-	DashboardKey string // the file holding the dashboard's login key
+	// The program's own dashboard.
+	Dashboard     string // its address, when it runs with the dashboard on
+	DashboardOff  bool   // it runs, but the dashboard is turned off in its config
+	DashboardHelp string // how to sign in to it, or how to turn it on
 }
 
 func (a *App) aiService(provider string) (ai.Service, error) {
@@ -36,7 +36,7 @@ func (a *App) aiService(provider string) (ai.Service, error) {
 
 func toAIService(s ai.ServiceStatus) AIService {
 	return AIService{Installed: s.Installed, Running: s.Running, Managed: s.Managed, Program: s.Program,
-		Config: s.Config, Log: s.Log, Note: s.Note, Dashboard: s.Dashboard, DashboardOff: s.DashboardOff, DashboardKey: s.DashboardKey}
+		Config: s.Config, Log: s.Log, Note: s.Note, Dashboard: s.Dashboard, DashboardOff: s.DashboardOff, DashboardHelp: s.DashboardHelp}
 }
 
 // AIServiceStatus says whether a provider's local program is installed and running.

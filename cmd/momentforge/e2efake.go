@@ -9,6 +9,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/ai/codex"
 	aifake "github.com/manwol-ryu/momentforge/internal/ai/e2efake"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
+	"github.com/manwol-ryu/momentforge/internal/ai/opencodex"
 	"github.com/manwol-ryu/momentforge/internal/platform/e2efake"
 )
 
@@ -21,4 +22,6 @@ func init() {
 	codexOptions = append(codexOptions, codex.WithCommand("/nonexistent/momentforge-e2e/codex"))
 	cliproxyOptions = append(cliproxyOptions, cliproxy.WithHome("/nonexistent/momentforge-e2e/cli-proxy-api"),
 		cliproxy.WithProgram("/nonexistent/momentforge-e2e/cli-proxy-api"), cliproxy.WithFallbackEndpoint("http://127.0.0.1:1/v1"))
+	opencodexOptions = append(opencodexOptions, opencodex.WithHome("/nonexistent/momentforge-e2e/opencodex"),
+		opencodex.WithProgram("/nonexistent/momentforge-e2e/ocx"), opencodex.WithFallbackEndpoint("http://127.0.0.1:1/v1"))
 }

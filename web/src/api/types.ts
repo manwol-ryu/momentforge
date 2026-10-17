@@ -306,16 +306,18 @@ export interface AIProvider {
   keySource?: AIKeySource;
   /** The key's environment variable and its line in the data folder's .env. */
   keyName?: string;
-  /** Where requests go, for a provider that sends to a proxy the user runs (CLIProxyAPI). */
+  /** Where requests go, for a provider that sends to a proxy the user runs (CLIProxyAPI, OpenCodex). */
   endpoint?: string;
   defaultEndpoint?: string;
+  /** What the address is, shown under it in 설정. */
+  endpointHelp?: string;
   /** For a key found in the provider's own program config (keySource "tool"): that file. */
   keyFoundIn?: string;
-  /** Sends to a local program MomentForge can start and stop (CLIProxyAPI). */
+  /** Sends to a local program MomentForge can start and stop (CLIProxyAPI, OpenCodex). */
   hasService: boolean;
 }
 
-/** How a provider's local program stands (CLIProxyAPI). */
+/** How a provider's local program stands (CLIProxyAPI, OpenCodex). */
 export interface AIService {
   installed: boolean;
   /** Something answers at the provider's address. */
@@ -326,12 +328,12 @@ export interface AIService {
   config?: string;
   log?: string;
   note?: string;
-  /** The program's own dashboard (CLIProxyAPI's management center), when it runs with it turned on. */
+  /** The program's own dashboard, when it runs with it turned on. */
   dashboard?: string;
   /** It runs, but its dashboard is turned off in its config. */
   dashboardOff: boolean;
-  /** The file holding the dashboard's login key. */
-  dashboardKey?: string;
+  /** How to sign in to the dashboard, or (dashboardOff) how to turn it on. */
+  dashboardHelp?: string;
 }
 
 export type AIKeySource = "env" | "file" | "memory" | "tool";

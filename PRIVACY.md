@@ -9,8 +9,8 @@ MomentForge가 무엇을 내 컴퓨터 밖으로 보내고, 무엇을 내 컴퓨
 | 다시보기·생방송 수집, 영상 재생 | 치지직·네이버 | 영상번호·채널 ID, 채팅·댓글 페이지 위치 (로그인 정보 없음) |
 | AI 실행 (미리보기 확인 후에만) | 고른 AI 제공자 | 지시문, 고른 구간의 채팅 본문·가명 작성자 키, 후보 정보 |
 | 정확한 토큰 수 계산 (누를 때만) | Anthropic | 미리보기의 채팅 (답은 만들지 않음) |
-| 모델 목록 불러오기 (누를 때만) | Anthropic, 로컬 OpenCode CLI, 또는 설정한 CLIProxyAPI 주소 | API 키만. 채팅은 보내지 않음 |
-| 앱을 켤 때, 설정 화면을 열 때 | 이 컴퓨터의 Codex CLI(`codex login status`), CLIProxyAPI 주소 | 로그인 여부 확인, CLIProxyAPI 실행 여부 확인(키 없는 요청 하나). 채팅은 보내지 않음 |
+| 모델 목록 불러오기 (누를 때만) | Anthropic, 로컬 OpenCode CLI, 또는 설정한 CLIProxyAPI·OpenCodex 주소 | API 키만(OpenCodex는 키 없음). 채팅은 보내지 않음 |
+| 앱을 켤 때, 설정 화면을 열 때 | 이 컴퓨터의 Codex CLI(`codex login status`), CLIProxyAPI·OpenCodex 주소 | 로그인 여부 확인, CLIProxyAPI·OpenCodex 실행 여부 확인(키 없는 요청 하나씩). 채팅은 보내지 않음 |
 | MCP 서버 (사용자가 등록했을 때만) | 등록한 Claude 앱 → Anthropic | Claude가 도구로 읽은 채팅 본문·가명 작성자 키·후보 |
 
 이 밖의 전송은 없습니다. 개발자 서버로 채팅을 올리거나 사용량·오류 기록을 보내는 기능, 자동 업데이트 확인, 수집이 끝나면(또는 생방송 수집 중에) 저절로 AI에 보내는 기능은 없습니다. 외부 서비스에는 통신 과정에서 IP 주소 같은 일반 접속 정보가 전달되며, 각 서비스의 보관 정책은 MomentForge와 별개로 적용됩니다.
@@ -59,6 +59,7 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 | Codex | 로컬 `codex` CLI → OpenAI(ChatGPT 요금제의 Codex) | Codex CLI에 ChatGPT로 로그인한 계정. MomentForge는 키를 받지 않음 | 아래 "Codex" 참고 |
 | OpenCode | 로컬 `opencode` CLI → OpenCode Go 또는 OpenCode Zen(무료 모델) → 모델 제공자 | OpenCode CLI에 로그인한 계정(Go 모델은 OpenCode Go 구독). MomentForge는 키를 받지 않음 | 아래 "OpenCode" 참고 |
 | CLIProxyAPI | 설정의 CLIProxyAPI 주소(기본 `http://127.0.0.1:8317/v1`) → CLIProxyAPI가 정한 서비스·계정 | CLIProxyAPI의 클라이언트 키(`access.api-keys`) | 아래 "CLIProxyAPI" 참고 |
+| OpenCodex | 설정의 OpenCodex 주소(기본: 실행 중인 OpenCodex의 포트, `http://127.0.0.1:10100/v1`) → OpenCodex에 연결한 서비스·계정 | 없음. 이 컴퓨터의 OpenCodex는 키 없이 받음 | 아래 "OpenCodex" 참고 |
 
 각 제공자의 데이터 보관·학습 정책은 그 제공자의 약관을 따릅니다.
 
@@ -66,7 +67,7 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 
 **정확한 토큰 수 계산**(Claude)은 미리보기에 담긴 채팅을 Claude의 토큰 계산 API로 보냅니다. 답을 만들지 않고 요금도 들지 않지만 **채팅이 전송**되므로, 미리보기를 본 사용자가 버튼을 누를 때만 보냅니다. 미리보기의 "예상 비용 최대값"은 아무것도 보내지 않고 바이트 수로 계산합니다.
 
-**쓸 수 있는 모델 불러오기**는 Claude와 CLIProxyAPI에는 키만 보내고, OpenCode는 로컬에서 `opencode models`를 실행합니다. 채팅은 보내지 않습니다.
+**쓸 수 있는 모델 불러오기**는 Claude와 CLIProxyAPI에는 키만 보내고, OpenCodex에는 키 없는 요청을 보내고, OpenCode는 로컬에서 `opencode models`를 실행합니다. 채팅은 보내지 않습니다.
 
 ### Codex
 
@@ -100,6 +101,18 @@ CLIProxyAPI는 사용자가 실행하는 프록시로, 거기에 로그인한 �
 - 설정 화면의 **CLIProxyAPI 켜기**는 이 컴퓨터의 `cli-proxy-api`를 그 설정 파일로 실행하고, 출력은 `~/.cli-proxy-api/cli-proxy-api.log`, 프로세스 번호는 같은 폴더의 `cli-proxy-api.pid`에 씁니다. **끄기**는 MomentForge가 켰거나 pid 파일에 적힌 프로세스가 실제로 `cli-proxy-api`일 때만 끝냅니다. 실행 상태는 설정 화면을 열거나 다시 확인할 때만 묻고(키 없는 요청 하나), 계속 묻지 않습니다.
 - 설정 화면의 **CLIProxyAPI 대시보드 열기**는 CLIProxyAPI가 제공하는 관리 화면(`/management.html`)을 브라우저 새 탭으로 여는 링크일 뿐이며, MomentForge는 관리 키를 읽거나 보내지 않습니다(키 파일의 위치만 표시). 대시보드 파일은 CLIProxyAPI가 처음 열 때 공식 GitHub 저장소에서 내려받습니다. 관리 화면에서는 CLIProxyAPI 설정과 계정을 바꿀 수 있으므로 `management.allow-remote: false`로 이 컴퓨터에서만 열리게 두기를 권합니다.
 - 실제 CLIProxyAPI 8.0.32로 키 확인·오류 문구·모델 목록·켜기·끄기·대시보드 열기를 확인했습니다(2026-10-17). 계정을 연결한 뒤의 실제 AI 응답은 아직 확인하지 못했습니다.
+
+### OpenCodex
+
+OpenCodex(`ocx`)는 사용자가 실행하는 프록시로, 대시보드에서 연결한 서비스·계정(OpenAI·Claude·Gemini·Cursor 등)으로 요청을 넘깁니다.
+
+- MomentForge는 설정의 **OpenCodex 주소**로만 보냅니다. 비워 두면 실행 중인 OpenCodex가 기록한 포트(`~/.opencodex/runtime-port.json`), 꺼져 있으면 OpenCodex 설정(`~/.opencodex/config.json`)의 포트, 둘 다 없으면 `http://127.0.0.1:10100/v1`입니다. 주소는 데이터 폴더의 `settings.env`에 저장되며 http·https만 받고 리디렉션은 따르지 않습니다.
+- 이 두 파일에는 OpenCodex의 비밀값(제공자 키, 실행 확인용 값)도 들어 있지만, MomentForge는 **포트와 주소만** 읽고 나머지는 보관하지 않습니다. OpenCodex의 로그인 파일(`auth.json`)과 관리 토큰(`admin-api-token`)은 읽지 않습니다.
+- 지시문과 고른 구간의 채팅·가명 작성자 키를 Chat Completions로 **키 없이** 보냅니다. OpenCodex가 그것을 어느 서비스·계정·모델로 넘길지는 OpenCodex 설정과 모델 ID가 정하며, MomentForge는 알지 못합니다. 각 서비스의 보관·학습 정책과 약관이 그대로 적용되고, 구독 계정을 API처럼 쓰는 것은 약관에 어긋나 계정이 제한될 수 있습니다. OpenCodex는 요청 기록(사용량·로그)을 자기 폴더에 남길 수 있습니다.
+- OpenCodex는 기본으로 `127.0.0.1`에서만 받고, 그때는 키가 필요 없습니다. 다른 주소에서 받도록 설정하면 키를 요구하며, MomentForge는 그런 OpenCodex에 보내지 않습니다(키를 보내지 않으므로 거절됨).
+- 설정 화면의 **OpenCodex 켜기**는 `ocx start`를 실행하고 그 출력을 `~/.opencodex/momentforge-start.log`에 씁니다. **끄기**는 `ocx stop`을 실행합니다. OpenCodex 설정에 따라 켜져 있는 동안 Codex CLI의 요청도 OpenCodex를 거치며, `ocx stop`이 Codex를 원래 설정으로 되돌립니다. 실행 상태는 설정 화면을 열거나 다시 확인할 때만 OpenCodex의 `/healthz`에 묻고(키 없는 요청 하나), 계속 묻지 않습니다.
+- 설정 화면의 **OpenCodex 대시보드 열기**는 OpenCodex가 제공하는 관리 화면을 브라우저 새 탭으로 여는 링크일 뿐입니다. 이 컴퓨터에서는 로그인 없이 열리며, 그 화면에서 OpenCodex의 제공자·계정·키를 바꿀 수 있습니다.
+- 실제 OpenCodex 2.55.0-preview로 켜기·실행 상태·대시보드 열기·모델 목록·끄기를 확인했습니다(2026-10-17). 채팅을 보낸 실제 AI 응답은 아직 확인하지 못했습니다.
 
 ## MCP 서버
 

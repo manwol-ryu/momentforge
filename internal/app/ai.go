@@ -156,7 +156,8 @@ type AIProvider struct {
 	KeyName         string // the environment variable and key-file line for the key
 	Endpoint        string // where requests go, for a provider that sends to an address the user sets
 	DefaultEndpoint string
-	HasService      bool // sends to a local program MomentForge can start and stop
+	EndpointHelp    string // what the address is
+	HasService      bool   // sends to a local program MomentForge can start and stop
 }
 
 // AIProviders lists providers (the default first) and whether each has a key.
@@ -174,7 +175,7 @@ func (a *App) AIProviders() []AIProvider {
 			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p), KeyFoundIn: a.ai.keyWhere[p.ID()]}
 		_, v.HasService = p.(ai.Service)
 		if e, ok := p.(ai.Endpointed); ok {
-			v.Endpoint, v.DefaultEndpoint = e.Endpoint(), e.DefaultEndpoint()
+			v.Endpoint, v.DefaultEndpoint, v.EndpointHelp = e.Endpoint(), e.DefaultEndpoint(), e.EndpointHelp()
 		}
 		if sa, ok := p.(ai.SelfAuthenticated); ok {
 			v.SelfAuth, v.AuthHelp, v.KeySource, v.KeyName = true, sa.AuthHelp(), "", ""

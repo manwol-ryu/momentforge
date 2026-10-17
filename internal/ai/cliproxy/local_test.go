@@ -140,7 +140,7 @@ func TestStartAndStopCLIProxyAPI(t *testing.T) {
 	if !st.Running || !st.Managed {
 		t.Fatalf("after start %+v", st)
 	}
-	if st.Dashboard != "" || !st.DashboardOff {
+	if st.Dashboard != "" || !st.DashboardOff || !strings.Contains(st.DashboardHelp, "management.secret-key") {
 		t.Fatalf("no management key in this config: %+v", st)
 	}
 	// Turned on in the config (read fresh), with the login key's file next to it.
@@ -149,7 +149,7 @@ func TestStartAndStopCLIProxyAPI(t *testing.T) {
 	os.WriteFile(filepath.Join(home, mgmtKeyName), []byte("k\n"), 0o600)
 	st = p.ServiceStatus(ctx)
 	if st.Dashboard != fmt.Sprintf("http://127.0.0.1:%d/management.html", port) || st.DashboardOff ||
-		st.DashboardKey != filepath.Join(home, mgmtKeyName) {
+		!strings.Contains(st.DashboardHelp, filepath.Join(home, mgmtKeyName)) {
 		t.Fatalf("dashboard %+v", st)
 	}
 	b, err := os.ReadFile(filepath.Join(home, pidName))

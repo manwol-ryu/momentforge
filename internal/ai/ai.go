@@ -75,11 +75,12 @@ type (
 		CheckModel(model string) error
 	}
 	// Endpointed providers send to an address the user sets: a proxy they
-	// run (CLIProxyAPI). The address is saved with the settings.
+	// run (CLIProxyAPI, OpenCodex). The address is saved with the settings.
 	Endpointed interface {
 		DefaultEndpoint() string
 		Endpoint() string
 		SetEndpoint(url string) error // "" goes back to the default
+		EndpointHelp() string         // what the address is, shown under it in 설정
 	}
 	// KeyFinder providers can find their key in their own program's
 	// configuration (CLIProxyAPI's access.api-keys). The app uses it, in
@@ -88,7 +89,7 @@ type (
 		FindKey() (key, where string) // "" when there is none
 	}
 	// Service providers send to a local program that MomentForge can start
-	// and stop for the user (CLIProxyAPI).
+	// and stop for the user (CLIProxyAPI, OpenCodex).
 	Service interface {
 		ServiceStatus(ctx context.Context) ServiceStatus
 		StartService(ctx context.Context) error
@@ -122,7 +123,8 @@ type ServiceStatus struct {
 	// The program's own dashboard, when it runs and has one turned on.
 	Dashboard    string // its address
 	DashboardOff bool   // it runs, but its dashboard is turned off in its config
-	DashboardKey string // a file holding the dashboard's login key, when there is one
+	// How to sign in to the dashboard, or (DashboardOff) how to turn it on.
+	DashboardHelp string
 }
 
 // Model is a model a key can use.

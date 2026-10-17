@@ -29,6 +29,7 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		// The address requests go to, for a provider sending to a proxy the user runs.
 		Endpoint        string `json:"endpoint,omitempty"`
 		DefaultEndpoint string `json:"defaultEndpoint,omitempty"`
+		EndpointHelp    string `json:"endpointHelp,omitempty"`
 		HasService      bool   `json:"hasService"`
 	}
 	out := []providerJSON{}
@@ -212,13 +213,13 @@ type aiServiceJSON struct {
 	Config    string `json:"config,omitempty"`
 	Log       string `json:"log,omitempty"`
 	Note      string `json:"note,omitempty"`
-	// CLIProxyAPI's own dashboard.
-	Dashboard    string `json:"dashboard,omitempty"`
-	DashboardOff bool   `json:"dashboardOff"`
-	DashboardKey string `json:"dashboardKey,omitempty"`
+	// The program's own dashboard.
+	Dashboard     string `json:"dashboard,omitempty"`
+	DashboardOff  bool   `json:"dashboardOff"`
+	DashboardHelp string `json:"dashboardHelp,omitempty"`
 }
 
-// aiService reports whether a provider's local program (CLIProxyAPI) runs.
+// aiService reports whether a provider's local program (CLIProxyAPI, OpenCodex) runs.
 func (h *handler) aiService(w http.ResponseWriter, r *http.Request) {
 	s, err := h.cfg.Core.AIServiceStatus(r.Context(), r.URL.Query().Get("provider"))
 	if err != nil {
