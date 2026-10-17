@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manwol-ryu/momentforge/internal/app"
+	"github.com/manwol-ryu/momentforge/internal/domain"
 )
 
 func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
@@ -23,10 +24,12 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		CanBatch      bool   `json:"canBatch"`
 		HasPrices     bool   `json:"hasPrices"`
 		KeySource     string `json:"keySource,omitempty"` // env | file | memory
+		KeyFoundIn    string `json:"keyFoundIn,omitempty"`
 		KeyName       string `json:"keyName,omitempty"`
 		// The address requests go to, for a provider sending to a proxy the user runs.
 		Endpoint        string `json:"endpoint,omitempty"`
 		DefaultEndpoint string `json:"defaultEndpoint,omitempty"`
+		HasService      bool   `json:"hasService"`
 	}
 	out := []providerJSON{}
 	for _, p := range h.cfg.Core.AIProviders() {
@@ -199,4 +202,53 @@ func (h *handler) aiCompare(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"a": c.A, "b": c.B, "sameInput": c.SameInput, "matched": matched,
 		"onlyA": recs(c.OnlyA), "onlyB": recs(c.OnlyB)})
+}
+
+type aiServiceJSON struct {
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Managed   bool   `json:"managed"`
+	Program   string `json:"program,omitempty"`
+	Config    string `json:"config,omitempty"`
+	Log       string `json:"log,omitempty"`
+	Note      string `json:"note,omitempty"`
+}
+
+// aiService reports whether a provider's local program (CLIProxyAPI) runs.
+func (h *handler) aiService(w http.ResponseWriter, r *http.Request) {
+	s, err := h.cfg.Core.AIServiceStatus(r.Context(), r.URL.Query().Get("provider"))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, aiServiceJSON(s))
+}
+
+// aiServiceControl starts or stops a provider's local program.
+func (h *handler) aiServiceControl(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Provider string `json:"provider"`
+		Action   string `json:"action"` // start | stop
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	var (
+		s   app.AIService
+		err error
+	)
+	switch body.Action {
+	case "start":
+		s, err = h.cfg.Core.StartAIService(r.Context(), body.Provider)
+	case "stop":
+		s, err = h.cfg.Core.StopAIService(r.Context(), body.Provider)
+	default:
+		writeAppError(w, domain.NewUserError("INPUT", "켜기 또는 끄기를 골라 주세요."))
+		return
+	}
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, aiServiceJSON(s))
 }

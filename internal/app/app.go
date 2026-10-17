@@ -59,6 +59,7 @@ func New(cfg Config) *App {
 	a.initSettings()
 	a.initAI()
 	a.applyEndpoints()
+	a.chooseStartProvider()
 	return a
 }
 

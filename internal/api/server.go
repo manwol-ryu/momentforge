@@ -42,6 +42,9 @@ type Core interface {
 	Timeline(ctx context.Context, sid string) (*app.UnifiedTimeline, error)
 	AIProviders() []app.AIProvider
 	SetAIKey(provider, key string, persist bool) (string, error)
+	AIServiceStatus(ctx context.Context, provider string) (app.AIService, error)
+	StartAIService(ctx context.Context, provider string) (app.AIService, error)
+	StopAIService(ctx context.Context, provider string) (app.AIService, error)
 	Settings() app.SettingsInfo
 	SaveSettings(s app.Settings) (app.SettingsInfo, error)
 	PreviewAI(ctx context.Context, req app.AIPreviewRequest) (app.AIPreview, error)
@@ -138,6 +141,8 @@ func NewHandler(cfg Config) http.Handler {
 		r.Get("/ai", h.aiProviders)
 		r.Post("/ai/key", h.aiKey)
 		r.Post("/ai/models", h.aiModels)
+		r.Get("/ai/service", h.aiService)
+		r.Post("/ai/service", h.aiServiceControl)
 		r.Post("/ai/preview", h.aiPreview)
 		r.Post("/ai/preview/count", h.aiCount)
 		r.Get("/ai/compare", h.aiCompare)

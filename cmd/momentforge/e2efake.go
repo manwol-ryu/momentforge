@@ -5,6 +5,8 @@ package main
 import (
 	"time"
 
+	"github.com/manwol-ryu/momentforge/internal/ai/cliproxy"
+	"github.com/manwol-ryu/momentforge/internal/ai/codex"
 	aifake "github.com/manwol-ryu/momentforge/internal/ai/e2efake"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
 	"github.com/manwol-ryu/momentforge/internal/platform/e2efake"
@@ -16,4 +18,7 @@ func init() {
 	extraAI = append(extraAI, aifake.New(), aifake.NewSecond())
 	extraBatchPoll = 200 * time.Millisecond // the fake batch ends at once
 	opencodeOptions = append(opencodeOptions, opencode.WithCommand("/nonexistent/momentforge-e2e/opencode"))
+	codexOptions = append(codexOptions, codex.WithCommand("/nonexistent/momentforge-e2e/codex"))
+	cliproxyOptions = append(cliproxyOptions, cliproxy.WithHome("/nonexistent/momentforge-e2e/cli-proxy-api"),
+		cliproxy.WithProgram("/nonexistent/momentforge-e2e/cli-proxy-api"), cliproxy.WithFallbackEndpoint("http://127.0.0.1:1/v1"))
 }

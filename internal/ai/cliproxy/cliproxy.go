@@ -16,6 +16,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,29 +36,52 @@ const (
 	requestTimeout = 5 * time.Minute
 )
 
-// CLIProxy is an ai.Provider and an ai.Endpointed one.
+// CLIProxy is an ai.Provider that sends to an address the user sets, finds
+// its key in CLIProxyAPI's config, and starts and stops CLIProxyAPI on this
+// computer.
 type CLIProxy struct {
-	mu       sync.RWMutex
-	endpoint string // "" for DefaultEndpoint
-	client   *http.Client
-	now      func() time.Time
+	mu          sync.RWMutex
+	endpoint    string // "" for the default address
+	client      *http.Client
+	now         func() time.Time
+	home        string       // CLIProxyAPI's folder (config, pid file, log); "" to look nowhere
+	programPath string       // the executable; found on PATH and in install folders when ""
+	found       *localConfig // the config read when the app started
+	fallback    string       // the address without a config; DefaultEndpoint unless set
+	child       *os.Process  // the CLIProxyAPI this run started
 }
 
-// Option configures the provider (tests use their own HTTP client).
+// Option configures the provider.
 type Option func(*CLIProxy)
 
 // WithClient replaces the HTTP client. Tests only.
 func WithClient(c *http.Client) Option { return func(p *CLIProxy) { p.client = c } }
 
-// New returns the provider. Redirects are refused.
+// WithHome reads and writes CLIProxyAPI's files in dir instead of
+// ~/.cli-proxy-api ("" turns the detection off). Tests and the E2E binary.
+func WithHome(dir string) Option { return func(p *CLIProxy) { p.home = dir } }
+
+// WithProgram runs this executable instead of finding cli-proxy-api. Tests and the E2E binary.
+func WithProgram(path string) Option { return func(p *CLIProxy) { p.programPath = path } }
+
+// WithFallbackEndpoint replaces the usual address used without a config, so
+// tests never reach a CLIProxyAPI running on this computer. Tests and the E2E binary.
+func WithFallbackEndpoint(url string) Option { return func(p *CLIProxy) { p.fallback = url } }
+
+// New returns the provider and reads CLIProxyAPI's config if there is one.
+// Redirects are refused.
 func New(opts ...Option) *CLIProxy {
 	p := &CLIProxy{now: time.Now, client: &http.Client{
 		Timeout:       requestTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+	if home, err := os.UserHomeDir(); err == nil {
+		p.home = filepath.Join(home, homeDirName)
+	}
 	for _, f := range opts {
 		f(p)
 	}
+	p.detect()
 	return p
 }
 
@@ -68,14 +93,24 @@ func (*CLIProxy) KeyEnv() string { return "" }
 func (*CLIProxy) DefaultModel() string { return "" }
 func (*CLIProxy) MaxOutputTokens() int { return ai.MaxOutputTokens }
 
-func (*CLIProxy) DefaultEndpoint() string { return DefaultEndpoint }
+// DefaultEndpoint is where CLIProxyAPI's config says it listens, or its
+// usual port on this computer.
+func (p *CLIProxy) DefaultEndpoint() string {
+	if p.found != nil {
+		return p.found.endpoint()
+	}
+	if p.fallback != "" {
+		return p.fallback
+	}
+	return DefaultEndpoint
+}
 
 // Endpoint is the address requests go to.
 func (p *CLIProxy) Endpoint() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.endpoint == "" {
-		return DefaultEndpoint
+		return p.DefaultEndpoint()
 	}
 	return p.endpoint
 }
@@ -324,4 +359,6 @@ var (
 	_ ai.Provider    = (*CLIProxy)(nil)
 	_ ai.ModelLister = (*CLIProxy)(nil)
 	_ ai.Endpointed  = (*CLIProxy)(nil)
+	_ ai.KeyFinder   = (*CLIProxy)(nil)
+	_ ai.Service     = (*CLIProxy)(nil)
 )

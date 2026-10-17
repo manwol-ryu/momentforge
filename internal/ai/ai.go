@@ -81,6 +81,19 @@ type (
 		Endpoint() string
 		SetEndpoint(url string) error // "" goes back to the default
 	}
+	// KeyFinder providers can find their key in their own program's
+	// configuration (CLIProxyAPI's access.api-keys). The app uses it, in
+	// memory only, when no key was saved or given.
+	KeyFinder interface {
+		FindKey() (key, where string) // "" when there is none
+	}
+	// Service providers send to a local program that MomentForge can start
+	// and stop for the user (CLIProxyAPI).
+	Service interface {
+		ServiceStatus(ctx context.Context) ServiceStatus
+		StartService(ctx context.Context) error
+		StopService(ctx context.Context) error
+	}
 	// SelfAuthenticated providers sign in with another program's own login
 	// (the OpenCode CLI); MomentForge holds no key for them and passes "".
 	SelfAuthenticated interface {
@@ -96,6 +109,17 @@ type (
 		CancelBatch(ctx context.Context, key, batchID string) error
 	}
 )
+
+// ServiceStatus is how a provider's local program stands.
+type ServiceStatus struct {
+	Installed bool   // the program was found
+	Running   bool   // something answers at the provider's address
+	Managed   bool   // the running program is one MomentForge can stop (it started it, or the pid file names it)
+	Program   string // where the program is
+	Config    string // the configuration file it runs with
+	Log       string // where its output goes when MomentForge starts it
+	Note      string // something the user should know (it listens on every network interface, ...)
+}
 
 // Model is a model a key can use.
 type Model struct {

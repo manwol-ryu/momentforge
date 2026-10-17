@@ -49,7 +49,8 @@ func defaultAITiming() aiTiming {
 type aiState struct {
 	mu        sync.Mutex
 	keys      map[string]string // provider ID → key
-	keySource map[string]string // provider ID → KeyFromEnv, KeyFromFile or KeyInMemory
+	keySource map[string]string // provider ID → KeyFromEnv, KeyFromFile, KeyFromTool or KeyInMemory
+	keyWhere  map[string]string // provider ID → the file a KeyFromTool key came from
 	previews  map[string]*aiPreview
 	active    map[string]*aiActive // run ID → work in progress
 	wg        sync.WaitGroup
@@ -62,6 +63,7 @@ const (
 	KeyFromEnv  = "env"    // an environment variable when the app started
 	KeyFromFile = "file"   // the data folder's .env
 	KeyInMemory = "memory" // entered on screen for this run only
+	KeyFromTool = "tool"   // found in the provider's own program config (CLIProxyAPI), kept in memory
 )
 
 // aiActive is a run being sent or waited for.
@@ -81,7 +83,7 @@ type aiPreview struct {
 }
 
 func (a *App) initAI() {
-	a.ai.keys, a.ai.keySource = map[string]string{}, map[string]string{}
+	a.ai.keys, a.ai.keySource, a.ai.keyWhere = map[string]string{}, map[string]string{}, map[string]string{}
 	a.ai.previews, a.ai.active = map[string]*aiPreview{}, map[string]*aiActive{}
 	a.ai.timing = defaultAITiming()
 	if a.cfg.AIBatchPoll > 0 {
@@ -99,10 +101,26 @@ func (a *App) initAI() {
 	for _, p := range a.cfg.AI.All() {
 		if k, _ := lookupEnv(saved, keyName(p)); validKey(k) {
 			a.ai.keys[p.ID()], a.ai.keySource[p.ID()] = k, KeyFromFile
-		} else if env := p.KeyEnv(); env != "" {
-			if k := strings.TrimSpace(os.Getenv(env)); k != "" {
-				a.ai.keys[p.ID()], a.ai.keySource[p.ID()] = k, KeyFromEnv
+		} else if env := p.KeyEnv(); env != "" && strings.TrimSpace(os.Getenv(env)) != "" {
+			a.ai.keys[p.ID()], a.ai.keySource[p.ID()] = strings.TrimSpace(os.Getenv(env)), KeyFromEnv
+		} else if kf, ok := p.(ai.KeyFinder); ok {
+			// Last: a key the provider's own program is set up with (never written anywhere by MomentForge).
+			if k, where := kf.FindKey(); validKey(k) {
+				a.ai.keys[p.ID()], a.ai.keySource[p.ID()], a.ai.keyWhere[p.ID()] = k, KeyFromTool, where
 			}
+		}
+	}
+}
+
+// chooseStartProvider picks, once when the app starts, the provider the
+// screens open with while the user has not chosen one: the first
+// registered provider that can send now (it has a key, or its own login is
+// ready). Without one, the first registered provider.
+func (a *App) chooseStartProvider() {
+	for _, p := range a.AIProviders() {
+		if p.Configured {
+			a.settings.auto = p.ID
+			return
 		}
 	}
 }
@@ -133,10 +151,12 @@ type AIProvider struct {
 	CanListModels   bool
 	CanBatch        bool
 	HasPrices       bool
-	KeySource       string // KeyFromEnv, KeyFromFile, KeyInMemory, or "" without a key
+	KeySource       string // KeyFromEnv, KeyFromFile, KeyFromTool, KeyInMemory, or "" without a key
+	KeyFoundIn      string // for KeyFromTool, the file the key was read from
 	KeyName         string // the environment variable and key-file line for the key
 	Endpoint        string // where requests go, for a provider that sends to an address the user sets
 	DefaultEndpoint string
+	HasService      bool // sends to a local program MomentForge can start and stop
 }
 
 // AIProviders lists providers (the default first) and whether each has a key.
@@ -151,7 +171,8 @@ func (a *App) AIProviders() []AIProvider {
 		_, priced := p.(ai.Priced)
 		v := AIProvider{ID: p.ID(), Name: p.Name(), Configured: a.ai.keys[p.ID()] != "",
 			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced,
-			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p)}
+			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p), KeyFoundIn: a.ai.keyWhere[p.ID()]}
+		_, v.HasService = p.(ai.Service)
 		if e, ok := p.(ai.Endpointed); ok {
 			v.Endpoint, v.DefaultEndpoint = e.Endpoint(), e.DefaultEndpoint()
 		}
@@ -203,6 +224,7 @@ func (a *App) SetAIKey(provider, key string, persist bool) (string, error) {
 		}
 	}
 	a.ai.mu.Lock()
+	delete(a.ai.keyWhere, provider)
 	if key == "" {
 		source = ""
 		delete(a.ai.keys, provider)

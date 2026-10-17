@@ -6,14 +6,15 @@ import type {
   AIPreview,
   AIProvider,
   AIRun,
+  AIService,
   AITokenCount,
   Analysis,
   ApiErrorBody,
   Candidate,
   CandidateChats,
+  Checkpoint,
   CommentsView,
   ExportFile,
-  Checkpoint,
   JobStatus,
   LiveChat,
   LiveDensity,
@@ -99,6 +100,9 @@ export const api = {
   settings: () => getJSON<SettingsInfo>("/api/settings"),
   saveSettings: (s: Settings) => postJSON<SettingsInfo>("/api/settings", s),
   aiModels: (provider: string) => postJSON<{ models: AIModel[] }>("/api/ai/models", { provider }),
+  aiService: (provider: string) => getJSON<AIService>(`/api/ai/service?provider=${enc(provider)}`),
+  aiServiceControl: (provider: string, action: "start" | "stop") =>
+    postJSON<AIService>("/api/ai/service", { provider, action }),
   aiPreview: (req: {
     sessionId: string;
     provider: string;

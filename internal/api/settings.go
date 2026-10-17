@@ -16,6 +16,7 @@ type settingsJSON struct {
 	ViewerAdaptive  bool              `json:"viewerAdaptive"`
 	File            string            `json:"file"`
 	KeyFile         string            `json:"keyFile"`
+	AIProviderAuto  bool              `json:"aiProviderAuto"`
 }
 
 func toSettingsJSON(s app.SettingsInfo) settingsJSON {
@@ -27,7 +28,8 @@ func toSettingsJSON(s app.SettingsInfo) settingsJSON {
 		endpoints = map[string]string{}
 	}
 	return settingsJSON{AIProvider: s.AIProvider, AIModels: models, AIEndpoints: endpoints, Sensitive: s.Sensitive,
-		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, File: s.File, KeyFile: s.KeyFile}
+		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, File: s.File, KeyFile: s.KeyFile,
+		AIProviderAuto: s.AIProviderAuto}
 }
 
 // settings returns the defaults the screens start from (nothing secret).

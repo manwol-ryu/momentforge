@@ -17,6 +17,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/ai/anthropic"
 	"github.com/manwol-ryu/momentforge/internal/ai/cliproxy"
+	"github.com/manwol-ryu/momentforge/internal/ai/codex"
 	"github.com/manwol-ryu/momentforge/internal/ai/openai"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
 	"github.com/manwol-ryu/momentforge/internal/api"
@@ -161,9 +162,13 @@ var (
 	extraPlatforms []platform.Platform
 	extraAI        []ai.Provider
 	extraBatchPoll time.Duration // 0: the app's default
-	// opencodeOptions configure the OpenCode provider (the E2E binary points
-	// it at a missing CLI so a test can never reach the real service).
+	// opencodeOptions, codexOptions and cliproxyOptions configure the
+	// providers that use programs on this computer (the E2E binary points
+	// them at missing ones so a test can never reach a real service or read
+	// the user's CLIProxyAPI config).
 	opencodeOptions []opencode.Option
+	codexOptions    []codex.Option
+	cliproxyOptions []cliproxy.Option
 )
 
 func registerAI(override []ai.Provider) *ai.Registry {
@@ -172,8 +177,10 @@ func registerAI(override []ai.Provider) *ai.Registry {
 		r.Register(override...)
 		return r
 	}
-	// Claude first: the screen offers the first provider by default.
-	r.Register(anthropic.New(), openai.New(), opencode.New(opencodeOptions...), cliproxy.New())
+	// The order is the screens' order and the start order: with nothing saved, the
+	// screens open with the first provider that can send (a key, or its own login).
+	r.Register(anthropic.New(), codex.New(codexOptions...), opencode.New(opencodeOptions...),
+		cliproxy.New(cliproxyOptions...), openai.New())
 	r.Register(extraAI...)
 	return r
 }

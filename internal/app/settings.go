@@ -57,11 +57,15 @@ type SettingsInfo struct {
 	Settings
 	File    string
 	KeyFile string
+	// AIProviderAuto: no provider is saved, so AIProvider is the one this
+	// computer could use when the app started.
+	AIProviderAuto bool
 }
 
 type settingsState struct {
-	mu  sync.Mutex
-	raw []envEntry // settings.env as read or last written
+	mu   sync.Mutex
+	raw  []envEntry // settings.env as read or last written
+	auto string     // the provider chosen when the app started, while none is saved
 }
 
 func (a *App) settingsPath() string { return filepath.Join(a.cfg.DataDir, settingsFileName) }
@@ -104,6 +108,10 @@ func (a *App) Settings() SettingsInfo {
 			s.AIProvider = id
 		}
 	}
+	auto := false
+	if s.AIProvider == "" && a.settings.auto != "" {
+		s.AIProvider, auto = a.settings.auto, true
+	}
 	for _, p := range a.cfg.AI.All() {
 		if m, _ := lookupEnv(raw, envAIModelPrefix+envName(p.ID())); m != "" && validModel(m) {
 			s.AIModels[p.ID()] = m
@@ -116,7 +124,7 @@ func (a *App) Settings() SettingsInfo {
 			}
 		}
 	}
-	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath()}
+	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath(), AIProviderAuto: auto}
 }
 
 // SaveSettings checks and writes the defaults to settings.env.

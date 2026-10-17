@@ -120,8 +120,13 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("radio", name="CLIProxyAPI").check()  # its card shows once it is chosen
     card = page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI"))
+    # Its running state and switch: the E2E binary has no cli-proxy-api, so it cannot be turned on.
+    service = card.get_by_role("group", name="CLIProxyAPI 실행 상태")
+    expect(service.get_by_role("status")).to_have_text("설치되지 않음")
+    expect(service.get_by_role("button", name="CLIProxyAPI 켜기")).to_be_disabled()
+    expect(service).to_contain_text("찾지 못함")
     address = card.get_by_label("CLIProxyAPI 주소")
-    expect(address).to_have_attribute("placeholder", "http://127.0.0.1:8317/v1")
+    expect(address).to_have_attribute("placeholder", "http://127.0.0.1:1/v1")  # the E2E binary's own, never a real CLIProxyAPI
     address.fill("http://127.0.0.1:9/v1")
     page.get_by_role("button", name="기본값 저장").click()
     expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()
@@ -151,3 +156,17 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.get_by_role("radio", name="Claude (Anthropic)").check()
     page.get_by_role("button", name="기본값 저장").click()
     expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()
+
+
+def test_codex_uses_its_own_login(page: Page, base_url: str) -> None:
+    """Codex signs in through the Codex CLI (ChatGPT): no key field. The E2E
+    binary points it at a missing CLI, so the screen explains how to set up."""
+    open_home(page, base_url)
+    page.get_by_role("button", name="샘플로 먼저 체험").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="AI 검토").click()
+    page.get_by_label("AI 제공자").select_option(label="Codex")
+    expect(page.get_by_label("모델 ID")).to_have_value("default")
+    expect(page.locator(".ai-auth")).to_contain_text("Codex CLI(codex)를 찾지 못했습니다")
+    expect(page.get_by_text("셸·브라우저·컴퓨터 사용·앱·플러그인·이미지 생성·웹 검색 도구를 모두 끄고", exact=False)).to_be_visible()
+    expect(page.locator("input[type=password]")).to_have_count(0)

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { AIModel, AIProvider, Settings, SettingsInfo } from "../../api/types";
+import type { AIModel, AIProvider, AIService, Settings, SettingsInfo } from "../../api/types";
 import { AIKeyField } from "../../shared/ai/AIKeyField";
 import { queryState, useAppState } from "../../shared/appState";
 import { RevealWords } from "../../shared/motion/RevealWords";
@@ -156,6 +156,12 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                   작업 화면의 AI 검토 탭이 이 제공자와 기본 모델로 시작합니다. 탭에서 바꾼 값은 그 검토에만 씁니다. 아래에서 고른
                   제공자의 모델·키를 정합니다.
                 </p>
+                {saved.aiProviderAuto && draft.aiProvider === saved.aiProvider && shown && (
+                  <p className="auto-note" role="note">
+                    이 컴퓨터에서 바로 쓸 수 있는 {shown.name}을(를) 자동으로 골랐습니다. 다른 제공자를 고르고 기본값을 저장하면 그것을
+                    씁니다.
+                  </p>
+                )}
                 <div className="providers">
                   {shown && (
                     <ProviderSettings
@@ -271,6 +277,7 @@ function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderP
         </span>
       </header>
       <div className="provider-body">
+        {p.hasService && <ServiceRow p={p} />}
         {p.defaultEndpoint && (
           <>
             <label className="field">
@@ -328,5 +335,83 @@ function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderP
         )}
       </div>
     </section>
+  );
+}
+
+const serviceText = (s: AIService | undefined) =>
+  !s ? "확인하는 중" : s.running ? "실행 중" : s.installed ? "꺼짐" : "설치되지 않음";
+
+/**
+ * Whether the provider's local program (CLIProxyAPI) runs, and the way to
+ * start or stop it. Its state is asked when the card opens and after each
+ * action, or when the user asks again; nothing polls.
+ */
+function ServiceRow({ p }: { p: AIProvider }) {
+  const queryClient = useQueryClient();
+  const status = useQuery({ queryKey: ["aiService", p.id], queryFn: () => api.aiService(p.id) });
+  const control = useMutation({
+    mutationFn: (action: "start" | "stop") => api.aiServiceControl(p.id, action),
+    onSuccess: (s) => queryClient.setQueryData(["aiService", p.id], s),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["aiService", p.id] }),
+  });
+  const s = status.data;
+  const busy = control.isPending || status.isFetching;
+  return (
+    <div className="service" role="group" aria-labelledby={`service-${p.id}`}>
+      <div className="service-head">
+        <span id={`service-${p.id}`} className="field-label">
+          {p.name} 실행 상태
+        </span>
+        <span className="service-state" data-state={s ? (s.running ? "on" : "off") : undefined} role="status">
+          {control.isPending ? (control.variables === "start" ? "켜는 중" : "끄는 중") : serviceText(s)}
+        </span>
+      </div>
+      <p className="actions">
+        {s?.running ? (
+          <button
+            type="button"
+            className="button button-quiet"
+            onClick={() => control.mutate("stop")}
+            disabled={busy || !s.managed}
+          >
+            {p.name} 끄기
+          </button>
+        ) : (
+          <button type="button" className="button" onClick={() => control.mutate("start")} disabled={busy || !s?.installed}>
+            {p.name} 켜기
+          </button>
+        )}
+        <button type="button" className="link-button" onClick={() => void status.refetch()} disabled={busy}>
+          상태 다시 확인
+        </button>
+      </p>
+      {s?.running && !s.managed && (
+        <p className="field-help">MomentForge가 켜지 않은 {p.name}입니다. 끄려면 실행한 터미널에서 끄세요.</p>
+      )}
+      {s && (
+        <dl className="service-paths">
+          <dt>프로그램</dt>
+          <dd>{s.installed ? s.program : "찾지 못함. README의 CLIProxyAPI 준비 방법대로 설치하세요."}</dd>
+          {s.config && (
+            <>
+              <dt>설정 파일</dt>
+              <dd>{s.config}</dd>
+            </>
+          )}
+          {s.running && s.managed && s.log && (
+            <>
+              <dt>기록</dt>
+              <dd>{s.log}</dd>
+            </>
+          )}
+        </dl>
+      )}
+      {s?.note && <p className="field-help service-note">{s.note}</p>}
+      {(control.error ?? status.error) && (
+        <p className="error" role="alert">
+          {(control.error ?? status.error)!.message}
+        </p>
+      )}
+    </div>
   );
 }

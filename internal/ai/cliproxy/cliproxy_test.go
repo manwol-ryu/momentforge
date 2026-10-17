@@ -39,7 +39,7 @@ func server(t *testing.T, status int, reply string) (*CLIProxy, *http.Request, *
 		io.WriteString(w, reply)
 	}))
 	t.Cleanup(srv.Close)
-	p := New(WithClient(srv.Client()))
+	p := New(WithClient(srv.Client()), WithHome(t.TempDir()))
 	if err := p.SetEndpoint(srv.URL + "/v1/"); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestNotRunningSaysWhereItLooked(t *testing.T) {
 	}
 	addr := l.Addr().String()
 	l.Close() // nothing listens there now
-	p := New()
+	p := New(WithHome(t.TempDir()))
 	if err := p.SetEndpoint("http://" + addr + "/v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestModels(t *testing.T) {
 }
 
 func TestEndpoint(t *testing.T) {
-	p := New()
+	p := New(WithHome(t.TempDir()))
 	if p.Endpoint() != DefaultEndpoint || p.DefaultEndpoint() != DefaultEndpoint {
 		t.Fatal(p.Endpoint())
 	}

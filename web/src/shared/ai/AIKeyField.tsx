@@ -12,6 +12,8 @@ function sourceText(p: AIProvider): string {
       return `환경변수 ${p.keyName ?? ""}에서 읽은 키를 씁니다. 지워도 다음 실행 때 다시 읽습니다.`;
     case "memory":
       return "이번 실행 동안만 메모리에 둔 키입니다. 앱을 끄면 지워집니다.";
+    case "tool":
+      return `${p.name} 설정 파일(${p.keyFoundIn ?? ""})에서 찾은 키를 메모리에서 씁니다. 다른 키를 저장하면 그 키를 씁니다.`;
     default:
       return "";
   }

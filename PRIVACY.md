@@ -10,6 +10,7 @@ MomentForge가 무엇을 내 컴퓨터 밖으로 보내고, 무엇을 내 컴퓨
 | AI 실행 (미리보기 확인 후에만) | 고른 AI 제공자 | 지시문, 고른 구간의 채팅 본문·가명 작성자 키, 후보 정보 |
 | 정확한 토큰 수 계산 (누를 때만) | Anthropic | 미리보기의 채팅 (답은 만들지 않음) |
 | 모델 목록 불러오기 (누를 때만) | Anthropic, 로컬 OpenCode CLI, 또는 설정한 CLIProxyAPI 주소 | API 키만. 채팅은 보내지 않음 |
+| 앱을 켤 때, 설정 화면을 열 때 | 이 컴퓨터의 Codex CLI(`codex login status`), CLIProxyAPI 주소 | 로그인 여부 확인, CLIProxyAPI 실행 여부 확인(키 없는 요청 하나). 채팅은 보내지 않음 |
 | MCP 서버 (사용자가 등록했을 때만) | 등록한 Claude 앱 → Anthropic | Claude가 도구로 읽은 채팅 본문·가명 작성자 키·후보 |
 
 이 밖의 전송은 없습니다. 개발자 서버로 채팅을 올리거나 사용량·오류 기록을 보내는 기능, 자동 업데이트 확인, 수집이 끝나면(또는 생방송 수집 중에) 저절로 AI에 보내는 기능은 없습니다. 외부 서비스에는 통신 과정에서 IP 주소 같은 일반 접속 정보가 전달되며, 각 서비스의 보관 정책은 MomentForge와 별개로 적용됩니다.
@@ -55,6 +56,7 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 |---|---|---|---|
 | Claude (Anthropic, 기본) | `api.anthropic.com` (Messages API, 배치는 Message Batches API) | 화면에서 저장한 API 키 또는 시작할 때 읽은 `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL`·프로필 같은 환경 설정을 무시해 키가 다른 주소로 가지 않음. 리디렉션 거부. 배치 요청은 결과를 가져갈 때까지 Anthropic에서 처리·보관됨 |
 | OpenAI | `api.openai.com` (Responses API) | 화면에서 저장한 API 키 또는 시작할 때 읽은 `OPENAI_API_KEY` | `store: false`로 보내 요청을 저장하지 말라고 요청. 리디렉션 거부 |
+| Codex | 로컬 `codex` CLI → OpenAI(ChatGPT 요금제의 Codex) | Codex CLI에 ChatGPT로 로그인한 계정. MomentForge는 키를 받지 않음 | 아래 "Codex" 참고 |
 | OpenCode | 로컬 `opencode` CLI → OpenCode Go 또는 OpenCode Zen(무료 모델) → 모델 제공자 | OpenCode CLI에 로그인한 계정(Go 모델은 OpenCode Go 구독). MomentForge는 키를 받지 않음 | 아래 "OpenCode" 참고 |
 | CLIProxyAPI | 설정의 CLIProxyAPI 주소(기본 `http://127.0.0.1:8317/v1`) → CLIProxyAPI가 정한 서비스·계정 | CLIProxyAPI의 클라이언트 키(`access.api-keys`) | 아래 "CLIProxyAPI" 참고 |
 
@@ -65,6 +67,16 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 **정확한 토큰 수 계산**(Claude)은 미리보기에 담긴 채팅을 Claude의 토큰 계산 API로 보냅니다. 답을 만들지 않고 요금도 들지 않지만 **채팅이 전송**되므로, 미리보기를 본 사용자가 버튼을 누를 때만 보냅니다. 미리보기의 "예상 비용 최대값"은 아무것도 보내지 않고 바이트 수로 계산합니다.
 
 **쓸 수 있는 모델 불러오기**는 Claude와 CLIProxyAPI에는 키만 보내고, OpenCode는 로컬에서 `opencode models`를 실행합니다. 채팅은 보내지 않습니다.
+
+### Codex
+
+Codex는 MomentForge가 API를 직접 부르지 않고 사용자의 Codex CLI(`codex exec`)를 실행해 Codex가 요청을 보내게 합니다.
+
+- 채팅은 명령줄이 아니라 표준 입력으로 넘깁니다.
+- 셸·브라우저·컴퓨터 사용·앱·플러그인·이미지 생성 기능과 웹 검색을 끄고, 사용자의 Codex 설정(`config.toml`)과 규칙을 읽지 않으며, 읽기 전용 샌드박스에서 빈 임시 폴더로 실행합니다(2026-10-17 Codex CLI 0.154.0으로 확인: 셸을 쓰라고 해도 셸 도구가 없다고 답함). 결과에 실행된 도구가 있으면 답을 쓰지 않습니다(`AI_TOOL_USE`).
+- `--ephemeral`로 Codex 세션 파일을 남기지 않습니다(샘플 채팅 실행 뒤 `~/.codex/sessions`·`history.jsonl`에 새 기록 없음을 확인). 임시 폴더도 지웁니다.
+- 채팅은 ChatGPT 계정의 Codex로 OpenAI에 전송되며, OpenAI의 ChatGPT 요금제 데이터 정책(학습 사용 여부는 ChatGPT 데이터 제어 설정)을 따릅니다.
+- Codex 전역 지침 파일(`~/.codex/AGENTS.md`)은 Codex가 읽을 수 있어 지시문과 함께 모델에 전달될 수 있습니다.
 
 ### OpenCode
 
@@ -81,11 +93,12 @@ OpenCode는 MomentForge가 API를 직접 부르지 않고 사용자의 OpenCode 
 
 CLIProxyAPI는 사용자가 실행하는 프록시로, 거기에 로그인한 계정(Claude Code·Codex·Gemini CLI 등)을 OpenAI 호환 API로 내놓습니다.
 
-- MomentForge는 설정의 **CLIProxyAPI 주소**(기본 `http://127.0.0.1:8317/v1`)로만 보냅니다. 주소는 데이터 폴더의 `settings.env`에 저장되며 http·https만 받습니다. 리디렉션은 따르지 않습니다.
+- MomentForge는 설정의 **CLIProxyAPI 주소**로만 보냅니다. 비워 두면 CLIProxyAPI 설정 파일의 host·port, 그 파일이 없으면 `http://127.0.0.1:8317/v1`입니다. 주소는 데이터 폴더의 `settings.env`에 저장되며 http·https만 받습니다. 리디렉션은 따르지 않습니다.
 - 지시문과 고른 구간의 채팅·가명 작성자 키를 Chat Completions로 보냅니다. CLIProxyAPI가 그것을 어느 서비스·계정·모델로 넘길지는 CLIProxyAPI 설정과 모델 ID가 정하며, MomentForge는 알지 못합니다. 각 서비스의 보관·학습 정책과 약관이 그대로 적용되고, 구독 계정을 API처럼 쓰는 것은 약관에 어긋나 계정이 제한될 수 있습니다.
 - CLIProxyAPI는 기본으로 모든 네트워크 인터페이스에서 받으므로, 같은 네트워크의 다른 기기가 쓰지 못하게 CLIProxyAPI 설정의 `access.api-keys`로 키를 정하고 `host`를 `127.0.0.1`로 두는 것을 권합니다.
-- CLIProxyAPI의 키는 다른 API 키와 같이 메모리에 두며, **이 컴퓨터에도 저장**을 고른 경우에만 `.env`에 `MOMENTFORGE_CLIPROXY_API_KEY`로 씁니다.
-- 실제 CLIProxyAPI로는 아직 확인하지 못했고, 가짜 서버로 요청 형식·키 전달·오류·연결 실패를 시험했습니다.
+- 앱을 켤 때 CLIProxyAPI 설정 파일(`~/.cli-proxy-api/config.yaml`)에서 주소와 첫 클라이언트 키(`access.api-keys`)를 읽습니다. 읽은 키는 **메모리에만** 두고 다른 곳에 쓰지 않으며, 설정에서 저장한 키나 환경변수가 있으면 그것을 씁니다. 직접 넣은 키는 다른 API 키와 같이 메모리에 두고, **이 컴퓨터에도 저장**을 고른 경우에만 `.env`에 `MOMENTFORGE_CLIPROXY_API_KEY`로 씁니다.
+- 설정 화면의 **CLIProxyAPI 켜기**는 이 컴퓨터의 `cli-proxy-api`를 그 설정 파일로 실행하고, 출력은 `~/.cli-proxy-api/cli-proxy-api.log`, 프로세스 번호는 같은 폴더의 `cli-proxy-api.pid`에 씁니다. **끄기**는 MomentForge가 켰거나 pid 파일에 적힌 프로세스가 실제로 `cli-proxy-api`일 때만 끝냅니다. 실행 상태는 설정 화면을 열거나 다시 확인할 때만 묻고(키 없는 요청 하나), 계속 묻지 않습니다.
+- 실제 CLIProxyAPI 8.0.32로 키 확인·오류 문구·모델 목록·켜기·끄기를 확인했습니다(2026-10-17). 계정을 연결한 뒤의 실제 AI 응답은 아직 확인하지 못했습니다.
 
 ## MCP 서버
 

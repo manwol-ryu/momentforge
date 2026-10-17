@@ -309,9 +309,26 @@ export interface AIProvider {
   /** Where requests go, for a provider that sends to a proxy the user runs (CLIProxyAPI). */
   endpoint?: string;
   defaultEndpoint?: string;
+  /** For a key found in the provider's own program config (keySource "tool"): that file. */
+  keyFoundIn?: string;
+  /** Sends to a local program MomentForge can start and stop (CLIProxyAPI). */
+  hasService: boolean;
 }
 
-export type AIKeySource = "env" | "file" | "memory";
+/** How a provider's local program stands (CLIProxyAPI). */
+export interface AIService {
+  installed: boolean;
+  /** Something answers at the provider's address. */
+  running: boolean;
+  /** MomentForge can stop it: it started it, or the program's pid file names it. */
+  managed: boolean;
+  program?: string;
+  config?: string;
+  log?: string;
+  note?: string;
+}
+
+export type AIKeySource = "env" | "file" | "memory" | "tool";
 
 /** Defaults the screens start from (the data folder's settings.env). Nothing secret. */
 export interface Settings {
@@ -331,6 +348,8 @@ export interface SettingsInfo extends Settings {
   file: string;
   /** .env: only the keys the user chose to keep on this computer. */
   keyFile: string;
+  /** No provider is saved: aiProvider is the one this computer could use when the app started. */
+  aiProviderAuto: boolean;
 }
 
 export interface AIModel {

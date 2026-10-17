@@ -20,7 +20,7 @@
 | 영상 재생 | 다시보기 후보를 누르면 앱 안 영상이 그 시각으로 이동하고, 재생 위치에 맞춰 채팅이 따라감. 생방송은 수집하는 동안 지금 방송을 채팅 옆에서 재생 |
 | 시청자 추천 | 다시보기 아래 댓글에 적힌 시각을 읽어 자동 후보와 따로 표시. 댓글 직접 붙여넣기 지원 |
 | 통합 타임라인 | 자동 탐지·시청자 추천·AI 추천을 한 목록에 시간순으로 모음 |
-| AI 검토 | Claude(기본)·OpenAI·OpenCode(Go 구독·무료 모델, CLI로 실행)·CLIProxyAPI. 미리보기 확인 후 실행, 비용 미리보기·비용 한도·배치·결과 비교 |
+| AI 검토 | Claude·Codex(ChatGPT 로그인, CLI로 실행)·OpenCode(Go 구독·무료 모델, CLI로 실행)·CLIProxyAPI·OpenAI. 설치된 도구는 앱을 켤 때 자동으로 찾음. 미리보기 확인 후 실행, 비용 미리보기·비용 한도·배치·결과 비교 |
 | MCP 서버 | 수집한 채팅과 후보를 Claude Desktop·Claude Code에서 읽기 전용으로 조회 |
 | 내보내기 | 전체 채팅 TXT/JSONL, 후보 TXT/CSV/JSON, 후보별 앞뒤 채팅, 생방송 중간 저장 |
 | 저장 목록 정리 | 작업을 목록에서만 숨기고 다시 표시. 채팅과 파일은 그대로 보관 |
@@ -141,7 +141,8 @@ cd momentforge && make build
 | AI 검토 | 기본 AI 제공자 | 작업 화면의 AI 검토 탭이 이 제공자로 시작합니다. 탭에서 바꾼 값은 그 검토에만 씁니다 |
 | AI 검토 | 제공자별 기본 모델 ID | 비우면 제공자의 기본 모델을 씁니다. 키가 있으면 **쓸 수 있는 모델 불러오기**로 고를 수 있습니다 |
 | AI 검토 | 제공자별 API 키 | 상태(키 있음·없음), **키 저장**, **키 지우기**. OpenCode는 키 대신 OpenCode CLI 준비 상태와 연결 방법을 보여 줍니다 |
-| AI 검토 | CLIProxyAPI 주소 | CLIProxyAPI를 실행한 OpenAI 호환 주소. 비우면 `http://127.0.0.1:8317/v1` |
+| AI 검토 | CLIProxyAPI 주소 | CLIProxyAPI를 실행한 OpenAI 호환 주소. 비우면 CLIProxyAPI 설정 파일의 주소(없으면 `http://127.0.0.1:8317/v1`) |
+| AI 검토 | CLIProxyAPI 실행 상태 | 실행 중·꺼짐·설치되지 않음과 **CLIProxyAPI 켜기**·**CLIProxyAPI 끄기**, **상태 다시 확인** |
 | 새 작업 기본값 | 항상 가장 민감하게, 영상 댓글의 시청자 추천도 수집, 시청자 수 변화 보정 | 새 작업의 다시보기·생방송 양식이 이 값으로 시작합니다. 양식에서 바꾼 값은 그 작업에만 씁니다 |
 
 - 기본값은 데이터 폴더의 `settings.env`에 씁니다. 비밀이 아닌 값만 있고, `KEY=값` 형식이라 직접 고쳐도 됩니다(앱을 다시 실행하면 읽음).
@@ -175,8 +176,9 @@ AI는 채팅 반응을 요약해 편집할 만한 구간을 다시 고르는 선
 |---|---|---|---|---|---|---|
 | **Claude (Anthropic)** — 기본 | API 키. 설정이나 AI 검토 탭에서 **키 저장**, 또는 시작할 때 환경변수 `ANTHROPIC_API_KEY` | `claude-opus-5-5` | 지원 | 지원 | 지원 | 지원 |
 | **OpenAI** | API 키. 설정이나 AI 검토 탭에서 **키 저장**, 또는 시작할 때 환경변수 `OPENAI_API_KEY` | 없음 (계정에서 쓸 수 있는 모델 ID를 직접 입력) | – | – | – | – |
+| **Codex** | Codex CLI의 ChatGPT 로그인(`codex login`). MomentForge는 키를 받지 않음 | `default` (Codex의 기본 모델) | – | – | – | – |
 | **OpenCode** | OpenCode CLI의 로그인. MomentForge는 키를 받지 않음 | `opencode-go/deepseek-v4.1-flash` | – | 지원 (`opencode models`) | – | – |
-| **CLIProxyAPI** | CLIProxyAPI의 클라이언트 키(`access.api-keys`). 설정이나 AI 검토 탭에서 **키 저장** | 없음 (모델 목록에서 고름) | – | 지원 | – | – |
+| **CLIProxyAPI** | CLIProxyAPI의 클라이언트 키(`access.api-keys`). 설정 파일에서 자동으로 찾거나 설정·AI 검토 탭에서 **키 저장** | 없음 (모델 목록에서 고름) | – | 지원 | – | – |
 
 - **API 키는 서버 메모리에** 둡니다. 기본으로는 파일·DB·로그에 쓰지 않으므로 앱을 다시 실행하면 다시 넣어야 합니다(환경변수로 넣었다면 그대로 다시 읽음).
 - 키를 저장할 때 **이 컴퓨터에도 저장**을 고르면 그 키만 데이터 폴더의 `.env`(권한 0600)에 평문으로 씁니다(`ANTHROPIC_API_KEY=…`, `OPENAI_API_KEY=…`). 다음 실행 때 이 파일을 먼저 읽고, 없으면 환경변수를 읽습니다. 이 파일은 데이터 폴더를 공유·동기화·백업하면 함께 복사되니 주의하세요.
@@ -184,10 +186,13 @@ AI는 채팅 반응을 요약해 편집할 만한 구간을 다시 고르는 선
 - 설정 화면과 AI 검토 탭은 같은 키 상태를 보여 주고, 키가 어디서 왔는지(이 컴퓨터, 환경변수, 이번 실행만) 표시합니다. 화면과 API 응답은 키를 돌려주지 않습니다.
 - Claude는 공식 Go SDK로 보내며, `ANTHROPIC_BASE_URL` 같은 환경 설정은 무시하고 화면에서 받은 키(또는 `ANTHROPIC_API_KEY`)만 씁니다. 고정 지시문은 프롬프트 캐싱을 쓰고, 실행 기록에 캐시 적중 토큰을 보여 줍니다. 미리보기에서 고른 모델이 아닌 다른 모델로 넘기는 서버 측 대체 기능은 켜지 않습니다.
 - OpenAI는 Responses API에 `store: false`로 보냅니다. 가격표가 없어 토큰만 표시하고 비용 한도를 쓸 수 없습니다.
+- **앱을 켤 때 자동으로 찾는 것**: Codex CLI와 OpenCode CLI가 설치되어 로그인되어 있으면 "준비됨"이 되고, CLIProxyAPI 설정 파일(`~/.cli-proxy-api/config.yaml`)이 있으면 그 주소(host·port)와 첫 클라이언트 키(`access.api-keys`)를 읽어 바로 쓸 수 있게 합니다. 찾은 키는 메모리에만 두고 다른 파일에 쓰지 않으며, 설정에서 직접 넣은 키·주소가 있으면 그것을 씁니다. 저장한 기본 제공자가 없으면 화면의 순서(Claude → Codex → OpenCode → CLIProxyAPI → OpenAI) 가운데 지금 보낼 수 있는 첫 제공자로 시작하고, 설정 화면에 자동으로 골랐다고 표시합니다.
+- **Codex**는 [Codex CLI](https://github.com/openai/codex)를 설치하고 `codex login`으로 ChatGPT에 로그인한 뒤 씁니다. MomentForge는 `codex exec`를 실행하며, 셸·브라우저·컴퓨터 사용·앱·플러그인·이미지 생성·웹 검색 도구를 모두 끄고, 사용자의 Codex 설정·규칙을 읽지 않고, 읽기 전용 샌드박스에서 빈 임시 폴더로, Codex 기록을 남기지 않게(`--ephemeral`) 실행합니다. 답은 `--output-schema`로 정해진 JSON 형식만 받고, 도구가 실제로 실행되면 결과를 쓰지 않습니다. 모델 ID를 `default`로 두면 Codex의 기본 모델을 씁니다. 사용량은 ChatGPT 요금제의 Codex 한도에서 쓰이며 비용은 표시하지 않습니다.
 - **OpenCode**는 [OpenCode](https://opencode.ai) CLI를 설치한 뒤 씁니다. Go 모델(`opencode-go/…`)은 터미널에서 `opencode`를 실행해 `/connect`로 OpenCode Go를 연결해야 하며 활성 OpenCode Go 구독이 필요합니다. MomentForge가 OpenCode를 직접 실행해 요청을 보내게 하며, `opencode`는 `PATH`, `~/.local/bin`, `~/.opencode/bin`, `/opt/homebrew/bin`, `/usr/local/bin` 순서로 찾습니다. 비용은 OpenCode가 알려 준 값으로 표시합니다. OpenCode Go는 코딩 에이전트용 구독이고 채팅 검토는 코딩 요청이 아니므로, 구독 제한을 받을 위험이 있다는 점을 알고 쓰세요.
 - OpenCode의 **무료 모델**(`opencode/deepseek-v4.1-flash-free`, `opencode/glm-5.3-flash-free` 같은 `opencode/…-free`)도 모델 목록에 나오며 구독 없이 씁니다. OpenCode는 무료 등급을 OpenCode 자체 기본 에이전트의 요청에만 응답하므로, 무료 모델은 그 기본 에이전트로 보내고 도구는 모두 "승인 필요"로 두어 CLI가 자동으로 거부하게 합니다(도구가 실제로 실행되면 결과를 쓰지 않음). 지시문은 메시지에 넣습니다. 모델이 도구를 먼저 시도했다가 거부당한 뒤 답하므로 Go 모델보다 조금 느릴 수 있습니다. 무료 모델은 모델마다 데이터 정책이 달라 일부는 무료 기간에 받은 내용을 모델 개선에 쓰거나 30일 보관합니다. [OpenCode Zen 문서](https://opencode.ai/docs/zen)에서 확인하세요.
 - **CLIProxyAPI**는 사용자가 실행하는 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)에 OpenAI 호환 Chat Completions로 보냅니다. 설정의 **CLIProxyAPI 주소**(비우면 `http://127.0.0.1:8317/v1`)와 CLIProxyAPI 설정의 `access.api-keys`에 있는 키를 넣고, **쓸 수 있는 모델 불러오기**로 모델을 고르세요. 어느 서비스·계정으로 갈지는 CLIProxyAPI와 모델 ID가 정합니다. 구독 계정(Claude Code·Codex·Gemini CLI 등)을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있어 계정이 제한될 수 있습니다. 비용은 알 수 없어 토큰만 표시하고 비용 한도를 쓸 수 없습니다. CLIProxyAPI가 꺼져 있으면 "연결하지 못했습니다"와 주소를 보여 주고, 이때는 아무것도 보내지 않은 것입니다.
   - 준비(macOS 예): [릴리스](https://github.com/router-for-me/CLIProxyAPI/releases)의 `CLIProxyAPI_<버전>_darwin_aarch64.tar.gz`에서 `cli-proxy-api`를 `~/.local/bin`에 두고, `~/.cli-proxy-api/config.yaml`에 `server.host: "127.0.0.1"`, `server.port: 8317`, `access.api-keys`(MomentForge에 넣을 키)를 적은 뒤 `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`로 실행합니다.
+  - 켜고 끄기: 설정 화면 CLIProxyAPI 카드의 **CLIProxyAPI 켜기**는 위 명령과 같이 백그라운드로 실행하고 출력은 `~/.cli-proxy-api/cli-proxy-api.log`, 프로세스 번호는 `~/.cli-proxy-api/cli-proxy-api.pid`에 씁니다. MomentForge를 꺼도 CLIProxyAPI는 계속 실행됩니다. **CLIProxyAPI 끄기**는 MomentForge가 켰거나 pid 파일에 적힌, 실제로 `cli-proxy-api`인 프로세스만 끕니다. 다른 방법으로 실행한 CLIProxyAPI는 실행한 터미널에서 끄세요. 주소가 이 컴퓨터가 아니면 켜고 끌 수 없습니다.
   - 계정 연결: 같은 명령에 `-claude-login`, `-codex-login`, `-antigravity-login` 같은 옵션을 붙여 실행하면 브라우저에서 그 서비스에 로그인합니다. 로그인한 계정이 없으면 모델 목록이 비어 있고, MomentForge는 "CLIProxyAPI가 알려 준 모델이 없습니다"라고 알립니다.
 
 ### 비용 미리보기와 정확한 토큰 계산
