@@ -60,6 +60,7 @@ def test_timeline_marker_is_keyboard_operable(page: Page, base_url: str) -> None
 
 def test_downloads_chat_file(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
+    page.get_by_role("tab", name="파일").click()
     with page.expect_download() as info:
         page.get_by_role("button", name="chat.txt").click()
     path = info.value.path()
@@ -70,9 +71,13 @@ def test_downloads_chat_file(page: Page, base_url: str) -> None:
 def test_sample_is_saved_once_and_reopened(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
     first = page.url
-    page.get_by_role("link", name="처음으로").click()
+    row = page.locator(".sessions").get_by_role("link", name="샘플 채팅 (실제 방송 아님)")
+    expect(row).to_have_count(1)
+    expect(row).to_have_attribute("aria-current", "page")  # the open work is marked in the list
+    page.get_by_role("link", name="새 작업").click()
     page.wait_for_selector(READY, timeout=10_000)
-    expect(page.locator(".sessions").get_by_role("link", name="샘플 채팅 (실제 방송 아님)")).to_have_count(1)
+    expect(row).to_have_count(1)
+    expect(row).not_to_have_attribute("aria-current", "page")
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     expect(page).to_have_url(first)
 

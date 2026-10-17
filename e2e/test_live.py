@@ -19,6 +19,7 @@ def open_home(page: Page, base_url: str) -> None:
 
 
 def live_form(page: Page):
+    page.get_by_role("tab", name="생방송").click()
     return page.get_by_role("form", name="생방송 수집")
 
 
@@ -56,6 +57,7 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
 
     page.get_by_role("button", name="현재까지 저장").click()
     expect(page.get_by_text(re.compile(r"채팅 [\d,]+건과 편집 후보를 저장했습니다"))).to_be_visible()
+    page.get_by_role("tab", name="파일").click()
     with page.expect_download() as info:
         page.get_by_role("button", name="편집 후보 TXT").click()
     text = Path(info.value.path()).read_text(encoding="utf-8")
@@ -66,15 +68,17 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     expect(page.get_by_text("수집을 중단했습니다.")).to_be_visible()
     page.get_by_role("button", name="이어 기록").click()
     expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
+    page.get_by_role("tab", name="수집 상태").click()
     expect(page.locator(".facts")).to_contain_text("연결 복구 1회")
     expect(page.locator(".facts")).to_contain_text("2개")  # the stop became a second gap
     page.get_by_role("button", name="수집 중단").click()
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
 
-    page.get_by_role("link", name="처음으로").click()
-    page.wait_for_selector(READY, timeout=10_000)
+    # The saved list follows the capture's state.
     row = page.locator(".session-row", has=page.get_by_role("link", name="E2E 가짜 생방송 alpha"))
     expect(row).to_contain_text("생방송 중단됨")
+    page.get_by_role("link", name="새 작업").click()
+    page.wait_for_selector(READY, timeout=10_000)
     row.get_by_role("link").click()
     expect(page).to_have_url(re.compile(r"/live/[0-9a-f]{32}$"))
 
@@ -86,6 +90,7 @@ def test_live_rejects_offline_and_wrong_form(page: Page, base_url: str) -> None:
     form.get_by_role("button", name="수집 시작").click()
     expect(form.get_by_role("alert")).to_have_text("현재 공개 채팅을 받을 수 있는 생방송이 아닙니다.")
 
+    page.get_by_role("tab", name="다시보기").click()
     page.get_by_label("치지직 다시보기 주소").fill(LIVE_URL)
     page.get_by_role("button", name="수집하고 편집점 찾기").click()
     expect(page.get_by_text("생방송 주소입니다. 생방송 수집 칸에서 시작하세요.")).to_be_visible()

@@ -1,23 +1,73 @@
-/* Design tokens. Source of truth: docs/DESIGN-SYSTEM.md. Components use only these variables. */
+/* Design tokens. Source of truth: docs/DESIGN-SYSTEM.md. Components use only these variables.
+   Theme: Tracwell's (tracwell.app) neutral surfaces, card shells and data colors, by the user's request (2026-10-17). */
 :root {
   color-scheme: light dark;
 
-  /* Light (백): white top and silver hair of the reference image */
-  --paper: #f7f5fa;
-  --ink: #292929;
-  --muted: #6e6280;
-  --rule: #d6d0db;
-  --density: #4c63a1; /* iris, deep */
-  --marker: #cf5f73; /* blush, deepened for contrast on white */
-  --alert: #b8461b;
+  /* Surfaces */
+  --paper: #ffffff; /* page (background) */
+  --surface: #f7fafc; /* start-screen band, the tool panel's backdrop (landing-surface) */
+  --sunken: #f5f5f5; /* sidebar wash, tracks, hover (muted) */
+  --card: #f8f8f8; /* card frames (muted at 70%) */
+  --panel: #ffffff; /* card bodies and sheets */
+  --secondary: #f4f4f5; /* quiet buttons */
+  --screen: #111111; /* the video monitor, dark in both modes */
 
-  --font-sans: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  /* Text and lines */
+  --ink: #0a0a0a;
+  --muted: #737373;
+  --rule: #e5e5e5;
+  --input: #e5e5e5;
+
+  /* Action */
+  --primary: #2a6cf0; /* Tracwell #357dff, a little deeper so white text keeps 4.5:1 */
+  --primary-ink: #ffffff;
+  --link: #0c54a0;
+  --ring: rgb(76 153 248 / 0.55);
+
+  /* Data (Tracwell's data colors): density = traffic, auto candidates = acquisition,
+     viewer picks = engagement, AI picks = revenue. -text for words, -soft for fills. */
+  --density: #2885ef;
+  --density-soft: rgb(40 133 239 / 0.1);
+  --marker: #e85a48;
+  --marker-text: #932c21;
+  --marker-soft: rgb(232 90 72 / 0.1);
+  --viewer: #009d96;
+  --viewer-text: #005451;
+  --viewer-soft: rgb(0 157 150 / 0.1);
+  --ai: #845de7;
+  --ai-text: #59419b;
+  --ai-soft: rgb(132 93 231 / 0.1);
+  --positive: #10ce6a;
+  --positive-text: #087a3e;
+  --positive-soft: rgb(16 206 106 / 0.12);
+  --alert: #e40014;
+  --on-screen: rgb(255 255 255 / 0.72); /* notes on the video monitor */
+  --on-screen-alert: #ff6568;
+
+  /* Section tints (landing-tint-*) */
+  --tint-blue: #e8f0ff;
+  --tint-lilac: #efeafe;
+  --tint-mint: #e6f5ed;
+  --tint-peach: #fdf0e6;
+  --tint-rose: #fdeaf1;
+
+  /* Depth: a hairline and a soft drop for cards, a ring for raised items, a deep drop for the frame */
+  --shadow-card: 0 0 0 1px rgb(0 0 0 / 0.035), 0 1px 2px -1px rgb(0 0 0 / 0.05), 0 3px 8px -4px rgb(0 0 0 / 0.08);
+  --shadow-raised: 0 0 0 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-frame: 0 0 0 1px rgb(0 0 0 / 0.06), 0 24px 60px -28px rgb(0 0 0 / 0.28), 0 40px 90px -48px rgb(0 0 0 / 0.36);
+
+  /* Type: the OS's UI face for Latin and digits (SF Pro, Segoe UI; Inter when installed), Korean from the OS Korean face */
+  --font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans KR", system-ui, sans-serif;
+  --font-display: "Open Runde", ui-rounded, "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
 
   --text-xs: 13px;
-  --text-sm: 15px;
-  --text-md: 19px;
-  --text-lg: 24px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
   --text-xl: 30px;
+  --text-display: 44px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -28,13 +78,23 @@
   --space-7: 32px;
   --space-8: 48px;
 
-  --radius: 4px;
+  --radius: 10px; /* inputs, rows, list items */
+  --radius-md: 12px; /* card bodies */
+  --radius-lg: 16px; /* cards and sheets */
+  --radius-xl: 28px; /* step cards */
+  --radius-pill: 999px; /* buttons, tabs, badges */
   --measure: 40em;
 
-  /* Motion (docs/DESIGN-SYSTEM.md 8): one easing for settling, one spring for things that snap into place */
+  /* Workbench layout (docs/DESIGN-SYSTEM.md 4) */
+  --sidebar-w: 17rem;
+  --rail-w: 3.5rem;
+  --panel-w: clamp(24rem, 30vw, 30rem);
+
+  /* Motion (docs/DESIGN-SYSTEM.md 8) */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-spring: cubic-bezier(0.34, 1.45, 0.64, 1);
-  --dur-1: 160ms; /* hover, press */
+  --ease-control: cubic-bezier(0.16, 1, 0.3, 1); /* Tracwell's buttons and nav */
+  --dur-1: 150ms; /* hover, press */
   --dur-2: 320ms; /* panels, page */
   --dur-3: 560ms; /* sliding pills, rolling digits, new rows */
   --dur-4: 900ms; /* timeline sweep, title reveal */
@@ -42,13 +102,45 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Dark (흑): black cardigan of the reference image */
-    --paper: #232222;
-    --ink: #ece7f2;
-    --muted: #b7abbd;
-    --rule: #3e3c40;
-    --density: #81adde; /* iris, light */
-    --marker: #ffbac8; /* blush */
-    --alert: #ff8a65;
+    --paper: #1c1c1c;
+    --surface: #171717;
+    --sunken: #262626;
+    --card: #232323;
+    --panel: #1f1f1f;
+    --secondary: #27272a;
+    --screen: #0b0b0b;
+
+    --ink: #fafafa;
+    --muted: #a1a1a1;
+    --rule: rgb(255 255 255 / 0.1);
+    --input: rgb(255 255 255 / 0.15);
+
+    --link: #9bc7ff;
+    --ring: rgb(128 186 255 / 0.6);
+
+    --density: #5fa7ff;
+    --density-soft: rgb(95 167 255 / 0.16);
+    --marker: #fb8371;
+    --marker-text: #ffb5a8;
+    --marker-soft: rgb(251 131 113 / 0.16);
+    --viewer: #49c7c0;
+    --viewer-text: #9be0db;
+    --viewer-soft: rgb(73 199 192 / 0.16);
+    --ai: #a88fff;
+    --ai-text: #cbc1ff;
+    --ai-soft: rgb(168 143 255 / 0.16);
+    --positive-text: #4ade80;
+    --positive-soft: rgb(16 206 106 / 0.16);
+    --alert: #ff6568;
+
+    --tint-blue: rgb(95 167 255 / 0.12);
+    --tint-lilac: rgb(168 143 255 / 0.12);
+    --tint-mint: rgb(73 199 192 / 0.12);
+    --tint-peach: rgb(251 131 113 / 0.12);
+    --tint-rose: rgb(255 120 170 / 0.12);
+
+    --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.06), 0 3px 8px -4px rgb(0 0 0 / 0.5);
+    --shadow-raised: 0 0 0 1px rgb(255 255 255 / 0.08);
+    --shadow-frame: 0 0 0 1px rgb(255 255 255 / 0.08), 0 24px 60px -28px rgb(0 0 0 / 0.7);
   }
 }

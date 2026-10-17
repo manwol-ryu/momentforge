@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, UnifiedTimeline } from "../../api/types";
@@ -6,25 +6,29 @@ import { useAppState } from "../../shared/appState";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
-import { PageBar, useScrolledPast } from "../../shared/motion/PageBar";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
 import { Segmented } from "../../shared/motion/Segmented";
-import { Link, navigate } from "../../shared/navigation";
+import { Stats } from "../../shared/motion/Stats";
+import { Tabs, type Tab } from "../../shared/motion/Tabs";
+import { navigate, useDocumentTitle } from "../../shared/navigation";
 import { VideoPlayer, type PlayerHandle } from "../../shared/player/VideoPlayer";
+import { sessionKindText } from "../../shared/sessionText";
 import { Timeline } from "../../shared/timeline/Timeline";
+import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { useJob } from "../../shared/useJob";
 import { AIComparePanel } from "./AIComparePanel";
 import { AIPanel } from "./AIPanel";
 import { CommentsPanel } from "./CommentsPanel";
 import { sourceLabel, UnifiedList } from "./UnifiedList";
 
-const stateText: Partial<Record<Session["state"], string>> = {
-  collecting: "수집 중",
-  paused: "일시정지",
-  finished: "수집 완료",
-  comments_only: "댓글만 수집",
-};
+type PanelTab = "candidates" | "ai" | "comments" | "files";
 
+/**
+ * A saved VOD as an editing workbench (docs/DESIGN-SYSTEM.md 4): the title
+ * and job state on top, the video, the chat at the playhead and the reaction
+ * timeline held in view, and the tools (candidates, AI review, comments,
+ * files) in tabs beside them.
+ */
 export function SessionView({ id }: { id: string }) {
   const session = useQuery({ queryKey: ["session", id], queryFn: () => api.session(id) });
   const analysisId = session.data?.latestAnalysisId;
@@ -42,68 +46,113 @@ export function SessionView({ id }: { id: string }) {
       if (!next.delete(itemId)) next.add(itemId);
       return next;
     });
+  const [tab, setTab] = useState<PanelTab>("candidates");
   const job = useJob();
+  // The job that was already there when the page opened (null: none); later jobs are news.
+  const [openedJobId, setOpenedJobId] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (openedJobId === undefined && job.isSuccess) setOpenedJobId(job.data?.id || null);
+  }, [openedJobId, job.isSuccess, job.data?.id]);
+  const runningHere = !!job.data?.busy && job.data.sessionId === id;
+  const [sawJobRun, setSawJobRun] = useState(false);
+  useEffect(() => {
+    if (runningHere) setSawJobRun(true);
+  }, [runningHere]);
   const isLive = session.data?.kind === "live";
   useEffect(() => {
     if (isLive) navigate(`/live/${id}`, { replace: true });
   }, [isLive, id]);
   const ready = session.isSuccess && (!analysisId || analysis.isSuccess) && (!isVOD || timeline.isSuccess);
-  const [header, scrolledPast] = useScrolledPast();
   useAppState(ready ? "ready" : session.isError || analysis.isError || timeline.isError ? "error" : "loading");
+  useDocumentTitle(session.data?.title);
 
   const s = session.data;
-  const jobHere = job.data?.id && job.data.sessionId === id ? job.data : undefined;
-  const busy = job.data?.busy ?? false;
-  const hasItems = (timeline.data?.items.length ?? 0) > 0;
-  return (
-    <main className="page">
-      <p className="back">
-        <Link href="/">처음으로</Link>
-      </p>
-      {session.isError && (
+  if (session.isError) {
+    return (
+      <div className="page">
         <p className="error" role="alert">
           {session.error.message}
         </p>
-      )}
-      {!s && session.isPending && <HeaderSkeleton />}
-      {s && (
+      </div>
+    );
+  }
+  if (!s) return <WorkbenchSkeleton />;
+
+  const jobHere = job.data?.id && job.data.sessionId === id ? job.data : undefined;
+  // A job that ended before this page opened is old news; one that runs or ends while watching stays to say so.
+  const showJob =
+    jobHere &&
+    (jobHere.busy || jobHere.phase !== "done" || sawJobRun || (openedJobId !== undefined && jobHere.id !== openedJobId));
+  const busy = job.data?.busy ?? false;
+  const hasResult = !!analysis.data || (timeline.data?.items.length ?? 0) > 0;
+  const itemCount = timeline.data?.items.length ?? analysis.data?.candidates.length ?? 0;
+  const peak = Math.max(0, ...(analysis.data?.windows ?? []).map((w) => w.n));
+  const tools: Tab<PanelTab>[] = [];
+  if (isVOD) {
+    tools.push({
+      id: "ai",
+      label: "AI 검토",
+      content: hasResult ? (
         <>
-          <PageBar title={s.title} shown={scrolledPast} />
-          <header ref={header}>
-            <h1 className="page-title">{s.title}</h1>
-            <p className="page-lede">
-              {s.isDemo ? "실제 방송이 아닌 예시 채팅" : `${s.platformName} ${stateText[s.state] ?? s.state}`}, 채팅 {s.chatCount.toLocaleString("ko-KR")}건, 길이{" "}
-              <span className="timecode">{timecode(s.durationMs, s.durationMs >= 3_600_000)}</span>
-              {s.watchUrl && (
-                <>
-                  {" "}
-                  <a href={s.watchUrl} target="_blank" rel="noreferrer">
-                    {s.platformName}에서 열기
-                  </a>
-                </>
-              )}
-            </p>
-          </header>
-          {s.state !== "finished" && <ResumeNotice s={s} busy={busy} />}
-          {jobHere && <JobPanel job={jobHere} showResultLink={false} />}
-          {analysis.isError && (
-            <p className="error section" role="alert">
-              {analysis.error.message}
-            </p>
-          )}
-          {analysis.data || hasItems ? (
-            <Review s={s} a={analysis.data} tl={timeline.data} busy={busy} aiSelection={aiSelection} onToggleAI={toggleAI} />
-          ) : (
-            !analysisId &&
-            s.state !== "comments_only" && <p className="empty section">아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.</p>
-          )}
-          {isVOD && <CommentsPanel s={s} busy={busy} />}
-          {isVOD && (analysis.data || hasItems) && <AIPanel s={s} selection={[...aiSelection]} />}
-          {isVOD && <AIComparePanel s={s} />}
-          <Files sessionId={s.id} analysisId={analysisId} timeline={timeline.data} updatedAt={s.updatedAt} />
+          <AIPanel s={s} selection={[...aiSelection]} />
+          <AIComparePanel s={s} />
         </>
-      )}
-    </main>
+      ) : (
+        <p className="empty">편집 후보가 생기면 고른 후보를 AI로 검토할 수 있습니다.</p>
+      ),
+    });
+    tools.push({ id: "comments", label: "댓글", content: <CommentsPanel s={s} busy={busy} /> });
+  }
+  tools.push({
+    id: "files",
+    label: "파일",
+    content: <Files sessionId={s.id} analysisId={analysisId} timeline={timeline.data} updatedAt={s.updatedAt} />,
+  });
+
+  return (
+    <div className="ws">
+      <header className="ws-head">
+        <div className="ws-heading">
+          <h1 className="ws-title">{s.title}</h1>
+          <p className="ws-meta">{s.isDemo ? "실제 방송이 아닌 예시 채팅" : sessionKindText(s)}</p>
+        </div>
+        <Stats
+          items={[
+            { label: "채팅", value: <><RollingNumber value={s.chatCount} />건</> },
+            { label: "편집 후보", value: <><RollingNumber value={itemCount} />개</> },
+            { label: "가장 활발한 10초", value: peak ? <><RollingNumber value={peak} />건</> : "-" },
+            { label: "길이", value: <span className="timecode">{timecode(s.durationMs, s.durationMs >= 3_600_000)}</span> },
+          ]}
+        />
+        {s.watchUrl && (
+          <a className="button button-quiet ws-action" href={s.watchUrl} target="_blank" rel="noreferrer">
+            {s.platformName}에서 열기
+          </a>
+        )}
+        {(s.state !== "finished" || showJob || analysis.isError) && (
+          <div className="ws-notices">
+            {s.state !== "finished" && <ResumeNotice s={s} busy={busy} />}
+            {showJob && <JobPanel job={jobHere} showResultLink={false} />}
+            {analysis.isError && (
+              <p className="error" role="alert">
+                {analysis.error.message}
+              </p>
+            )}
+          </div>
+        )}
+      </header>
+      <Review
+        s={s}
+        a={analysis.data}
+        tl={timeline.data}
+        busy={busy}
+        aiSelection={aiSelection}
+        onToggleAI={toggleAI}
+        tab={tab}
+        onTab={setTab}
+        tools={tools}
+      />
+    </div>
   );
 }
 
@@ -112,7 +161,7 @@ function ResumeNotice({ s, busy }: { s: Session; busy: boolean }) {
   if (s.state === "collecting" && busy) return null;
   const commentsOnly = s.state === "comments_only";
   return (
-    <div className="notice section">
+    <div className="notice">
       <p>
         {commentsOnly ? (
           "영상 댓글만 받은 작업입니다. 채팅도 받아 편집 후보를 찾으려면 채팅 수집을 누르세요."
@@ -148,11 +197,16 @@ interface ReviewProps {
   busy: boolean;
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
+  tab: PanelTab;
+  onTab: (tab: PanelTab) => void;
+  /** The panel's other tabs, after the candidates. */
+  tools: Tab<PanelTab>[];
 }
 
-function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
+function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: ReviewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<SourceFilter>("all");
+  // The playhead: the video's time, or without a video, the moment last chosen on the timeline or in the list.
   const [nowMs, setNowMs] = useState(0);
   const [follow, setFollow] = useState(true);
   const player = useRef<PlayerHandle>(null);
@@ -170,18 +224,28 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
   );
   const sources = [...new Set(items.map((i) => i.source))];
   const shown = filter === "all" ? items : items.filter((i) => i.source === filter);
-  const select = (itemId: string) => setSelectedId((cur) => (cur === itemId ? null : itemId));
+  const select = (itemId: string) => {
+    const on = selectedId !== itemId;
+    setSelectedId(on ? itemId : null);
+    const it = items.find((i) => i.id === itemId);
+    if (on && it && !s.canPlay) setNowMs(it.clipStartMs);
+  };
   const seek = (ms: number, itemId: string) => {
     setSelectedId(itemId);
+    setNowMs(ms);
     player.current?.seek(ms);
   };
+  const scrub = (ms: number) => {
+    setNowMs(ms);
+    player.current?.seek(ms, false);
+  };
 
-  // Chat near the playhead, fetched per 10-second step of playback.
+  // Chat near the playhead, fetched per 10-second step.
   const step = Math.floor(nowMs / 10_000) * 10_000;
   const playhead = useQuery({
     queryKey: ["chatsAt", s.id, a?.id, step],
     queryFn: () => api.chatsAt(s.id, step + 5_000, a?.id),
-    enabled: s.canPlay && s.chatCount > 0,
+    enabled: s.chatCount > 0,
     placeholderData: keepPreviousData,
   });
   const counter: Partial<Record<TimelineSource, number>> = {};
@@ -194,57 +258,14 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
         label: `${sourceLabel[i.source]} ${counter[i.source]}, ${timecode(i.anchorMs, longForm)}`,
       };
     });
+  const showTimeline = (!!a || items.length > 0) && durationMs > 0;
+  const noResult = s.state === "comments_only"
+    ? "영상 댓글에서 시각을 찾지 못했습니다. 위의 채팅 수집을 누르면 채팅으로 편집 후보를 찾습니다."
+    : "아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.";
 
-  return (
+  const candidatesPanel: ReactNode = (
     <>
-      {s.canPlay && (
-        <section className="section review-media" aria-labelledby="player-title">
-          <h2 id="player-title" className="section-title">
-            영상과 채팅
-          </h2>
-          <div className="media-grid">
-            <VideoPlayer
-              ref={player}
-              sessionId={s.id}
-              onTime={(ms) => setNowMs((prev) => (Math.abs(prev - ms) >= 250 ? ms : prev))}
-            />
-            <div className="media-chat">
-              <label className="check">
-                <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-                재생 시간에 맞춰 채팅 따라가기
-              </label>
-              <ChatList
-                chats={playhead.data?.chats ?? []}
-                currentMs={nowMs}
-                follow={follow}
-                longForm={longForm}
-                label="재생 위치 주변 채팅"
-              />
-            </div>
-          </div>
-        </section>
-      )}
-
-      <section className="section" aria-labelledby="timeline-title">
-        <h2 id="timeline-title" className="section-title">
-          반응 타임라인
-        </h2>
-        <Timeline
-          durationMs={durationMs}
-          windows={a?.windows ?? []}
-          candidates={a?.candidates ?? []}
-          extraMarkers={extraMarkers}
-          selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
-          onSelect={(markerId) => {
-            const itemId = markerId.includes(":") ? markerId : "rule:" + markerId;
-            const it = items.find((i) => i.id === itemId);
-            if (s.canPlay && it) seek(it.clipStartMs, itemId);
-            else select(itemId);
-          }}
-        />
-      </section>
-
-      <section className="section" aria-labelledby="candidates-title">
+      <section className="panel-section" aria-labelledby="candidates-title">
         <div className="section-head">
           <h2 id="candidates-title" className="section-title">
             편집 후보 <RollingNumber value={shown.length} />개
@@ -264,7 +285,11 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
           )}
         </div>
         {shown.length === 0 ? (
-          <p className="empty">반응이 몰린 구간을 찾지 못했습니다. 더 작은 반응까지 보려면 '항상 가장 민감하게'로 다시 분석하세요.</p>
+          <p className="empty">
+            {a || items.length > 0
+              ? "반응이 몰린 구간을 찾지 못했습니다. 더 작은 반응까지 보려면 '항상 가장 민감하게'로 다시 분석하세요."
+              : noResult}
+          </p>
         ) : (
           <UnifiedList
             items={shown}
@@ -282,6 +307,115 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI }: ReviewProps) {
         )}
         {a && <Reanalyze s={s} a={a} busy={busy} />}
       </section>
+      {aiSelection.size > 0 && tools.some((t) => t.id === "ai") && (
+        <p className="pick-bar">
+          <span>AI 검토에 고른 후보 {aiSelection.size}개</span>
+          <button type="button" className="link-button" onClick={() => onTab("ai")}>
+            AI 검토로 이동
+          </button>
+        </p>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <section className="ws-stage" aria-label={s.canPlay ? "영상, 채팅, 타임라인" : "채팅과 타임라인"}>
+        <div className="stage-media" data-video={s.canPlay || undefined}>
+          {s.canPlay && (
+            <div className="stage-video card">
+              <div className="card-head">
+                <h2 className="stage-title">영상</h2>
+                <span className="stage-time timecode">
+                  {timecode(nowMs, longForm)} / {timecode(durationMs, longForm)}
+                </span>
+              </div>
+              <div className="card-body card-screen">
+                <VideoPlayer
+                  ref={player}
+                  sessionId={s.id}
+                  onTime={(ms) => setNowMs((prev) => (Math.abs(prev - ms) >= 250 ? ms : prev))}
+                />
+              </div>
+            </div>
+          )}
+          <div className="stage-chat card">
+            <div className="card-head">
+              <h2 className="stage-title">{s.canPlay ? "재생 위치 채팅" : "고른 위치 채팅"}</h2>
+              {s.canPlay ? (
+                <label className="check check-inline">
+                  <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+                  따라가기
+                </label>
+              ) : (
+                <span className="stage-time timecode">{timecode(nowMs, longForm)}</span>
+              )}
+            </div>
+            <div className="card-body">
+              <ChatList
+                chats={playhead.data?.chats ?? []}
+                currentMs={nowMs}
+                follow={!s.canPlay || follow}
+                longForm={longForm}
+                label={s.canPlay ? "재생 위치 주변 채팅" : "고른 위치 주변 채팅"}
+              />
+            </div>
+            {!s.canPlay && (
+              <p className="card-foot">영상이 없는 작업입니다. 타임라인을 누르거나 후보를 고르면 그 시각 앞뒤 채팅을 보여 줍니다.</p>
+            )}
+          </div>
+        </div>
+        {showTimeline && (
+          <div className="stage-timeline card">
+            <div className="card-head">
+              <h2 id="timeline-title" className="stage-title">
+                반응 타임라인
+              </h2>
+              <span className="stage-time timecode">
+                {timecode(nowMs, longForm)} / {timecode(durationMs, longForm)}
+              </span>
+            </div>
+            <div className="card-body">
+              <Timeline
+                durationMs={durationMs}
+                windows={a?.windows ?? []}
+                candidates={a?.candidates ?? []}
+                extraMarkers={extraMarkers}
+                selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
+                onSelect={(markerId) => {
+                  const itemId = markerId.includes(":") ? markerId : "rule:" + markerId;
+                  const it = items.find((i) => i.id === itemId);
+                  if (s.canPlay && it) seek(it.clipStartMs, itemId);
+                  else select(itemId);
+                }}
+                playheadMs={nowMs}
+                onScrub={scrub}
+                scrubLabel={s.canPlay ? "재생 위치" : "채팅 볼 위치"}
+              />
+            </div>
+          </div>
+        )}
+      </section>
+      <aside className="ws-panel" aria-label="작업 도구">
+        <Tabs
+          label="작업 도구"
+          className="panel-tabs"
+          value={tab}
+          onChange={onTab}
+          tabs={[
+            {
+              id: "candidates",
+              label: (
+                <>
+                  후보 <span className="tab-count">{items.length}</span>
+                </>
+              ),
+              content: candidatesPanel,
+            },
+            ...tools,
+          ]}
+        />
+      </aside>
     </>
   );
 }
@@ -356,7 +490,7 @@ function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: stri
     .filter((f) => labelOf(f) !== null)
     .sort((x, y) => groupOf(x) - groupOf(y) || x.path.localeCompare(y.path));
   return (
-    <section className="section" aria-labelledby="files-title">
+    <section className="panel-section" aria-labelledby="files-title">
       <h2 id="files-title" className="section-title">
         내보내기
       </h2>
@@ -381,16 +515,5 @@ function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: stri
         </p>
       )}
     </section>
-  );
-}
-
-/** The page's shape while the session loads: title, facts line and timeline. */
-export function HeaderSkeleton() {
-  return (
-    <div className="skeleton-page" aria-busy="true" aria-label="작업을 불러오는 중">
-      <span className="skeleton skeleton-heading" aria-hidden="true" />
-      <span className="skeleton skeleton-line" aria-hidden="true" />
-      <span className="skeleton skeleton-block" aria-hidden="true" />
-    </div>
   );
 }

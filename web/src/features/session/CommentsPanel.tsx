@@ -31,7 +31,7 @@ export function CommentsPanel({ s, busy }: { s: Session; busy: boolean }) {
   const c = comments.data;
   const failed = read.error ?? paste.error;
   return (
-    <section className="section" aria-labelledby="comments-title">
+    <section className="panel-section" aria-labelledby="comments-title">
       <h2 id="comments-title" className="section-title">
         시청자 추천 (영상 댓글)
       </h2>

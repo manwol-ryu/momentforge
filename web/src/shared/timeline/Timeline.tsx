@@ -16,6 +16,12 @@ interface Props {
   gaps?: Gap[];
   /** Moments from other sources (viewer comments, AI), drawn as their own markers. */
   extraMarkers?: { id: string; ms: number; kind: "viewer_comment" | "ai"; label: string }[];
+  /** The playhead: where the video (or, without one, the chat view) is. */
+  playheadMs?: number;
+  /** Moves the playhead; the track becomes a slider for pointer and keyboard. */
+  onScrub?: (ms: number) => void;
+  /** Accessible name of that slider. */
+  scrubLabel?: string;
 }
 
 const BAR_AREA = 64; // px, matches .timeline-bars height
@@ -24,7 +30,8 @@ const BAR_AREA = 64; // px, matches .timeline-bars height
  * Reaction density over the whole timeline: one bar per evaluation step
  * (messages in the 10 s window), candidate ranges as bands, and a marker
  * per candidate at its peak. Markers are buttons, so the timeline is usable
- * with a keyboard as well as a pointer.
+ * with a keyboard as well as a pointer. With a playhead, a line shows it and
+ * a see-through slider over the track moves it, like an editor's timeline.
  */
 export function Timeline({
   durationMs,
@@ -36,6 +43,9 @@ export function Timeline({
   windowMs = 10_000,
   gaps = [],
   extraMarkers = [],
+  playheadMs,
+  onScrub,
+  scrubLabel = "재생 위치",
 }: Props) {
   const maxN = Math.max(1, ...windows.map((w) => w.n));
   const pct = (ms: number) => `${(Math.min(Math.max(ms, 0), durationMs) / durationMs) * 100}%`;
@@ -85,6 +95,20 @@ export function Timeline({
             style={{ left: pct(c.reactionStartMs), width: pct(c.reactionEndMs - c.reactionStartMs) }}
           />
         ))}
+        {playheadMs !== undefined && <div className="timeline-playhead" style={{ left: pct(playheadMs) }} aria-hidden="true" />}
+        {onScrub && (
+          <input
+            type="range"
+            className="timeline-scrub"
+            min={0}
+            max={durationMs}
+            step={5000}
+            value={Math.min(Math.max(playheadMs ?? 0, 0), durationMs)}
+            onChange={(e) => onScrub(Number(e.target.value))}
+            aria-label={scrubLabel}
+            aria-valuetext={timecode(playheadMs ?? 0, longForm)}
+          />
+        )}
       </div>
       <div className="timeline-markers">
         {candidates.map((c, i) => (

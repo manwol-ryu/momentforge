@@ -178,7 +178,7 @@ export function AIPanel({ s, selection }: Props) {
   const plan = preview?.plan;
   const needsCap = mode === "all" && capValue === undefined;
   return (
-    <section className="section" aria-labelledby="ai-title">
+    <section className="panel-section" aria-labelledby="ai-title">
       <h2 id="ai-title" className="section-title">
         선택형 AI 검토
       </h2>

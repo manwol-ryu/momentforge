@@ -6,75 +6,70 @@ import { useAppState } from "../../shared/appState";
 import { CandidateList } from "../../shared/candidates/CandidateList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
-import { PageBar, useScrolledPast } from "../../shared/motion/PageBar";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
-import { Link } from "../../shared/navigation";
+import { Stats } from "../../shared/motion/Stats";
+import { Tabs } from "../../shared/motion/Tabs";
+import { useDocumentTitle } from "../../shared/navigation";
+import { liveStateText } from "../../shared/sessionText";
+import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { LiveChatLog } from "./LiveChatLog";
 import { useLiveFeed } from "./useLiveFeed";
 
-export const liveStateText: Record<LiveState, string> = {
-  starting: "연결 준비 중",
-  collecting: "채팅 수신 중",
-  reconnecting: "재연결 중",
-  stopping: "남은 자료 저장 중",
-  stopped: "중단됨",
-  ended: "방송 종료",
-  error: "확인 필요",
-  incomplete: "저장 상태 확인 필요",
-};
-
 const viewerText = { active: "적용 중", warming_up: "학습 중", missing: "자료 부족", "": "준비 중" } as const;
 
+type PanelTab = "candidates" | "status" | "files";
+
+/**
+ * A LIVE capture as a workbench: state and controls on top, the incoming
+ * chat and the reaction timeline held in view, and candidates, capture
+ * state and files in tabs beside them.
+ */
 export function LiveView({ id }: { id: string }) {
   const status = useQuery({ queryKey: ["live", id], queryFn: () => api.liveStatus(id) });
   const feed = useLiveFeed(id);
+  const [tab, setTab] = useState<PanelTab>("candidates");
   useAppState(status.isSuccess && feed.loaded ? "ready" : status.isError ? "error" : "loading");
   const v = status.data;
-  const [header, scrolledPast] = useScrolledPast();
+  useDocumentTitle(v?.session.title);
 
-  return (
-    <main className="page">
-      <p className="back">
-        <Link href="/">처음으로</Link>
-      </p>
-      {status.isError && (
+  if (status.isError) {
+    return (
+      <div className="page">
         <p className="error" role="alert">
           {status.error.message}
         </p>
-      )}
-      {v && (
-        <>
-          <PageBar title={v.session.title} shown={scrolledPast}>
-            <span className="bar-state" data-state={v.session.state}>
+      </div>
+    );
+  }
+  if (!v) return <WorkbenchSkeleton />;
+  return (
+    <div className="ws ws-live">
+      <header className="ws-head">
+        <div className="ws-heading">
+          <h1 className="ws-title">{v.session.title}</h1>
+          <p className="ws-meta">
+            {v.session.platformName} 생방송,{" "}
+            <span className="live-state" data-state={v.session.state}>
               {liveStateText[v.session.state as LiveState] ?? v.session.state}
             </span>
-          </PageBar>
-          <header ref={header}>
-            <h1 className="page-title">{v.session.title}</h1>
-            <p className="page-lede">
-              {v.session.platformName} 생방송,{" "}
-              <span className="live-state" data-state={v.session.state}>
-                {liveStateText[v.session.state as LiveState] ?? v.session.state}
-              </span>
-              , 채팅 <RollingNumber value={v.session.chatCount} />건
-              {v.session.watchUrl && (
-                <>
-                  {" "}
-                  <a href={v.session.watchUrl} target="_blank" rel="noreferrer">
-                    {v.session.platformName}에서 열기
-                  </a>
-                </>
-              )}
-            </p>
-          </header>
-          <Controls v={v} />
-          <Workspace v={v} feed={feed} />
-          <Facts v={v} />
-          <Files v={v} />
-        </>
-      )}
-    </main>
+          </p>
+        </div>
+        <Stats
+          items={[
+            { label: "채팅", value: <><RollingNumber value={v.session.chatCount} />건</> },
+            { label: "편집 후보", value: <><RollingNumber value={feed.candidates.length} />개</> },
+            { label: "시청자", value: v.viewerCount !== null ? <><RollingNumber value={v.viewerCount} />명</> : "-" },
+            {
+              label: "분석한 위치",
+              value: <span className="timecode">{timecode(v.watermarkMs, v.watermarkMs >= 3_600_000)}</span>,
+            },
+          ]}
+        />
+        <Controls v={v} />
+      </header>
+      <Workspace v={v} feed={feed} tab={tab} onTab={setTab} />
+    </div>
   );
 }
 
@@ -93,13 +88,8 @@ function Controls({ v }: { v: LiveStatus }) {
   const message = v.session.errorMessage ?? (v.running ? undefined : v.closedReason);
   const failed = stop.error ?? resume.error ?? save.error;
   return (
-    <div className="live-controls section">
-      {message && (
-        <p className={v.session.state === "error" || v.session.state === "incomplete" ? "error" : "notice"} role="status">
-          {message}
-        </p>
-      )}
-      <p className="actions">
+    <>
+      <p className="ws-action actions">
         {v.running ? (
           <button type="button" className="button" onClick={() => stop.mutate()} disabled={stop.isPending || v.session.state === "stopping"}>
             수집 중단
@@ -114,22 +104,43 @@ function Controls({ v }: { v: LiveStatus }) {
         <button type="button" className="button button-quiet" onClick={() => save.mutate()} disabled={save.isPending}>
           현재까지 저장
         </button>
+        {v.session.watchUrl && (
+          <a className="button button-quiet" href={v.session.watchUrl} target="_blank" rel="noreferrer">
+            {v.session.platformName}에서 열기
+          </a>
+        )}
       </p>
-      {save.data && (
-        <p className="field-help" role="status">
-          채팅 {save.data.eventCount.toLocaleString("ko-KR")}건과 편집 후보를 저장했습니다. 아래 내보내기에서 받을 수 있습니다.
-        </p>
+      {(message || save.data || failed) && (
+        <div className="ws-notices">
+          {message && (
+            <p className={v.session.state === "error" || v.session.state === "incomplete" ? "error" : "notice"} role="status">
+              {message}
+            </p>
+          )}
+          {save.data && (
+            <p className="field-help" role="status">
+              채팅 {save.data.eventCount.toLocaleString("ko-KR")}건과 편집 후보를 저장했습니다. 파일 탭에서 받을 수 있습니다.
+            </p>
+          )}
+          {failed && (
+            <p className="error" role="alert">
+              {failed.message}
+            </p>
+          )}
+        </div>
       )}
-      {failed && (
-        <p className="error" role="alert">
-          {failed.message}
-        </p>
-      )}
-    </div>
+    </>
   );
 }
 
-function Workspace({ v, feed }: { v: LiveStatus; feed: ReturnType<typeof useLiveFeed> }) {
+interface WorkspaceProps {
+  v: LiveStatus;
+  feed: ReturnType<typeof useLiveFeed>;
+  tab: PanelTab;
+  onTab: (tab: PanelTab) => void;
+}
+
+function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const select = (cid: string) => setSelectedId((cur) => (cur === cid ? null : cid));
   // The density timeline refreshes per 10 s of analysed broadcast, not per event.
@@ -145,60 +156,91 @@ function Workspace({ v, feed }: { v: LiveStatus; feed: ReturnType<typeof useLive
 
   return (
     <>
-      <section className="section" aria-labelledby="live-timeline-title">
-        <h2 id="live-timeline-title" className="section-title">
-          반응 타임라인
-        </h2>
-        <p className="field-help">
-          {basis} 경과 시간입니다. 빗금은 채팅을 받지 못한 구간이고, 분석은{" "}
-          <span className="timecode">{timecode(v.watermarkMs, longForm)}</span>까지 끝났습니다.
-        </p>
-        <Timeline
-          durationMs={durationMs}
-          windows={density.data?.windows ?? []}
-          stepMs={density.data?.bucketMs ?? 5000}
-          windowMs={density.data?.bucketMs ?? 5000}
-          gaps={v.gaps}
-          candidates={feed.candidates}
-          selectedId={selectedId}
-          onSelect={select}
-        />
-      </section>
-
-      <div className="live-grid section">
-        <section aria-labelledby="live-chat-title">
-          <h2 id="live-chat-title" className="section-title">
-            실시간 채팅
-          </h2>
-          <LiveChatLog chats={feed.chats} longForm={longForm} />
-          <p className="field-help">
-            &lsquo;늦게 받음&rsquo;은 연결 전에 보냈거나 분석이 지난 뒤 도착한 채팅입니다. 저장은 하지만 확정한 후보 계산에는 넣지
-            않습니다.
-          </p>
-        </section>
-        <section aria-labelledby="live-candidates-title">
-          <h2 id="live-candidates-title" className="section-title">
-            편집 후보 <RollingNumber value={feed.candidates.length} />개
-          </h2>
-          <CandidateList
-            candidates={feed.candidates}
-            selectedId={selectedId}
-            onSelect={select}
-            longForm={longForm}
-            emptyText={
-              v.running
-                ? "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
-                : "반응이 몰린 구간을 찾지 못했습니다."
-            }
-            renderDetail={(c) => <CandidateContext sessionId={v.session.id} c={c} longForm={longForm} />}
-          />
-          {feed.error && (
-            <p className="error" role="alert">
-              {feed.error.message}
+      <section className="ws-stage" aria-label="실시간 채팅과 타임라인">
+        <div className="stage-media">
+          <div className="stage-chat card">
+            <div className="card-head">
+              <h2 id="live-chat-title" className="stage-title">
+                실시간 채팅
+              </h2>
+              <span className="stage-time">새 채팅이 아래에 쌓입니다</span>
+            </div>
+            <div className="card-body">
+              <LiveChatLog chats={feed.chats} longForm={longForm} />
+            </div>
+            <p className="card-foot">
+              &lsquo;늦게 받음&rsquo;은 연결 전에 보냈거나 분석이 지난 뒤 도착한 채팅입니다. 저장하지만 확정한 후보 계산에는 넣지 않습니다.
             </p>
-          )}
-        </section>
-      </div>
+          </div>
+        </div>
+        <div className="stage-timeline card">
+          <div className="card-head">
+            <h2 id="live-timeline-title" className="stage-title">
+              반응 타임라인
+            </h2>
+            <span className="stage-time">
+              {basis} 경과 시간, 분석 <span className="timecode">{timecode(v.watermarkMs, longForm)}</span>까지
+            </span>
+          </div>
+          <div className="card-body">
+            <Timeline
+              durationMs={durationMs}
+              windows={density.data?.windows ?? []}
+              stepMs={density.data?.bucketMs ?? 5000}
+              windowMs={density.data?.bucketMs ?? 5000}
+              gaps={v.gaps}
+              candidates={feed.candidates}
+              selectedId={selectedId}
+              onSelect={select}
+            />
+          </div>
+          {v.gaps.length > 0 && <p className="card-foot">빗금은 채팅을 받지 못한 구간입니다.</p>}
+        </div>
+      </section>
+      <aside className="ws-panel" aria-label="작업 도구">
+        <Tabs
+          label="작업 도구"
+          className="panel-tabs"
+          value={tab}
+          onChange={onTab}
+          tabs={[
+            {
+              id: "candidates",
+              label: (
+                <>
+                  후보 <span className="tab-count">{feed.candidates.length}</span>
+                </>
+              ),
+              content: (
+                <section className="panel-section" aria-labelledby="live-candidates-title">
+                  <h2 id="live-candidates-title" className="section-title">
+                    편집 후보 <RollingNumber value={feed.candidates.length} />개
+                  </h2>
+                  <CandidateList
+                    candidates={feed.candidates}
+                    selectedId={selectedId}
+                    onSelect={select}
+                    longForm={longForm}
+                    emptyText={
+                      v.running
+                        ? "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
+                        : "반응이 몰린 구간을 찾지 못했습니다."
+                    }
+                    renderDetail={(c) => <CandidateContext sessionId={v.session.id} c={c} longForm={longForm} />}
+                  />
+                  {feed.error && (
+                    <p className="error" role="alert">
+                      {feed.error.message}
+                    </p>
+                  )}
+                </section>
+              ),
+            },
+            { id: "status", label: "수집 상태", content: <Facts v={v} /> },
+            { id: "files", label: "파일", content: <Files v={v} /> },
+          ]}
+        />
+      </aside>
     </>
   );
 }
@@ -230,7 +272,7 @@ function Facts({ v }: { v: LiveStatus }) {
   const longForm = v.watermarkMs >= 3_600_000;
   const gapMs = v.gaps.reduce((sum, g) => sum + g.endMs - g.startMs, 0);
   return (
-    <section className="section" aria-labelledby="live-facts-title">
+    <section className="panel-section" aria-labelledby="live-facts-title">
       <h2 id="live-facts-title" className="section-title">
         수집 상태
       </h2>
@@ -304,7 +346,7 @@ function Files({ v }: { v: LiveStatus }) {
     .filter((f) => name(f) in fileLabel && (!f.path.includes("/") || f.path === `checkpoints/${latest}/${name(f)}`))
     .sort((a, b) => order.indexOf(name(a)) - order.indexOf(name(b)));
   return (
-    <section className="section" aria-labelledby="live-files-title">
+    <section className="panel-section" aria-labelledby="live-files-title">
       <h2 id="live-files-title" className="section-title">
         내보내기
       </h2>

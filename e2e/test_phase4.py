@@ -36,14 +36,16 @@ def open_video(page: Page, base_url: str, title: str, url: str) -> None:
 def test_vod_comments_join_the_unified_timeline(page: Page, base_url: str) -> None:
     open_video(page, base_url, "E2E 가짜 다시보기 7", VIDEO)
     expect(page.get_by_role("heading", level=1, name="E2E 가짜 다시보기 7")).to_be_visible()
-    expect(page.locator(".comments-summary")).to_contain_text("영상 댓글 4개에서 시각 2개를 찾았습니다")
     viewer = page.locator("ol.candidates > li[data-source='viewer_comment']")
     expect(viewer).to_have_count(2)
     expect(viewer.first).to_contain_text("웃음 터짐")
     expect(viewer.first).to_contain_text("영상 댓글: 12:00 웃음 터짐")
     expect(page.locator("ol.candidates > li[data-source='rule']").first).to_contain_text("웃음 증가")
     expect(page.get_by_role("button", name="시청자 추천 1, 12:00")).to_be_visible()
+    page.get_by_role("tab", name="댓글").click()
+    expect(page.locator(".comments-summary")).to_contain_text("영상 댓글 4개에서 시각 2개를 찾았습니다")
     expect(page.get_by_text("확인이 필요한 시각 1개")).to_be_visible()
+    page.get_by_role("tab", name=re.compile("^후보")).click()
 
     page.get_by_role("radio", name="시청자 추천").check()
     expect(page.get_by_role("heading", name="편집 후보 2개")).to_be_visible()
@@ -51,6 +53,7 @@ def test_vod_comments_join_the_unified_timeline(page: Page, base_url: str) -> No
     page.get_by_role("radio", name="모든 출처").check()
     page.screenshot(path=str(SHOTS / "phase4-session.png"), full_page=True)
 
+    page.get_by_role("tab", name="파일").click()
     with page.expect_download() as info:
         page.get_by_role("button", name="통합 timeline.txt").click()
     text = Path(info.value.path()).read_text(encoding="utf-8")
@@ -64,6 +67,10 @@ def test_vod_comments_join_the_unified_timeline(page: Page, base_url: str) -> No
 def test_ai_review_is_previewed_then_confirmed(page: Page, base_url: str) -> None:
     open_video(page, base_url, "E2E 가짜 다시보기 7", VIDEO)
     page.locator("ol.candidates > li").first.get_by_label("AI 검토에 포함").check()
+    # The candidates picked for the review lead to its tab.
+    expect(page.get_by_text("AI 검토에 고른 후보 1개")).to_be_visible()
+    page.get_by_role("button", name="AI 검토로 이동").click()
+    expect(page.get_by_role("tab", name="AI 검토")).to_have_attribute("aria-selected", "true")
     page.get_by_label("AI 제공자").select_option(label="E2E 가짜 AI")
     page.get_by_label("모델 ID").fill("e2e-model")
     page.get_by_label(re.compile("E2E 가짜 AI API 키")).fill("test-key")
@@ -79,7 +86,9 @@ def test_ai_review_is_previewed_then_confirmed(page: Page, base_url: str) -> Non
 
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=10_000)
+    page.get_by_role("tab", name=re.compile("^후보")).click()
     expect(page.locator("ol.candidates > li[data-source='ai']").first).to_contain_text("가짜 AI 추천")
+    page.get_by_role("tab", name="파일").click()
     expect(page.get_by_role("button", name="AI recommendations.txt")).to_be_visible()
 
 
@@ -95,8 +104,8 @@ def test_comments_only_then_chat_and_hide_restore(page: Page, base_url: str) -> 
     expect(page.locator("ol.candidates > li[data-source='rule']").first).to_be_visible(timeout=30_000)
     expect(page.get_by_text("영상 댓글만 받은 작업입니다")).to_have_count(0)
 
-    page.get_by_role("link", name="처음으로").click()
-    page.wait_for_selector(READY, timeout=10_000)
+    # Hiding and showing the list is tucked under 목록 정리 in the sidebar.
+    page.get_by_text("목록 정리").click()
     page.get_by_role("button", name="목록에서 모두 숨기기").click()
     expect(page.get_by_text(re.compile(r"\d+개 작업을 목록에서 숨겼습니다"))).to_be_visible()
     expect(page.locator(".session-row")).to_have_count(0)

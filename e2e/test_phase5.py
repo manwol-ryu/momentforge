@@ -20,6 +20,7 @@ def test_claude_is_the_default_provider(page: Page, base_url: str) -> None:
     open_home(page, base_url)
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="AI 검토").click()
     provider = page.get_by_label("AI 제공자")
     expect(provider.locator("option:checked")).to_have_text("Claude (Anthropic)")
     expect(page.get_by_label("모델 ID")).to_have_value("claude-opus-5-5")
@@ -37,6 +38,7 @@ def save_key(page: Page, provider: str) -> None:
 
 def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> None:
     open_video(page, base_url, "E2E 가짜 다시보기 9", VIDEO)
+    page.get_by_role("tab", name="AI 검토").click()
 
     # Every candidate, as one batch, within a cost cap.
     save_key(page, "E2E 가짜 AI")
@@ -63,9 +65,11 @@ def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> N
     # The same candidates by the second provider, one request at a time.
     save_key(page, "E2E 가짜 AI 2")
     page.get_by_label("모든 후보 자동 선택", exact=False).wait_for(state="detached")  # no prices: no automatic selection
+    page.get_by_role("tab", name=re.compile("^후보")).click()
     rule_items = page.locator("ol.candidates > li:not([data-source='ai'])")
     for i in range(rule_items.count()):
         rule_items.nth(i).get_by_label("AI 검토에 포함").check()
+    page.get_by_role("button", name="AI 검토로 이동").click()
     page.get_by_role("button", name="보낼 내용 미리보기").click()
     expect(page.locator(".ai-preview")).to_contain_text("이 모델의 가격 정보가 없어")
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
@@ -89,6 +93,7 @@ def test_opencode_go_uses_its_own_login(page: Page, base_url: str) -> None:
     open_home(page, base_url)
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="AI 검토").click()
     page.get_by_label("AI 제공자").select_option(label="OpenCode Go")
     expect(page.get_by_label("모델 ID")).to_have_value(re.compile(r"^opencode-go/"))
     expect(page.locator(".ai-auth")).to_contain_text("OpenCode CLI(opencode)를 찾지 못했습니다")

@@ -1,15 +1,16 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Session } from "../../api/types";
 import { Link, navigate } from "../../shared/navigation";
+import type { UrlFieldProps } from "./Home";
 
 /** Checks a channel and starts a LIVE capture; the capture opens in its own view. */
-export function LiveForm({ running }: { running?: Session }) {
+export function LiveForm({ url, onUrl, onPaste, focus, moved, hint, running }: UrlFieldProps & { running?: Session }) {
   const queryClient = useQueryClient();
-  const [url, setUrl] = useState("");
   const [sensitive, setSensitive] = useState(false);
   const [viewerAdaptive, setViewerAdaptive] = useState(true);
+  const input = useRef<HTMLInputElement>(null);
   const inspect = useMutation({ mutationFn: () => api.inspectLive(url.trim()) });
   const start = useMutation({
     mutationFn: () => api.startLive(url.trim(), sensitive, viewerAdaptive),
@@ -18,6 +19,12 @@ export function LiveForm({ running }: { running?: Session }) {
       navigate(`/live/${s.id}`);
     },
   });
+  useEffect(() => {
+    if (focus) input.current?.focus();
+  }, [focus]);
+  // A changed address makes the last check stale.
+  const resetInspect = inspect.reset;
+  useEffect(() => resetInspect(), [url, resetInspect]);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     start.mutate();
@@ -27,6 +34,11 @@ export function LiveForm({ running }: { running?: Session }) {
 
   return (
     <form className="collect" onSubmit={submit} aria-label="생방송 수집">
+      {moved && (
+        <p className="moved" role="status">
+          생방송 주소라서 생방송 수집으로 옮겼습니다.
+        </p>
+      )}
       {running && (
         <p className="notice">
           지금 <Link href={`/live/${running.id}`}>{running.title}</Link> 생방송을 수집하고 있습니다. 다른 방송은 이 수집을 중단한 뒤
@@ -36,18 +48,18 @@ export function LiveForm({ running }: { running?: Session }) {
       <label className="field">
         <span className="field-label">치지직 생방송 주소</span>
         <input
+          ref={input}
           type="url"
           inputMode="url"
           required
           placeholder="https://chzzk.naver.com/live/채널ID"
           value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            inspect.reset();
-          }}
+          onChange={(e) => onUrl(e.target.value)}
+          onPaste={(e) => onPaste(e.clipboardData.getData("text"))}
           aria-describedby="live-help"
         />
       </label>
+      {hint}
       <label className="check">
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
         항상 가장 민감하게 (10초에 채팅 6건부터 판정)

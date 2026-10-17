@@ -61,6 +61,7 @@ interface ItemProps {
 
 /** One detected candidate: time, reasons, peak numbers and, when selected, its evidence. */
 export function CandidateItem({ c, index, order, selected, onSelect, longForm = false, badge, renderActions, renderDetail }: ItemProps) {
+  const topCount = Math.max(1, ...c.evidence.map((e) => e.count));
   return (
     <li className="candidate" data-selected={selected || undefined} data-source="rule" style={{ "--i": order ?? index } as CSSProperties}>
       <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(c.id)}>
@@ -89,9 +90,11 @@ export function CandidateItem({ c, index, order, selected, onSelect, longForm = 
       {selected && (
         <div className="evidence">
           <p className="evidence-title">근거 채팅 {c.evidenceTotal}건, 많이 나온 문장 순</p>
-          <ul>
+          <ul className="bar-list">
             {c.evidence.map((e, j) => (
-              <li key={j}>
+              <li key={j} className="bar-row">
+                {/* Behind each line, a bar as long as its share of the most repeated one. */}
+                <span className="bar-fill" style={{ "--p": e.count / topCount } as CSSProperties} aria-hidden="true" />
                 <span className="evidence-text">{e.text}</span> <span className="evidence-count">{e.count}건</span>{" "}
                 <span className="evidence-first">
                   처음 <span className="timecode">{timecode(e.offsetMs, longForm)}</span>

@@ -34,3 +34,10 @@ export function Link({ href, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchor
   };
   return <a href={href} onClick={handle} {...rest} />;
 }
+
+/** The browser tab's title: the page's name, then the app's. */
+export function useDocumentTitle(title: string | undefined) {
+  useEffect(() => {
+    document.title = title ? `${title} - MomentForge` : "MomentForge";
+  }, [title]);
+}

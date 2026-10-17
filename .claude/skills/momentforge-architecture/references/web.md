@@ -15,7 +15,7 @@
 - Vite + React + TypeScript `strict`. `any`를 쓰지 않습니다. 서버 응답 타입은 `web/src/api/types.ts`에 둡니다.
 - 서버 상태는 TanStack Query로만 가져옵니다. 컴포넌트에서 `fetch`를 직접 호출하지 않습니다.
 - 실시간 데이터는 `useEvents` 훅 하나로 SSE를 구독합니다. `setInterval` 폴링을 만들지 않습니다.
-- 기능별 폴더: `web/src/features/{vod,live,timeline,ai,settings}/`. 기능끼리 서로 import하지 않고, 공용 코드는 `web/src/shared/`에 둡니다.
+- 기능별 폴더: `web/src/features/{home,session,live}/`. 기능끼리 서로 import하지 않고, 공용 코드는 `web/src/shared/`에 둡니다. 앱 틀(작업 목록 사이드바·휴대폰 서랍)은 `web/src/app/`에 두며 `shared`만 씁니다. 화면을 고르고 틀에 넣는 일은 `main.tsx`만 합니다.
 - 긴 채팅 목록은 가상 스크롤을 씁니다.
 - HLS 재생은 npm `hls.js`를 씁니다.
 - 빌드 결과(`web/dist`)는 Go `embed`로 실행파일에 들어갑니다. 실행 중에 외부 CDN에서 스크립트·서체를 불러오지 않습니다 (로컬 앱 원칙).
@@ -25,8 +25,8 @@
 - 화면을 만들기 전에 `docs/DESIGN-SYSTEM.md`가 있는지 확인합니다. 없으면 frontend-design 스킬의 절차(계획 → 기본값 점검 → 구현 → 스크린샷 점검)로 먼저 작성하고 사용자에게 확인받습니다.
 - 색·서체·간격·모서리 반경은 디자인 시스템의 CSS 변수로만 씁니다. 컴포넌트에 hex 값이나 임의의 px 값을 직접 쓰지 않습니다.
 - 라이트·다크 모드를 모두 지원합니다.
-- 눈에 띄는 요소는 반응 밀도 타임라인 하나로 두고, 나머지는 절제합니다.
-- 움직임은 상태 변화(사용자 동작, 새 데이터, 진행 중인 작업)에만 씁니다. 장식용 반복 애니메이션은 넣지 않습니다. 토큰(`--ease-*`, `--dur-*`)과 `web/src/shared/motion/`의 공용 컴포넌트(`Segmented`, `RollingNumber`, `PageBar`, `RevealWords`)를 먼저 씁니다. 규칙과 적용 목록은 `docs/DESIGN-SYSTEM.md` 8절에 있습니다.
+- 눈에 띄는 요소는 반응 밀도 타임라인 하나로 두고, 나머지는 절제합니다. 영역은 Tracwell식 카드 셸(`.card` > `.card-head` + `.card-body`), 시트(`.sheet`, `.panel-section`), 떠 있는 틀(`.frame`)로 나누고 새 카드 모양을 만들지 않습니다. 출처 색은 자동 탐지 `--marker`, 시청자 추천 `--viewer`, AI `--ai`로 마커·구간·배지·선택 행에 같게 씁니다.
+- 움직임은 상태 변화(사용자 동작, 새 데이터, 진행 중인 작업)에만 씁니다. 장식용 반복 애니메이션은 넣지 않습니다. 토큰(`--ease-*`, `--dur-*`)과 `web/src/shared/motion/`의 공용 컴포넌트(`Segmented`, `Tabs`, `Stats`, `RollingNumber`, `RevealWords`)를 먼저 씁니다. 규칙과 적용 목록은 `docs/DESIGN-SYSTEM.md` 8절에 있습니다.
 - `prefers-reduced-motion`을 지킵니다. 전역 규칙이 길이·지연·반복을 없애므로, 새 애니메이션도 그 규칙에 기대도록 `animation`/`transition` 속성으로 만듭니다(JS 타이머로 움직이지 않음).
 
 ## 3. 접근성과 테스트 표시

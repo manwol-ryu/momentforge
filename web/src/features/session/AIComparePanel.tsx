@@ -75,7 +75,7 @@ export function AIComparePanel({ s }: { s: Session }) {
     : [];
 
   return (
-    <section className="section" aria-labelledby="ai-compare-title">
+    <section className="panel-section" aria-labelledby="ai-compare-title">
       <h2 id="ai-compare-title" className="section-title">
         AI 결과 비교
       </h2>

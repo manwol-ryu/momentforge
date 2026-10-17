@@ -2,8 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { api, ApiError } from "../../api/client";
 
 export interface PlayerHandle {
-  /** Moves the playhead to ms and starts playing. */
-  seek(ms: number): void;
+  /** Moves the playhead to ms and, unless play is false, starts playing. */
+  seek(ms: number, play?: boolean): void;
 }
 
 interface Props {
@@ -25,10 +25,11 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
   const [state, setState] = useState<State>({ kind: "loading" });
 
   useImperativeHandle(ref, () => ({
-    seek(ms: number) {
+    seek(ms: number, play = true) {
       const v = video.current;
       if (!v) return;
       v.currentTime = ms / 1000;
+      if (!play) return; // scrubbing the timeline only moves the position
       void v.play().catch(() => undefined); // autoplay may be blocked; the position still moves
       // A candidate far down the list would otherwise play out of sight.
       const r = v.getBoundingClientRect();
