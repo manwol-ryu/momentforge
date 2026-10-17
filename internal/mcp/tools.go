@@ -67,7 +67,13 @@ func chatsMarkdown(list []chatJSON) string {
 }
 
 func pageLine(p pageOut) string {
-	line := fmt.Sprintf("전체 %d개 중 %d~%d번째", p.Total, p.Offset+min(1, p.Count), p.Offset+p.Count)
+	if p.Total == 0 {
+		return "결과가 없습니다.\n"
+	}
+	if p.Count == 0 {
+		return fmt.Sprintf("전체 %d개, 이 cursor 뒤로는 더 없습니다.\n", p.Total)
+	}
+	line := fmt.Sprintf("전체 %d개 중 %d~%d번째", p.Total, p.Offset+1, p.Offset+p.Count)
 	if p.HasMore {
 		line += fmt.Sprintf(", 다음 쪽 cursor=%s", p.NextCursor)
 	}

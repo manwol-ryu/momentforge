@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Candidate, ExportFile, LiveState, LiveStatus } from "../../api/types";
@@ -79,6 +79,9 @@ function Controls({ v }: { v: LiveStatus }) {
     mutationFn: () => api.liveCheckpoint(v.session.id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["liveFiles", v.session.id] }),
   });
+  // Stopping or resuming saves again, so an earlier "saved" notice would be stale.
+  const resetSave = save.reset;
+  useEffect(() => resetSave(), [v.running, resetSave]);
   const message = v.session.errorMessage ?? (v.running ? undefined : v.closedReason);
   const failed = stop.error ?? resume.error ?? save.error;
   return (
@@ -237,7 +240,7 @@ function Facts({ v }: { v: LiveStatus }) {
         <dd>
           {v.gaps.length > 0 ? (
             <>
-              {v.gaps.length}개, 모두 <span className="timecode">{timecode(gapMs, longForm)}</span>
+              {v.gaps.length}개, 합계 <span className="timecode">{timecode(gapMs, longForm)}</span>
             </>
           ) : (
             "없음"

@@ -209,7 +209,7 @@ export function AIPanel({ s, selection }: Props) {
           <div className="field">
             <span className="field-label">로그인</span>
             <span className="ai-auth" data-ready={current.configured || undefined}>
-              {current.configured ? `${current.name} 로그인 사용` : current.notReady}
+              {current.configured ? "자체 로그인으로 보냄 (계정과 구독은 실행할 때 확인)" : current.notReady}
             </span>
           </div>
         ) : (

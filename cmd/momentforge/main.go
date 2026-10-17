@@ -30,9 +30,9 @@ func main() {
 const usage = `MomentForge — 방송 채팅에서 편집할 순간을 찾는 로컬 앱
 
 사용법:
-  momentforge [serve] [옵션]   로컬 서버를 실행하고 브라우저를 엽니다
-  momentforge mcp [--data 폴더] 수집한 데이터를 MCP 클라이언트(Claude 등)에 읽기 전용으로 엽니다
-  momentforge version          버전을 출력합니다
+  momentforge [serve] [옵션]     로컬 서버를 실행하고 브라우저를 엽니다
+  momentforge mcp [--data 폴더]  수집한 데이터를 MCP 클라이언트(Claude 등)에 읽기 전용으로 엽니다
+  momentforge version            버전을 출력합니다
 
 serve 옵션:
   --port 8765          사용할 포트 (127.0.0.1에만 열립니다)

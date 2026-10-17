@@ -47,7 +47,12 @@ export function UnifiedList({
   const actions = (it: TimelineItem) => (
     <>
       {canPlay && (
-        <button type="button" className="link-button" onClick={() => onSeek(it.clipStartMs, it.id)}>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => onSeek(it.clipStartMs, it.id)}
+          aria-label={`${timecode(it.clipStartMs, longForm)}부터 영상에서 보기`}
+        >
           영상에서 보기
         </button>
       )}

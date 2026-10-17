@@ -54,7 +54,7 @@ export function LiveForm({ running }: { running?: Session }) {
       </label>
       <label className="check">
         <input type="checkbox" checked={viewerAdaptive} onChange={(e) => setViewerAdaptive(e.target.checked)} />
-        시청자 수 변화 보정 (시청자가 크게 늘거나 줄면 평소 채팅량 기준을 다시 학습합니다)
+        시청자 수 변화 보정 (시청자가 기준보다 10% 넘게 줄면 평소 채팅량 기준을 다시 학습합니다)
       </label>
       <p id="live-help" className="field-help">
         공개 채팅을 받는 동안 편집 후보를 바로 찾습니다. 처음 3분 동안 채널을 지켜본 뒤, 판정 기준을 최근 2시간과 최근 15분의
