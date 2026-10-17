@@ -95,6 +95,12 @@ type PlaybackSource interface {
 	Playback(ctx context.Context, t Target) (Playback, error)
 }
 
+// LivePlaybackSource resolves the public stream of a channel's current
+// broadcast. URLs may be signed; callers must not store them.
+type LivePlaybackSource interface {
+	LivePlayback(ctx context.Context, t Target) (Playback, error)
+}
+
 // LiveMeta is a channel's current broadcast as the platform reports it.
 type LiveMeta struct {
 	LiveID     string // broadcast (episode) id; a new broadcast gets a new id

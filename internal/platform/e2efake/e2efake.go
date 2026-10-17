@@ -7,7 +7,8 @@
 // chat at once (a laugh burst at minute 12 makes one candidate), then one
 // message every 500 ms of real time, one synthetic second apart. The clock
 // survives reconnects; each reconnect skips 30 synthetic seconds, so stop and
-// resume leave a gap the way a real disconnect does.
+// resume leave a gap the way a real disconnect does. Its stream is silent
+// audio from a loopback server (media.go).
 package e2efake
 
 import (
@@ -30,13 +31,16 @@ type Fake struct {
 	started time.Time // broadcast start, 30 minutes before first use
 	clock   time.Time // synthetic now; zero until the first connection
 	seq     int
+
+	mediaOnce sync.Once // starts the stream server (media.go)
+	media     string    // its origin, http://127.0.0.1:port
+	mediaErr  error
 }
 
 func New() *Fake { return &Fake{} }
 
-func (*Fake) ID() string             { return "e2efake" }
-func (*Fake) Name() string           { return "E2E 가짜 방송" }
-func (*Fake) MediaOrigins() []string { return nil }
+func (*Fake) ID() string   { return "e2efake" }
+func (*Fake) Name() string { return "E2E 가짜 방송" }
 
 func (*Fake) Match(raw string) (platform.Target, bool, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))

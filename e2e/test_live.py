@@ -38,6 +38,16 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     log = page.get_by_role("list", name="실시간 채팅")
     expect(log.locator("li").first).to_be_visible()
 
+    # The broadcast's stream (silent audio from the fake) loads only once played.
+    screen = page.locator(".stage-video")
+    expect(screen.get_by_role("heading", name="영상")).to_be_visible()
+    expect(screen.get_by_text("재생하면 영상을 받기 시작합니다.", exact=False)).to_be_visible()
+    with page.expect_request(re.compile(r"/live/alpha/\d+\.aac$")):
+        page.get_by_label("생방송 영상").evaluate("v => { v.muted = true; return v.play(); }")
+    page.wait_for_function("() => document.querySelector('video[aria-label=\"생방송 영상\"]').currentTime > 1", timeout=10_000)
+    expect(screen.get_by_text("재생하면 영상을 받기 시작합니다.", exact=False)).to_be_hidden()
+    expect(screen.get_by_role("alert")).to_have_count(0)
+
     # The laugh burst becomes a confirmed candidate once the chat after it arrives.
     expect(page.get_by_role("heading", name="편집 후보 1개")).to_be_visible(timeout=20_000)
     cand = page.locator("ol.candidates > li").first
@@ -66,6 +76,8 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     page.get_by_role("button", name="수집 중단").click()
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
     expect(page.get_by_text("수집을 중단했습니다.")).to_be_visible()
+    expect(screen.get_by_label("생방송 영상")).to_have_count(0)
+    expect(screen).to_contain_text("생방송 영상은 수집하는 동안에만 보여 줍니다. 이어 기록하면 다시 불러옵니다.")
     page.get_by_role("button", name="이어 기록").click()
     expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
     page.get_by_role("tab", name="수집 상태").click()
@@ -118,3 +130,24 @@ def test_live_view_dark_and_mobile(page: Page, base_url: str) -> None:
     if page.get_by_role("button", name="수집 중단").count():
         page.get_by_role("button", name="수집 중단").click()
         expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
+
+
+def test_live_without_stream_keeps_chat_and_platform_link(page: Page, base_url: str) -> None:
+    open_home(page, base_url)
+    form = live_form(page)
+    form.get_by_label("치지직 생방송 주소").fill("https://live.e2e.test/novideo")
+    form.get_by_role("button", name="수집 시작").click()
+    expect(page).to_have_url(re.compile(r"/live/[0-9a-f]{32}$"))
+    page.wait_for_selector(READY, timeout=10_000)
+    expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
+    screen = page.locator(".stage-video")
+    expect(screen.get_by_role("alert")).to_contain_text("방송 영상 주소를 확인하지 못했습니다.")
+    expect(screen.get_by_role("button", name="다시 불러오기")).to_be_visible()
+    expect(page.get_by_role("link", name="E2E 가짜 방송에서 열기")).to_be_visible()
+    expect(page.get_by_role("list", name="실시간 채팅").locator("li").first).to_be_visible()
+    page.screenshot(path=str(SHOTS / "live-no-stream.png"), full_page=True)
+    page.get_by_role("button", name="수집 중단").click()
+    expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
+
+
+test_live_without_stream_keeps_chat_and_platform_link.allow_console = ["status of 400"]

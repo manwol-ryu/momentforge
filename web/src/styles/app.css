@@ -1466,6 +1466,11 @@ textarea {
     object-fit: contain;
   }
 
+  .stage-video .player-off {
+    flex: 1;
+    min-height: 0;
+  }
+
   .stage-chat .chatlog,
   .stage-chat .chatlog-live {
     flex: 1;
@@ -1481,6 +1486,11 @@ textarea {
   @container stage (max-width: 43.99rem) {
     .stage-media[data-video] {
       grid-template-rows: minmax(0, 1.2fr) minmax(7rem, 1fr);
+    }
+
+    /* LIVE: the chat is the work; the broadcast, seconds behind it, is for reference. */
+    .ws-live .stage-media[data-video] {
+      grid-template-rows: minmax(0, 1fr) minmax(11rem, 1.4fr);
     }
   }
 }
@@ -1520,6 +1530,10 @@ textarea {
   background: var(--screen);
 }
 
+.player-video[hidden] {
+  display: none;
+}
+
 .player-note {
   margin: 0;
   padding: var(--space-2) var(--space-3);
@@ -1533,6 +1547,19 @@ textarea {
 
 .card-screen .player-note.error {
   color: var(--on-screen-alert);
+}
+
+.card-screen .player-note .link-button {
+  color: var(--on-screen);
+}
+
+/* A LIVE capture that is not running: the monitor stays, switched off. */
+.player-off {
+  display: grid;
+  place-items: center;
+  min-height: 7rem;
+  padding: var(--space-4);
+  text-align: center;
 }
 
 /* ==========================================================================

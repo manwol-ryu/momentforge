@@ -1,5 +1,5 @@
 // Package chzzk is the CHZZK (치지직) adapter: URL matching, VOD metadata and
-// chat pages, and public playback. It uses CHZZK's web endpoints, which are
+// chat pages, LIVE chat, and public VOD and LIVE playback. It uses CHZZK's web endpoints, which are
 // unofficial and may change; every unexpected shape becomes ErrSchemaChanged.
 package chzzk
 
@@ -25,6 +25,10 @@ const (
 	webOrigin   = "https://chzzk.naver.com"
 	cdnOrigin   = "https://*.navercdn.com"
 	cdnSuffix   = ".navercdn.com"
+	// LIVE streams rotate between CDNs (2026-10 check: GCDN on navercdn.com,
+	// LCDN livecloud.pstatic.net, NVELOP nvelop-livecloud.pstatic.net).
+	liveCDNOrigin = "https://*.pstatic.net"
+	liveCDNSuffix = ".pstatic.net"
 )
 
 var (
@@ -33,7 +37,7 @@ var (
 )
 
 // Chzzk implements platform.Platform, VODSource, PlaybackSource, LiveSource,
-// CommentSource and LinkSource.
+// LivePlaybackSource, CommentSource and LinkSource.
 type Chzzk struct {
 	base     string
 	http     *platform.HTTPClient
@@ -95,7 +99,7 @@ func New(opts ...Option) *Chzzk {
 
 func (*Chzzk) ID() string             { return "chzzk" }
 func (*Chzzk) Name() string           { return "치지직" }
-func (*Chzzk) MediaOrigins() []string { return []string{cdnOrigin} }
+func (*Chzzk) MediaOrigins() []string { return []string{cdnOrigin, liveCDNOrigin} }
 
 // Match accepts https://chzzk.naver.com/video/<number>, a bare number (VOD),
 // and https://chzzk.naver.com/live/<32-hex channel id> (LIVE).
