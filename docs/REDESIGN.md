@@ -293,6 +293,11 @@ type Priced interface{ Price(model string) (Price, bool) }                      
 type TokenCounter interface{ CountTokens(ctx, key, model string, c Chunk) (int, error) }
 type ModelLister interface{ Models(ctx, key string) ([]Model, error) }
 type ModelChecker interface{ CheckModel(model string) error }                      // 보낼 수 없는 모델 ID를 미리보기에서 거절
+type Endpointed interface {                                                        // 사용자가 정한 주소로 보냄 (CLIProxyAPI)
+    DefaultEndpoint() string
+    Endpoint() string
+    SetEndpoint(url string) error // ""이면 기본값, settings.env의 AI_ENDPOINT_<ID>
+}
 type BatchProvider interface {
     SubmitBatch(ctx, key, model string, reqs []BatchRequest) (batchID string, err error)
     BatchStatus(ctx, key, batchID string) (BatchStatus, error)
@@ -657,5 +662,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | 설정 화면 (사용자 선택) | 작업 목록 아래 **설정**(`/settings`). 항목은 제안대로: 기본 AI 제공자, 제공자별 기본 모델, 제공자별 API 키 입력·지우기와 상태, OpenCode CLI 준비 상태, 새 작업 수집 옵션 기본값 3개. 탐지 임계값은 넣지 않음(같은 채팅이면 같은 후보라는 규칙 버전 원칙). 비밀이 아닌 기본값은 DB 마이그레이션이나 브라우저 저장 대신 사용자가 고른 **데이터 폴더의 `settings.env`**(KEY=값, 0600)에 둠. 데이터 폴더마다 따로이고 `.gitignore` 대상. 화면 양식은 이 값으로 시작하고 양식에서 바꾼 값은 그 작업에만 씀 |
 | 2026-10-17 | API 키 파일 저장 (사용자 선택, 규칙 변경) | 기존 "키는 메모리에만" 규칙을 사용자가 바꿈: 키를 저장할 때 **이 컴퓨터에도 저장**을 고르면 그 키를 데이터 폴더의 `.env`에 평문으로 씀(0600, 임시 파일을 바꿔 끼워 씀, 줄 이름은 `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`, 그 밖의 제공자는 `MOMENTFORGE_<ID>_API_KEY`). 기본은 꺼짐. 시작할 때 `.env`가 환경변수보다 먼저(앱에서 한 마지막 선택). 키 지우기와 고르지 않은 새 키 저장은 그 줄을 지우고, 마지막 줄이면 파일도 지움. DB·로그·브라우저 저장소·API 응답에는 여전히 두지 않음. CLAUDE.md, privacy-security.md, PRIVACY.md 함께 수정 |
 | 2026-10-17 | OpenCode 무료 모델 (사용자 문의) | 사용자가 `opencode/glm-5.3-flash-free`·`opencode/deepseek-v4.1-flash-free`가 보이지 않는다고 물음. 원인은 둘: 이 제공자는 OpenCode Go(`opencode-go/`)로만 보내도록 만들었고, OpenCode 서버가 무료 등급(`opencode/`, OpenCode Zen)을 OpenCode 자체 기본 에이전트의 요청에만 응답함. CLI v2.0.32로 작은 시험 요청(수집 채팅 없음)을 보내 확인: 이 앱의 도구 없는 검토 에이전트로 보내면 `--standalone` 여부와 관계없이 403 `FreeTierError`("free tier can only be used from within OpenCode"), 기본 에이전트로 보내면 응답함. 기본 에이전트로 보내면 OpenCode의 무료 등급 제한을 우회하는 셈이고 신뢰할 수 없는 채팅을 도구가 있는 코딩 에이전트에 넘기게 되므로 쓰지 않음. 대신 선택 인터페이스 `ai.ModelChecker`로 미리보기 단계에서 이유를 알리고(`AI_FREE_TIER`), 실행 중 같은 거절이 와도 같은 문구로 보여 주며, OpenCode 로그인 안내에 무료 모델이 목록에 없는 이유를 적음. 이 컴퓨터의 OpenCode Go 연결은 Go 무료 모델(`opencode-go/beam-free` 등)도 401 "Invalid credential"로 거절되어 Go 구독·연결이 먼저 필요함. 시험 세션은 모두 지움 |
+| 2026-10-17 | OpenCode 무료 모델을 CLI 기본 에이전트로 (사용자 선택) | 위 결정을 바꿈. 사용자가 "API가 아니라 OpenCode CLI를 연결해 작업"하기를 원함. 시험 결과(CLI v2.0.32, 수집 채팅 없는 작은 요청): 기본 에이전트에 도구를 모두 거부하면 여전히 `FreeTierError`이고, 기본 에이전트에 도구를 모두 "승인 필요"(`ask`)로 두면 응답하며 승인할 사람이 없는 `opencode run`이 도구 요청을 모두 자동 거부함(명령·파일 읽기·파일 찾기·질문). 기본 에이전트를 OpenCode CLI로 그대로 쓰는 것은 OpenCode가 정한 방식이라 제한 우회가 아니고, 걱정이던 도구 실행은 `ask`로 막힘. 그래서 `opencode/…-free`는 기본 에이전트 + 전체 `ask` + 지시문을 메시지에, Go 모델은 기존 전용 검토 에이전트(도구 없음·한 단계)를 유지. 마지막 단계의 글만 답으로 읽고, 끝난 도구 실행이 있으면 결과를 버림(`AI_TOOL_USE`). 제공자 이름을 "OpenCode"로 바꾸고 목록에 무료 모델을 "무료 …"로 넣음. 샘플 채팅으로 실제 실행 확인(3개 요청 완료, 추천 3개, 도구 실행 없음, OpenCode 기록에 세션 남지 않음). 무료 모델마다 데이터 정책이 달라 안내에 Zen 문서를 연결하고 PRIVACY에 적음 |
+| 2026-10-17 | CLIProxyAPI 제공자 (사용자 선택) | 사용자가 opencodex·cliproxy를 물음. opencodex는 Codex용 프록시로 OpenCode Go API를 키로 직접 부르고, 두 프록시 모두 MomentForge 쪽에서는 API 호출이며 OpenCode 무료 모델은 같은 이유로 거절된다고 설명한 뒤 사용자가 "opencode cli와 cliproxy 전부"를 고름. `internal/ai/cliproxy`: OpenAI 호환 Chat Completions(`/chat/completions`, 구조화 출력 없이 글로 JSON 요청 후 `Validate`), 모델 목록 `/models`, `Authorization: Bearer`(CLIProxyAPI `access.api-keys`). 주소는 새 선택 인터페이스 `ai.Endpointed`로 설정 화면에서 정하고 `settings.env`의 `AI_ENDPOINT_CLIPROXY`에 저장(기본 `http://127.0.0.1:8317/v1`, http·https만, 리디렉션 거부). 연결이 안 되면(요청 전) `AI_UNAVAILABLE`과 주소를 보여 줌. 가격을 몰라 비용 한도 없음. 구독 계정을 API처럼 쓰는 약관 위험은 화면·README·PRIVACY에 적고 판단은 사용자에게 둠. 실제 CLIProxyAPI는 설치되어 있지 않아 가짜 서버로만 시험 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

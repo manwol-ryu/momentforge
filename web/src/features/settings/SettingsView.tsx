@@ -12,16 +12,22 @@ import { useSettings } from "../../shared/settings";
 
 type Section = "ai" | "collect";
 
-/** Only the values, with empty models left out (they mean "the provider's own"). */
-function valuesOf(s: Settings): Settings {
-  const aiModels: Record<string, string> = {};
-  for (const id of Object.keys(s.aiModels).sort()) {
-    const m = s.aiModels[id]!.trim();
-    if (m) aiModels[id] = m;
+/** Only the non-empty values of a map, in a stable order (empty means "the provider's own"). */
+function filled(m: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const id of Object.keys(m ?? {}).sort()) {
+    const v = m![id]!.trim();
+    if (v) out[id] = v;
   }
+  return out;
+}
+
+/** Only the values, with empty models and addresses left out. */
+function valuesOf(s: Settings): Settings {
   return {
     aiProvider: s.aiProvider,
-    aiModels,
+    aiModels: filled(s.aiModels),
+    aiEndpoints: filled(s.aiEndpoints),
     sensitive: s.sensitive,
     includeComments: s.includeComments,
     viewerAdaptive: s.viewerAdaptive,
@@ -111,6 +117,8 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
     onSuccess: (s) => {
       queryClient.setQueryData(["settings"], s);
       setDraft(valuesOf(s));
+      // A saved address changes where a provider sends.
+      void queryClient.invalidateQueries({ queryKey: ["aiProviders"] });
     },
   });
   const changed = JSON.stringify(valuesOf(draft)) !== JSON.stringify(valuesOf(saved));
@@ -153,6 +161,8 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                       chosen={p.id === defaultProvider}
                       model={draft.aiModels[p.id] ?? ""}
                       onModel={(m) => change({ aiModels: { ...draft.aiModels, [p.id]: m } })}
+                      endpoint={draft.aiEndpoints[p.id] ?? ""}
+                      onEndpoint={(u) => change({ aiEndpoints: { ...draft.aiEndpoints, [p.id]: u } })}
                     />
                   ))}
                 </div>
@@ -229,10 +239,15 @@ interface ProviderProps {
   chosen: boolean;
   model: string;
   onModel: (model: string) => void;
+  endpoint: string;
+  onEndpoint: (url: string) => void;
 }
 
-/** One provider: its default model and its key (or, for OpenCode Go, whether its own login is ready). */
-function ProviderSettings({ p, chosen, model, onModel }: ProviderProps) {
+/**
+ * One provider: where it sends (for a proxy), its default model and its key
+ * (or, for OpenCode, whether its own login is ready).
+ */
+function ProviderSettings({ p, chosen, model, onModel, endpoint, onEndpoint }: ProviderProps) {
   const [models, setModels] = useState<AIModel[]>([]);
   const loadModels = useMutation({ mutationFn: () => api.aiModels(p.id), onSuccess: (r) => setModels(r.models) });
   const titleId = `provider-${p.id}`;
@@ -256,6 +271,25 @@ function ProviderSettings({ p, chosen, model, onModel }: ProviderProps) {
         </span>
       </header>
       <div className="provider-body">
+        {p.defaultEndpoint && (
+          <>
+            <label className="field">
+              <span className="field-label">{p.name} 주소</span>
+              <input
+                type="url"
+                inputMode="url"
+                value={endpoint}
+                onChange={(e) => onEndpoint(e.target.value)}
+                placeholder={p.defaultEndpoint}
+              />
+            </label>
+            <p className="field-help">
+              CLIProxyAPI를 실행한 컴퓨터와 포트의 OpenAI 호환 주소입니다. 비우면 {p.defaultEndpoint}로 보냅니다. 키는 CLIProxyAPI
+              설정의 access.api-keys에 있는 키를 넣습니다. 어느 서비스·계정으로 보낼지는 CLIProxyAPI와 모델 ID가 정하며, 구독
+              계정을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있습니다.
+            </p>
+          </>
+        )}
         <label className="field">
           <span className="field-label">기본 모델 ID</span>
           <input

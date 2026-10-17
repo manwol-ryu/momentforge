@@ -74,6 +74,13 @@ type (
 	ModelChecker interface {
 		CheckModel(model string) error
 	}
+	// Endpointed providers send to an address the user sets: a proxy they
+	// run (CLIProxyAPI). The address is saved with the settings.
+	Endpointed interface {
+		DefaultEndpoint() string
+		Endpoint() string
+		SetEndpoint(url string) error // "" goes back to the default
+	}
 	// SelfAuthenticated providers sign in with another program's own login
 	// (the OpenCode CLI); MomentForge holds no key for them and passes "".
 	SelfAuthenticated interface {

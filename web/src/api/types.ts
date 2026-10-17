@@ -306,6 +306,9 @@ export interface AIProvider {
   keySource?: AIKeySource;
   /** The key's environment variable and its line in the data folder's .env. */
   keyName?: string;
+  /** Where requests go, for a provider that sends to a proxy the user runs (CLIProxyAPI). */
+  endpoint?: string;
+  defaultEndpoint?: string;
 }
 
 export type AIKeySource = "env" | "file" | "memory";
@@ -316,6 +319,8 @@ export interface Settings {
   aiProvider: string;
   /** Provider ID → model; a missing one uses the provider's own default. */
   aiModels: Record<string, string>;
+  /** Provider ID → address, for providers that send to a proxy; a missing one uses the provider's default. */
+  aiEndpoints: Record<string, string>;
   sensitive: boolean;
   includeComments: boolean;
   viewerAdaptive: boolean;

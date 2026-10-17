@@ -2867,3 +2867,10 @@ summary::before {
 details[open] > summary::before {
   transform: rotate(45deg);
 }
+
+/* Where a proxy provider sends (CLIProxyAPI): the address is read as text, not a link. */
+.ai-endpoint-url {
+  color: var(--ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}

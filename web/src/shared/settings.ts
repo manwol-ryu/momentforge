@@ -6,6 +6,7 @@ import type { AIProvider, Settings } from "../api/types";
 export const builtInSettings: Settings = {
   aiProvider: "",
   aiModels: {},
+  aiEndpoints: {},
   sensitive: false,
   includeComments: true,
   viewerAdaptive: true,

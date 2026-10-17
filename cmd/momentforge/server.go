@@ -16,6 +16,7 @@ import (
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/ai/anthropic"
+	"github.com/manwol-ryu/momentforge/internal/ai/cliproxy"
 	"github.com/manwol-ryu/momentforge/internal/ai/openai"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
 	"github.com/manwol-ryu/momentforge/internal/api"
@@ -172,7 +173,7 @@ func registerAI(override []ai.Provider) *ai.Registry {
 		return r
 	}
 	// Claude first: the screen offers the first provider by default.
-	r.Register(anthropic.New(), openai.New(), opencode.New(opencodeOptions...))
+	r.Register(anthropic.New(), openai.New(), opencode.New(opencodeOptions...), cliproxy.New())
 	r.Register(extraAI...)
 	return r
 }

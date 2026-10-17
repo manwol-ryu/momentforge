@@ -122,19 +122,21 @@ func validKey(k string) bool {
 
 // AIProvider is a registered provider as screens show it.
 type AIProvider struct {
-	ID            string
-	Name          string
-	Configured    bool // a key is in memory, or the provider's own login program is there
-	SelfAuth      bool // signs in with another program (no key here)
-	AuthHelp      string
-	NotReady      string // why a self-authenticated provider cannot be used now
-	DefaultModel  string
-	CanCount      bool // exact token counts
-	CanListModels bool
-	CanBatch      bool
-	HasPrices     bool
-	KeySource     string // KeyFromEnv, KeyFromFile, KeyInMemory, or "" without a key
-	KeyName       string // the environment variable and key-file line for the key
+	ID              string
+	Name            string
+	Configured      bool // a key is in memory, or the provider's own login program is there
+	SelfAuth        bool // signs in with another program (no key here)
+	AuthHelp        string
+	NotReady        string // why a self-authenticated provider cannot be used now
+	DefaultModel    string
+	CanCount        bool // exact token counts
+	CanListModels   bool
+	CanBatch        bool
+	HasPrices       bool
+	KeySource       string // KeyFromEnv, KeyFromFile, KeyInMemory, or "" without a key
+	KeyName         string // the environment variable and key-file line for the key
+	Endpoint        string // where requests go, for a provider that sends to an address the user sets
+	DefaultEndpoint string
 }
 
 // AIProviders lists providers (the default first) and whether each has a key.
@@ -150,6 +152,9 @@ func (a *App) AIProviders() []AIProvider {
 		v := AIProvider{ID: p.ID(), Name: p.Name(), Configured: a.ai.keys[p.ID()] != "",
 			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced,
 			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p)}
+		if e, ok := p.(ai.Endpointed); ok {
+			v.Endpoint, v.DefaultEndpoint = e.Endpoint(), e.DefaultEndpoint()
+		}
 		if sa, ok := p.(ai.SelfAuthenticated); ok {
 			v.SelfAuth, v.AuthHelp, v.KeySource, v.KeyName = true, sa.AuthHelp(), "", ""
 			err := sa.Ready()

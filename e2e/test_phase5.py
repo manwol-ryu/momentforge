@@ -87,29 +87,65 @@ def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> N
     compare.screenshot(path=str(SHOTS / "ai-compare-mobile.png"))
 
 
-def test_opencode_go_uses_its_own_login(page: Page, base_url: str) -> None:
-    """OpenCode Go signs in through the OpenCode CLI: no key field. The E2E
-    binary points it at a missing CLI, so the screen explains how to set up."""
+def test_opencode_uses_its_own_login(page: Page, base_url: str) -> None:
+    """OpenCode signs in through the OpenCode CLI: no key field. The E2E
+    binary points it at a missing CLI, so the screen explains how to set up.
+    Free models (opencode/…-free) are offered and previewed like Go models."""
     open_home(page, base_url)
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
-    page.get_by_label("AI 제공자").select_option(label="OpenCode Go")
+    page.get_by_label("AI 제공자").select_option(label="OpenCode")
     expect(page.get_by_label("모델 ID")).to_have_value(re.compile(r"^opencode-go/"))
     expect(page.locator(".ai-auth")).to_contain_text("OpenCode CLI(opencode)를 찾지 못했습니다")
     expect(page.get_by_text("키는 MomentForge에 넣지 않습니다", exact=False)).to_be_visible()
+    expect(page.get_by_text("무료 모델(opencode/…-free)은 OpenCode 기본 에이전트로 보내고 도구는 모두 자동 거부", exact=False)).to_be_visible()
     expect(page.get_by_role("button", name="키 저장")).to_have_count(0)
     expect(page.locator("input[type=password]")).to_have_count(0)
     page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "ai-opencode.png"))
 
-    # OpenCode's own free models answer only OpenCode's app: the preview says so before anything is sent.
-    expect(page.get_by_text("무료 모델(opencode/…)은 OpenCode 앱 안에서만", exact=False)).to_be_visible()
+    # A free model is previewed like any other; without the CLI it cannot be sent yet.
     page.get_by_label("모델 ID").fill("opencode/deepseek-v4.1-flash-free")
     page.get_by_label("채팅 구간 직접 지정", exact=False).check()
     page.get_by_role("button", name="보낼 내용 미리보기").click()
-    expect(page.get_by_role("alert")).to_contain_text("OpenCode 무료 모델(opencode/…)은 OpenCode가 자기 앱 안에서만")
-    expect(page.locator(".ai-preview")).to_have_count(0)
+    expect(page.locator(".ai-preview")).to_contain_text(re.compile(r"요청 \d+회"))
+    expect(page.get_by_role("button", name="확인한 내용으로 AI 실행")).to_be_disabled()
 
 
-# The refused free-model preview is an expected 400.
-test_opencode_go_uses_its_own_login.allow_console = ["status of 400"]
+def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) -> None:
+    """CLIProxyAPI: the address and key are set in 설정, the AI tab says
+    where it sends, and a run goes there. Nothing listens at the address, so
+    the run stops with the address in the message and nothing leaves."""
+    page.goto(base_url + "/settings")
+    page.wait_for_selector(READY, timeout=10_000)
+    card = page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI"))
+    address = card.get_by_label("CLIProxyAPI 주소")
+    expect(address).to_have_attribute("placeholder", "http://127.0.0.1:8317/v1")
+    address.fill("http://127.0.0.1:9/v1")
+    page.get_by_role("button", name="기본값 저장").click()
+    expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()
+    card.get_by_label(re.compile("^CLIProxyAPI API 키")).fill("test-key")
+    card.get_by_role("button", name="키 저장").click()
+    expect(card.locator(".provider-state")).to_have_text("키 있음")
+    card.screenshot(path=str(SHOTS / "settings-cliproxy.png"))
+
+    page.get_by_role("link", name="새 작업").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("button", name="샘플로 먼저 체험").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="AI 검토").click()
+    page.get_by_label("AI 제공자").select_option(label="CLIProxyAPI")
+    expect(page.locator(".ai-endpoint")).to_contain_text("http://127.0.0.1:9/v1")
+    page.get_by_label("모델 ID").fill("test-model")
+    page.get_by_label("채팅 구간 직접 지정", exact=False).check()
+    page.get_by_role("button", name="보낼 내용 미리보기").click()
+    expect(page.locator(".ai-preview")).to_contain_text(re.compile(r"요청 \d+회"))
+    page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
+    expect(page.locator(".ai-status")).to_contain_text("CLIProxyAPI(http://127.0.0.1:9/v1)에 연결하지 못했습니다", timeout=15_000)
+
+    # Back to the default address for the rest of the run.
+    page.goto(base_url + "/settings")
+    page.wait_for_selector(READY, timeout=10_000)
+    page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI")).get_by_label("CLIProxyAPI 주소").fill("")
+    page.get_by_role("button", name="기본값 저장").click()
+    expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()

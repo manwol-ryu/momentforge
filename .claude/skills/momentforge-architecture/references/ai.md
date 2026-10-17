@@ -4,10 +4,11 @@
 
 ## 구조
 
-- `internal/ai`: `Provider`와 선택 기능 인터페이스(`Priced`, `TokenCounter`, `ModelLister`, `ModelChecker`, `BatchProvider`, `SelfAuthenticated`), registry, 지시문(`prompt.go`), 계획(`Prepare`: 요청 나누기·최대 비용·비용 한도), 출력 검증(`Validate`), 가격 계산(`cost.go`). 제공자와 무관한 코드만 둡니다.
+- `internal/ai`: `Provider`와 선택 기능 인터페이스(`Priced`, `TokenCounter`, `ModelLister`, `ModelChecker`, `Endpointed`, `BatchProvider`, `SelfAuthenticated`), registry, 지시문(`prompt.go`), 계획(`Prepare`: 요청 나누기·최대 비용·비용 한도), 출력 검증(`Validate`), 가격 계산(`cost.go`). 제공자와 무관한 코드만 둡니다.
 - `internal/ai/anthropic`: 기본 제공자. `github.com/anthropics/anthropic-sdk-go` 사용.
 - `internal/ai/openai`: 선택 제공자 (기존 기능 동등용).
-- `internal/ai/opencode`: OpenCode Go 모델을 OpenCode CLI(`opencode run`)로 씁니다. 키는 OpenCode 로그인을 쓰는 `SelfAuthenticated` 제공자입니다. 요청마다 빈 임시 폴더의 설정으로 모든 도구를 거부하고(`steps: 1`), 채팅은 표준 입력으로 넘기며, 끝나면 OpenCode 세션을 지웁니다. OpenCode 무료 모델(`opencode/…`)은 OpenCode가 자체 기본 에이전트에만 응답하므로 쓰지 않고, 기본 에이전트처럼 보내 그 제한을 우회하지 않습니다(`CheckModel`이 미리보기에서 이유를 알림). 이 규칙을 바꾸면 REDESIGN.md 6.3절도 고칩니다. 테스트는 가짜 CLI 스크립트로만 하고 실제 `opencode`를 부르지 않습니다(E2E 실행파일은 없는 경로를 보게 함).
+- `internal/ai/opencode`: OpenCode Go 모델을 OpenCode CLI(`opencode run`)로 씁니다. 키는 OpenCode 로그인을 쓰는 `SelfAuthenticated` 제공자입니다. 요청마다 빈 임시 폴더의 설정으로 모든 도구를 거부하고(`steps: 1`), 채팅은 표준 입력으로 넘기며, 끝나면 OpenCode 세션을 지웁니다. OpenCode 무료 모델(`opencode/…-free`)은 OpenCode가 자체 기본 에이전트에만 응답하므로 기본 에이전트로 보내고, 모든 도구를 `ask`로 두어 `opencode run`이 자동 거부하게 합니다(지시문은 메시지에). 어느 모델이든 끝난 도구 실행이 있으면 결과를 버립니다.
+- `internal/ai/cliproxy`: 사용자가 실행하는 CLIProxyAPI에 OpenAI 호환 Chat Completions로 보냅니다. 주소는 `ai.Endpointed`로 설정에서 정하고(`ai.NormalizeEndpoint`로 검사), 키는 CLIProxyAPI의 `access.api-keys`입니다. 테스트는 `httptest` 가짜 서버로만 하고 실제 CLIProxyAPI를 부르지 않습니다. 이 규칙을 바꾸면 REDESIGN.md 6.3절도 고칩니다. 테스트는 가짜 CLI 스크립트로만 하고 실제 `opencode`를 부르지 않습니다(E2E 실행파일은 없는 경로를 보게 함).
 - 새 제공자는 `internal/ai/<제공자>/`를 추가하고 `cmd/momentforge`에서 등록합니다.
 
 ## Claude 사용 방식

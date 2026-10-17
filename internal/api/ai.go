@@ -24,6 +24,9 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		HasPrices     bool   `json:"hasPrices"`
 		KeySource     string `json:"keySource,omitempty"` // env | file | memory
 		KeyName       string `json:"keyName,omitempty"`
+		// The address requests go to, for a provider sending to a proxy the user runs.
+		Endpoint        string `json:"endpoint,omitempty"`
+		DefaultEndpoint string `json:"defaultEndpoint,omitempty"`
 	}
 	out := []providerJSON{}
 	for _, p := range h.cfg.Core.AIProviders() {

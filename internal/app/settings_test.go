@@ -224,3 +224,61 @@ func TestAIKeyFileWinsOverEnvironment(t *testing.T) {
 		t.Fatalf("next run = %+v", p)
 	}
 }
+
+// proxyAI sends to an address the user sets, like CLIProxyAPI.
+type proxyAI struct {
+	*fakeAI
+	endpoint string
+}
+
+func (p *proxyAI) ID() string              { return "proxy" }
+func (p *proxyAI) DefaultEndpoint() string { return "http://127.0.0.1:8317/v1" }
+func (p *proxyAI) Endpoint() string {
+	if p.endpoint == "" {
+		return p.DefaultEndpoint()
+	}
+	return p.endpoint
+}
+func (p *proxyAI) SetEndpoint(u string) error {
+	n, err := ai.NormalizeEndpoint(u)
+	if err == nil {
+		p.endpoint = n
+	}
+	return err
+}
+
+func TestSettingsKeepAProxyAddress(t *testing.T) {
+	p := &proxyAI{fakeAI: &fakeAI{}}
+	a := newAIApp(t, &fakeAI{})
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(p)
+	a.initAI()
+	if got := a.AIProviders()[0]; got.Endpoint != p.DefaultEndpoint() || got.DefaultEndpoint != p.DefaultEndpoint() {
+		t.Fatalf("provider %+v", got)
+	}
+	if _, err := a.SaveSettings(Settings{AIEndpoints: map[string]string{"proxy": "ftp://x"}}); !isCode(err, "INPUT") {
+		t.Fatalf("bad address: %v", err)
+	}
+	saved, err := a.SaveSettings(Settings{AIEndpoints: map[string]string{"proxy": " http://127.0.0.1:9000/v1/ "}})
+	if err != nil || saved.AIEndpoints["proxy"] != "http://127.0.0.1:9000/v1" {
+		t.Fatalf("saved %+v err %v", saved.Settings, err)
+	}
+	if p.Endpoint() != "http://127.0.0.1:9000/v1" || a.AIProviders()[0].Endpoint != "http://127.0.0.1:9000/v1" {
+		t.Fatalf("not applied: %s", p.Endpoint())
+	}
+	if !strings.Contains(readFile(t, saved.File), "AI_ENDPOINT_PROXY=http://127.0.0.1:9000/v1\n") {
+		t.Fatal("settings.env lacks the address")
+	}
+	// The next run points the provider at the saved address; clearing it goes back to the default.
+	q := &proxyAI{fakeAI: &fakeAI{}}
+	b := reopen(t, a, q)
+	if q.Endpoint() != "http://127.0.0.1:9000/v1" {
+		t.Fatalf("after restart: %s", q.Endpoint())
+	}
+	if _, err := b.SaveSettings(Settings{}); err != nil || q.Endpoint() != q.DefaultEndpoint() {
+		t.Fatalf("cleared: %v %s", err, q.Endpoint())
+	}
+	if _, err := a.SaveSettings(Settings{AIEndpoints: map[string]string{"nope": "http://h/v1"}}); !isCode(err, "INPUT") {
+		t.Fatalf("unknown provider: %v", err)
+	}
+}

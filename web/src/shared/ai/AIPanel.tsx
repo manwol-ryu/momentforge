@@ -246,6 +246,12 @@ export function AIPanel({ s, selection, liveEndMs }: Props) {
         )}
       </div>
       {current?.selfAuth && current.authHelp && <p className="field-help">{current.authHelp}</p>}
+      {current?.endpoint && (
+        <p className="field-help ai-endpoint">
+          보낼 주소 <span className="ai-endpoint-url">{current.endpoint}</span>. 주소는 <Link href="/settings">설정</Link>에서
+          바꿉니다.
+        </p>
+      )}
       {current && !current.selfAuth && (
         <AIKeyField
           key={current.id}

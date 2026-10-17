@@ -9,7 +9,7 @@ MomentForge가 무엇을 내 컴퓨터 밖으로 보내고, 무엇을 내 컴퓨
 | 다시보기·생방송 수집, 영상 재생 | 치지직·네이버 | 영상번호·채널 ID, 채팅·댓글 페이지 위치 (로그인 정보 없음) |
 | AI 실행 (미리보기 확인 후에만) | 고른 AI 제공자 | 지시문, 고른 구간의 채팅 본문·가명 작성자 키, 후보 정보 |
 | 정확한 토큰 수 계산 (누를 때만) | Anthropic | 미리보기의 채팅 (답은 만들지 않음) |
-| 모델 목록 불러오기 (누를 때만) | Anthropic, 또는 로컬 OpenCode CLI | API 키만. 채팅은 보내지 않음 |
+| 모델 목록 불러오기 (누를 때만) | Anthropic, 로컬 OpenCode CLI, 또는 설정한 CLIProxyAPI 주소 | API 키만. 채팅은 보내지 않음 |
 | MCP 서버 (사용자가 등록했을 때만) | 등록한 Claude 앱 → Anthropic | Claude가 도구로 읽은 채팅 본문·가명 작성자 키·후보 |
 
 이 밖의 전송은 없습니다. 개발자 서버로 채팅을 올리거나 사용량·오류 기록을 보내는 기능, 자동 업데이트 확인, 수집이 끝나면(또는 생방송 수집 중에) 저절로 AI에 보내는 기능은 없습니다. 외부 서비스에는 통신 과정에서 IP 주소 같은 일반 접속 정보가 전달되며, 각 서비스의 보관 정책은 MomentForge와 별개로 적용됩니다.
@@ -55,7 +55,8 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 |---|---|---|---|
 | Claude (Anthropic, 기본) | `api.anthropic.com` (Messages API, 배치는 Message Batches API) | 화면에서 저장한 API 키 또는 시작할 때 읽은 `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL`·프로필 같은 환경 설정을 무시해 키가 다른 주소로 가지 않음. 리디렉션 거부. 배치 요청은 결과를 가져갈 때까지 Anthropic에서 처리·보관됨 |
 | OpenAI | `api.openai.com` (Responses API) | 화면에서 저장한 API 키 또는 시작할 때 읽은 `OPENAI_API_KEY` | `store: false`로 보내 요청을 저장하지 말라고 요청. 리디렉션 거부 |
-| OpenCode Go | 로컬 `opencode` CLI → OpenCode Go → 모델 제공자 | OpenCode CLI에 로그인한 계정과 OpenCode Go 구독. MomentForge는 키를 받지 않음 | 아래 "OpenCode Go" 참고 |
+| OpenCode | 로컬 `opencode` CLI → OpenCode Go 또는 OpenCode Zen(무료 모델) → 모델 제공자 | OpenCode CLI에 로그인한 계정(Go 모델은 OpenCode Go 구독). MomentForge는 키를 받지 않음 | 아래 "OpenCode" 참고 |
+| CLIProxyAPI | 설정의 CLIProxyAPI 주소(기본 `http://127.0.0.1:8317/v1`) → CLIProxyAPI가 정한 서비스·계정 | CLIProxyAPI의 클라이언트 키(`access.api-keys`) | 아래 "CLIProxyAPI" 참고 |
 
 각 제공자의 데이터 보관·학습 정책은 그 제공자의 약관을 따릅니다.
 
@@ -63,18 +64,28 @@ AI 요청은 사용자가 **보낼 내용 미리보기**로 보낼 내용 전체
 
 **정확한 토큰 수 계산**(Claude)은 미리보기에 담긴 채팅을 Claude의 토큰 계산 API로 보냅니다. 답을 만들지 않고 요금도 들지 않지만 **채팅이 전송**되므로, 미리보기를 본 사용자가 버튼을 누를 때만 보냅니다. 미리보기의 "예상 비용 최대값"은 아무것도 보내지 않고 바이트 수로 계산합니다.
 
-**쓸 수 있는 모델 불러오기**는 Claude에는 API 키만 보내고, OpenCode Go는 로컬에서 `opencode models`를 실행합니다. 채팅은 보내지 않습니다.
+**쓸 수 있는 모델 불러오기**는 Claude와 CLIProxyAPI에는 키만 보내고, OpenCode는 로컬에서 `opencode models`를 실행합니다. 채팅은 보내지 않습니다.
 
-### OpenCode Go
+### OpenCode
 
-OpenCode Go는 MomentForge가 API를 직접 부르지 않고 사용자의 OpenCode CLI를 실행해 OpenCode가 요청을 보내게 합니다.
+OpenCode는 MomentForge가 API를 직접 부르지 않고 사용자의 OpenCode CLI를 실행해 OpenCode가 요청을 보내게 합니다.
 
 - 채팅은 명령줄이 아니라 **표준 입력**으로 넘기므로 다른 프로그램의 프로세스 목록에 보이지 않습니다.
-- 요청마다 빈 임시 폴더를 만들고, 그 폴더의 OpenCode 설정이 전역·에이전트 권한을 모두 거부해 **도구(파일 읽기·명령 실행 등)를 쓸 수 없게** 합니다. 에이전트는 한 단계만 실행하며, 결과에 끝난 도구 실행이 있으면 답을 쓰지 않습니다(`AI_TOOL_USE`).
+- 요청마다 빈 임시 폴더를 만들고, 그 폴더의 OpenCode 설정으로 **도구(파일 읽기·명령 실행 등)가 실행되지 않게** 합니다. Go 모델은 도구가 없는 전용 검토 에이전트(한 단계)로 보냅니다. 무료 모델은 OpenCode가 자체 기본 에이전트의 요청에만 응답하므로 기본 에이전트로 보내되, 모든 도구를 "승인 필요"로 두어 승인할 사람이 없는 `opencode run`이 자동으로 거부하게 합니다(2026-10-17 CLI v2.0.32로 확인: 명령·파일 읽기·파일 찾기·질문 시도가 모두 거부됨). 어느 경우든 결과에 끝난 도구 실행이 있으면 답을 쓰지 않습니다(`AI_TOOL_USE`).
 - 요청이 끝나면 `opencode session delete`로 **OpenCode 기록에서 그 세션을 지우고** 임시 폴더도 지웁니다. 지우기에 실패하면 서버 로그에 경고를 남기며, 이때는 OpenCode 기록에 대화가 남을 수 있습니다.
 - OpenCode는 사용자의 전역 설정(AGENTS.md·스킬·플러그인 등)을 읽으므로 그 내용이 지시문과 함께 모델에 전달될 수 있습니다.
-- 채팅은 OpenCode Go를 거쳐 사용자가 고른 모델의 제공자로 갑니다. 모델마다 OpenCode Go의 보관·학습 정책이 다르므로(일부 모델은 보관하거나 학습에 씀) 쓰기 전에 OpenCode Go 문서에서 확인하세요.
-- 도구 차단과 정상 응답 처리는 가짜 CLI로 시험했고, 실제 OpenCode Go 구독으로는 아직 확인하지 못했습니다.
+- 채팅은 OpenCode Go 또는 OpenCode Zen을 거쳐 사용자가 고른 모델의 제공자로 갑니다. 모델마다 보관·학습 정책이 다릅니다. OpenCode Zen 문서 기준 무료 모델 중 일부(예: MiMo Free, Big Pickle)는 무료 기간에 받은 내용을 모델 개선에 쓸 수 있고, 일부(예: Beam Free, LL Alpha Free)는 30일 보관하며, NVIDIA 무료 모델(Nemotron Free)은 시험용이라 개인 정보·기밀을 보내지 말라고 안내합니다. GLM-5.3-Flash Free와 DeepSeek V4.1 Flash Free는 예외 목록에 없어 보관·학습하지 않는 기본 정책을 따릅니다. 쓰기 전에 [OpenCode Zen 문서](https://opencode.ai/docs/zen)와 OpenCode Go 문서에서 확인하세요.
+- 무료 모델은 샘플 채팅으로 실제 실행을 확인했습니다(2026-10-17, 3개 요청 완료·도구 실행 없음·OpenCode 기록에 세션 남지 않음). Go 모델은 가짜 CLI로만 시험했고 실제 OpenCode Go 구독으로는 아직 확인하지 못했습니다.
+
+### CLIProxyAPI
+
+CLIProxyAPI는 사용자가 실행하는 프록시로, 거기에 로그인한 계정(Claude Code·Codex·Gemini CLI 등)을 OpenAI 호환 API로 내놓습니다.
+
+- MomentForge는 설정의 **CLIProxyAPI 주소**(기본 `http://127.0.0.1:8317/v1`)로만 보냅니다. 주소는 데이터 폴더의 `settings.env`에 저장되며 http·https만 받습니다. 리디렉션은 따르지 않습니다.
+- 지시문과 고른 구간의 채팅·가명 작성자 키를 Chat Completions로 보냅니다. CLIProxyAPI가 그것을 어느 서비스·계정·모델로 넘길지는 CLIProxyAPI 설정과 모델 ID가 정하며, MomentForge는 알지 못합니다. 각 서비스의 보관·학습 정책과 약관이 그대로 적용되고, 구독 계정을 API처럼 쓰는 것은 약관에 어긋나 계정이 제한될 수 있습니다.
+- CLIProxyAPI는 기본으로 모든 네트워크 인터페이스에서 받으므로, 같은 네트워크의 다른 기기가 쓰지 못하게 CLIProxyAPI 설정의 `access.api-keys`로 키를 정하고 `host`를 `127.0.0.1`로 두는 것을 권합니다.
+- CLIProxyAPI의 키는 다른 API 키와 같이 메모리에 두며, **이 컴퓨터에도 저장**을 고른 경우에만 `.env`에 `MOMENTFORGE_CLIPROXY_API_KEY`로 씁니다.
+- 실제 CLIProxyAPI로는 아직 확인하지 못했고, 가짜 서버로 요청 형식·키 전달·오류·연결 실패를 시험했습니다.
 
 ## MCP 서버
 

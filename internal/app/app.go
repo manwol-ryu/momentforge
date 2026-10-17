@@ -58,6 +58,7 @@ func New(cfg Config) *App {
 		liveTiming: defaultLiveTiming()}
 	a.initSettings()
 	a.initAI()
+	a.applyEndpoints()
 	return a
 }
 

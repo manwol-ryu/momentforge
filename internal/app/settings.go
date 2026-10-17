@@ -8,6 +8,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
 
@@ -18,13 +19,15 @@ const (
 	keyFileName      = ".env"         // API keys the user chose to keep on this computer
 )
 
-// Names in settings.env. A model line per provider is "AI_MODEL_" + its ID.
+// Names in settings.env. A model line per provider is "AI_MODEL_" + its ID,
+// and an address line per Endpointed provider "AI_ENDPOINT_" + its ID.
 const (
-	envAIProvider      = "AI_PROVIDER"
-	envAIModelPrefix   = "AI_MODEL_"
-	envSensitive       = "COLLECT_SENSITIVE"
-	envIncludeComments = "COLLECT_COMMENTS"
-	envViewerAdaptive  = "LIVE_VIEWER_ADAPTIVE"
+	envAIProvider       = "AI_PROVIDER"
+	envAIModelPrefix    = "AI_MODEL_"
+	envAIEndpointPrefix = "AI_ENDPOINT_"
+	envSensitive        = "COLLECT_SENSITIVE"
+	envIncludeComments  = "COLLECT_COMMENTS"
+	envViewerAdaptive   = "LIVE_VIEWER_ADAPTIVE"
 )
 
 var settingsHeader = []string{
@@ -43,6 +46,7 @@ var keyFileHeader = []string{
 type Settings struct {
 	AIProvider      string            // "" for the first registered provider
 	AIModels        map[string]string // provider ID → model; a missing one uses the provider's own
+	AIEndpoints     map[string]string // Endpointed provider ID → address; a missing one uses the provider's default
 	Sensitive       bool              // "항상 가장 민감하게"
 	IncludeComments bool              // a VOD collection also reads the video's comments
 	ViewerAdaptive  bool              // a LIVE capture adapts to viewer-count changes
@@ -90,6 +94,7 @@ func (a *App) Settings() SettingsInfo {
 	}
 	s := Settings{
 		AIModels:        map[string]string{},
+		AIEndpoints:     map[string]string{},
 		Sensitive:       flag(envSensitive, false),
 		IncludeComments: flag(envIncludeComments, true),
 		ViewerAdaptive:  flag(envViewerAdaptive, true),
@@ -102,6 +107,13 @@ func (a *App) Settings() SettingsInfo {
 	for _, p := range a.cfg.AI.All() {
 		if m, _ := lookupEnv(raw, envAIModelPrefix+envName(p.ID())); m != "" && validModel(m) {
 			s.AIModels[p.ID()] = m
+		}
+		if _, ok := p.(ai.Endpointed); ok {
+			if u, _ := lookupEnv(raw, envAIEndpointPrefix+envName(p.ID())); u != "" {
+				if n, err := ai.NormalizeEndpoint(u); err == nil && n != "" {
+					s.AIEndpoints[p.ID()] = n
+				}
+			}
 		}
 	}
 	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath()}
@@ -124,6 +136,18 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 			return SettingsInfo{}, domain.NewUserError("INPUT", "기본 모델을 정할 AI 제공자를 목록에서 골라 주세요.")
 		}
 	}
+	endpoints := map[string]string{} // checked addresses, applied once the file is written
+	for id, u := range s.AIEndpoints {
+		p, ok := a.cfg.AI.Get(id)
+		if _, endpointed := p.(ai.Endpointed); !ok || !endpointed {
+			return SettingsInfo{}, domain.NewUserError("INPUT", "주소를 정할 수 없는 AI 제공자입니다.")
+		}
+		n, err := ai.NormalizeEndpoint(u)
+		if err != nil {
+			return SettingsInfo{}, err
+		}
+		endpoints[id] = n
+	}
 	for _, p := range a.cfg.AI.All() { // registration order keeps the file stable
 		m := strings.TrimSpace(s.AIModels[p.ID()])
 		if m == "" {
@@ -134,6 +158,11 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 				p.Name()+" 기본 모델 ID를 확인해 주세요. 줄바꿈 없이 "+strconv.Itoa(aiMaxModelLength)+"자까지 쓸 수 있습니다.")
 		}
 		entries = append(entries, envEntry{envAIModelPrefix + envName(p.ID()), m})
+	}
+	for _, p := range a.cfg.AI.All() {
+		if u := endpoints[p.ID()]; u != "" {
+			entries = append(entries, envEntry{envAIEndpointPrefix + envName(p.ID()), u})
+		}
 	}
 	entries = append(entries,
 		envEntry{envSensitive, strconv.FormatBool(s.Sensitive)},
@@ -150,7 +179,21 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 		return SettingsInfo{}, domain.WrapUserError("SETTINGS_WRITE",
 			"설정 파일을 쓸 수 없습니다: "+a.settingsPath()+". 데이터 폴더의 쓰기 권한을 확인하세요.", err)
 	}
+	a.applyEndpoints()
 	return a.Settings(), nil
+}
+
+// applyEndpoints points Endpointed providers at the saved addresses (the
+// default where none is saved).
+func (a *App) applyEndpoints() {
+	saved := a.Settings().AIEndpoints
+	for _, p := range a.cfg.AI.All() {
+		if e, ok := p.(ai.Endpointed); ok {
+			if err := e.SetEndpoint(saved[p.ID()]); err != nil {
+				slog.Warn("saved AI address not used", "provider", p.ID(), "err", err)
+			}
+		}
+	}
 }
 
 func validModel(m string) bool {
