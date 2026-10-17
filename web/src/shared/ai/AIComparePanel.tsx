@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIRecommendation, AIRun, Session } from "../../api/types";
-import { timecode, tokens, usd } from "../../shared/format";
+import { timecode, tokens, usd } from "../format";
 
 const priorityText: Record<AIRecommendation["priority"], string> = { high: "높음", medium: "보통", low: "낮음" };
 

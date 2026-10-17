@@ -28,6 +28,6 @@
 | `viewers.py` | 공식 API 시청자 수 | — | 보류 | 보류 |
 | `comments.py` | 영상 댓글 수집, 타임스탬프 추출 | `internal/platform/chzzk` `comments.go` (`CommentSource`), `internal/app` `comments.go`·`timestamps.go` | 4 | 완료 (파서 46개 사례 일치, 로그인 댓글 조회는 보류) |
 | `timeline.py` | 자동 후보 + 시청자 추천 통합 | `internal/app` `timeline.go`, `internal/export` | 4 | 완료 |
-| `v2.js` | 통합 타임라인·댓글·AI 화면 | `web/src/features/session` (`UnifiedList`, `CommentsPanel`, `AIPanel`) | 4 | 완료 (공식 API 시청자 기록 패널은 보류) |
+| `v2.js` | 통합 타임라인·댓글·AI 화면 | `web/src/features/session` (`CommentsPanel`), `web/src/shared/candidates` (`UnifiedList`), `web/src/shared/ai` (`AIPanel`, 생방송 작업대와 함께 씀) | 4 | 완료 (공식 API 시청자 기록 패널은 보류) |
 | `history.py` | 저장 목록 숨김·복원 | `internal/store`, `internal/app` | 4 | 완료 |
 | `ai.py` | 미리보기, OpenAI 호출, 결과 검증 | `internal/ai`, `internal/ai/openai`, `internal/app` `ai.go` (5단계에 `internal/ai/anthropic` 추가) | 4, 5 | 4단계 완료 (OpenAI) |

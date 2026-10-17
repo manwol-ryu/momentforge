@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Candidate, ExportFile, LiveState, LiveStatus } from "../../api/types";
+import type { Candidate, ExportFile, LiveState, LiveStatus, TimelineItem, TimelineSource } from "../../api/types";
+import { AIComparePanel } from "../../shared/ai/AIComparePanel";
+import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
-import { CandidateList } from "../../shared/candidates/CandidateList";
+import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
+import { Segmented } from "../../shared/motion/Segmented";
 import { Stats } from "../../shared/motion/Stats";
 import { Tabs } from "../../shared/motion/Tabs";
 import { useDocumentTitle } from "../../shared/navigation";
@@ -18,12 +21,17 @@ import { useLiveFeed } from "./useLiveFeed";
 
 const viewerText = { active: "적용 중", warming_up: "학습 중", missing: "자료 부족", "": "준비 중" } as const;
 
-type PanelTab = "candidates" | "status" | "files";
+type PanelTab = "candidates" | "ai" | "status" | "files";
+
+type SourceFilter = "all" | TimelineSource;
+
+/** A candidate that stopped growing; only these can be sent for an AI review (REDESIGN 15). */
+const settled = (c: Candidate) => c.state === "confirmed" || c.state === "partial";
 
 /**
  * A LIVE capture as a workbench: state and controls on top, the incoming
- * chat and the reaction timeline held in view, and candidates, capture
- * state and files in tabs beside them.
+ * chat and the reaction timeline held in view, and candidates, AI review,
+ * capture state and files in tabs beside them.
  */
 export function LiveView({ id }: { id: string }) {
   const status = useQuery({ queryKey: ["live", id], queryFn: () => api.liveStatus(id) });
@@ -141,18 +149,54 @@ interface WorkspaceProps {
 }
 
 function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
+  const sid = v.session.id;
+  // Timeline item IDs: "rule:<candidate>" or "ai:<recommendation>".
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const select = (cid: string) => setSelectedId((cur) => (cur === cid ? null : cid));
+  const select = (itemId: string) => setSelectedId((cur) => (cur === itemId ? null : itemId));
+  const [filter, setFilter] = useState<SourceFilter>("all");
+  const [aiSelection, setAISelection] = useState<Set<string>>(() => new Set());
+  const toggleAI = (itemId: string) =>
+    setAISelection((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(itemId)) next.add(itemId);
+      return next;
+    });
   // The density timeline refreshes per 10 s of analysed broadcast, not per event.
   const step = Math.floor(v.watermarkMs / 10_000);
   const density = useQuery({
-    queryKey: ["liveDensity", v.session.id, step],
-    queryFn: () => api.liveDensity(v.session.id),
+    queryKey: ["liveDensity", sid, step],
+    queryFn: () => api.liveDensity(sid),
     placeholderData: (prev) => prev,
   });
-  const durationMs = Math.max(density.data?.endMs ?? 0, v.watermarkMs, ...feed.candidates.map((c) => c.clipEndMs), 1);
+  // AI recommendations come from the unified timeline; the AI panel refreshes it when a review ends.
+  const timeline = useQuery({ queryKey: ["timeline", sid], queryFn: () => api.timeline(sid) });
+  const aiItems = useMemo(() => (timeline.data?.items ?? []).filter((i) => i.source === "ai"), [timeline.data]);
+  const candidates = useMemo(() => new Map(feed.candidates.map((c) => [c.id, c])), [feed.candidates]);
+  const items: TimelineItem[] = useMemo(
+    () =>
+      [
+        ...feed.candidates.map((c) => ({
+          id: "rule:" + c.id, source: "rule" as const, originId: c.id, anchorMs: c.clipStartMs,
+          clipStartMs: c.clipStartMs, clipEndMs: c.clipEndMs, title: c.reasons.join(" · "),
+        })),
+        ...aiItems,
+      ].sort((x, y) => x.anchorMs - y.anchorMs),
+    [feed.candidates, aiItems],
+  );
+  const sources = [...new Set(items.map((i) => i.source))];
+  const shown = filter === "all" ? items : items.filter((i) => i.source === filter);
+  const durationMs = Math.max(
+    density.data?.endMs ?? 0,
+    v.watermarkMs,
+    ...feed.candidates.map((c) => c.clipEndMs),
+    ...aiItems.map((i) => i.clipEndMs),
+    1,
+  );
   const longForm = durationMs >= 3_600_000;
   const basis = v.timeBasis === "broadcast_elapsed" ? "방송 시작 후" : "수집 시작 후";
+  const aiMarkers = aiItems.map((i, n) => ({
+    id: i.id, ms: i.anchorMs, kind: "ai" as const, label: `${sourceLabel.ai} ${n + 1}, ${timecode(i.anchorMs, longForm)}`,
+  }));
 
   return (
     <>
@@ -190,8 +234,9 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
               windowMs={density.data?.bucketMs ?? 5000}
               gaps={v.gaps}
               candidates={feed.candidates}
-              selectedId={selectedId}
-              onSelect={select}
+              extraMarkers={aiMarkers}
+              selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
+              onSelect={(markerId) => select(markerId.includes(":") ? markerId : "rule:" + markerId)}
             />
           </div>
           {v.gaps.length > 0 && <p className="card-foot">빗금은 채팅을 받지 못한 구간입니다.</p>}
@@ -208,36 +253,86 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
               id: "candidates",
               label: (
                 <>
-                  후보 <span className="tab-count">{feed.candidates.length}</span>
+                  후보 <span className="tab-count">{items.length}</span>
                 </>
               ),
               content: (
-                <section className="panel-section" aria-labelledby="live-candidates-title">
-                  <h2 id="live-candidates-title" className="section-title">
-                    편집 후보 <RollingNumber value={feed.candidates.length} />개
-                  </h2>
-                  <CandidateList
-                    candidates={feed.candidates}
-                    selectedId={selectedId}
-                    onSelect={select}
-                    longForm={longForm}
-                    emptyText={
-                      v.running
-                        ? "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
-                        : "반응이 몰린 구간을 찾지 못했습니다."
-                    }
-                    renderDetail={(c) => <CandidateContext sessionId={v.session.id} c={c} longForm={longForm} />}
-                  />
-                  {feed.error && (
-                    <p className="error" role="alert">
-                      {feed.error.message}
+                <>
+                  <section className="panel-section" aria-labelledby="live-candidates-title">
+                    <div className="section-head">
+                      <h2 id="live-candidates-title" className="section-title">
+                        편집 후보 <RollingNumber value={shown.length} />개
+                      </h2>
+                      {sources.length > 1 && (
+                        <Segmented
+                          name="live-candidate-source"
+                          legend="후보 출처"
+                          hideLegend
+                          value={filter}
+                          onChange={setFilter}
+                          options={[
+                            { value: "all" as SourceFilter, label: "모든 출처" },
+                            ...sources.map((src) => ({ value: src as SourceFilter, label: sourceLabel[src] })),
+                          ]}
+                        />
+                      )}
+                    </div>
+                    {shown.length === 0 ? (
+                      <p className="empty">
+                        {v.running
+                          ? "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
+                          : "반응이 몰린 구간을 찾지 못했습니다."}
+                      </p>
+                    ) : (
+                      <UnifiedList
+                        items={shown}
+                        candidates={candidates}
+                        selectedId={selectedId}
+                        onSelect={select}
+                        longForm={longForm}
+                        canPlay={false}
+                        platformName={v.session.platformName}
+                        aiSelection={aiSelection}
+                        onToggleAI={toggleAI}
+                        canPick={(it) => {
+                          const c = candidates.get(it.originId);
+                          return !!c && settled(c);
+                        }}
+                        renderRuleDetail={(c) => <CandidateContext sessionId={sid} c={c} longForm={longForm} />}
+                      />
+                    )}
+                    {feed.error && (
+                      <p className="error" role="alert">
+                        {feed.error.message}
+                      </p>
+                    )}
+                  </section>
+                  {aiSelection.size > 0 && (
+                    <p className="pick-bar">
+                      <span>AI 검토에 고른 후보 {aiSelection.size}개</span>
+                      <button type="button" className="link-button" onClick={() => onTab("ai")}>
+                        AI 검토로 이동
+                      </button>
                     </p>
                   )}
-                </section>
+                </>
               ),
             },
+            {
+              id: "ai",
+              label: "AI 검토",
+              content:
+                v.session.chatCount > 0 ? (
+                  <>
+                    <AIPanel s={v.session} selection={[...aiSelection]} liveEndMs={v.watermarkMs} />
+                    <AIComparePanel s={v.session} />
+                  </>
+                ) : (
+                  <p className="empty">채팅을 받으면 고른 후보나 지정한 구간을 AI로 검토할 수 있습니다.</p>
+                ),
+            },
             { id: "status", label: "수집 상태", content: <Facts v={v} /> },
-            { id: "files", label: "파일", content: <Files v={v} /> },
+            { id: "files", label: "파일", content: <Files v={v} aiRunId={timeline.data?.aiRunId} /> },
           ]}
         />
       </aside>
@@ -330,8 +425,17 @@ const fileLabel: Record<string, string> = {
   "manifest.json": "수집 상태 JSON",
 };
 
-function Files({ v }: { v: LiveStatus }) {
-  const files = useQuery({ queryKey: ["liveFiles", v.session.id, v.session.state], queryFn: () => api.files(v.session.id) });
+const aiFileLabel: Record<string, string> = {
+  "recommendations.txt": "AI 추천 TXT",
+  "recommendations.json": "AI 추천 JSON",
+  "manifest.json": "AI 검토 기록 JSON",
+};
+
+function Files({ v, aiRunId }: { v: LiveStatus; aiRunId?: string }) {
+  const files = useQuery({
+    queryKey: ["liveFiles", v.session.id, v.session.state, aiRunId],
+    queryFn: () => api.files(v.session.id),
+  });
   const download = useMutation({ mutationFn: (f: ExportFile) => api.download(v.session.id, f.path) });
   const all = files.data ?? [];
   // Checkpoint folders are named by time, so the last one is the newest.
@@ -340,11 +444,16 @@ function Files({ v }: { v: LiveStatus }) {
     .filter((x): x is string => !!x)
     .sort()
     .pop();
-  const order = Object.keys(fileLabel);
   const name = (f: ExportFile) => f.path.split("/").pop()!;
-  const shown = all
-    .filter((f) => name(f) in fileLabel && (!f.path.includes("/") || f.path === `checkpoints/${latest}/${name(f)}`))
-    .sort((a, b) => order.indexOf(name(a)) - order.indexOf(name(b)));
+  // The capture's own files (top level and the newest checkpoint), then the newest AI review's.
+  const isAI = (f: ExportFile) => !!aiRunId && f.path === `ai/${aiRunId}/${name(f)}`;
+  const labelOf = (f: ExportFile) =>
+    isAI(f) ? aiFileLabel[name(f)]
+    : !f.path.includes("/") || f.path === `checkpoints/${latest}/${name(f)}` ? fileLabel[name(f)]
+    : undefined;
+  const order = [...Object.keys(fileLabel), ...Object.keys(aiFileLabel).map((n) => "ai/" + n)];
+  const rank = (f: ExportFile) => order.indexOf(isAI(f) ? "ai/" + name(f) : name(f));
+  const shown = all.filter((f) => labelOf(f)).sort((a, b) => rank(a) - rank(b));
   return (
     <section className="panel-section" aria-labelledby="live-files-title">
       <h2 id="live-files-title" className="section-title">
@@ -357,7 +466,7 @@ function Files({ v }: { v: LiveStatus }) {
           {shown.map((f) => (
             <li key={f.path}>
               <button type="button" className="link-button" onClick={() => download.mutate(f)}>
-                {fileLabel[name(f)]}
+                {labelOf(f)}
               </button>{" "}
               <span className="file-size">{formatSize(f.size)}</span>
             </li>

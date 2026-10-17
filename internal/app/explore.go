@@ -87,54 +87,47 @@ type Moment struct {
 }
 
 // Moments returns a session's candidates in time order: the unified
-// timeline of a VOD, or the rule candidates of a LIVE capture.
+// timeline of a VOD or a LIVE capture.
 func (a *App) Moments(ctx context.Context, sid string) ([]Moment, error) {
 	s, err := a.cfg.Store.Session(ctx, sid)
 	if err != nil {
 		return nil, err
 	}
-	out := []Moment{}
-	rule := func(c domain.Candidate) Moment {
-		peak := c.Peak
-		return Moment{ID: SourceRule + ":" + c.ID, Source: SourceRule, StartMs: c.ClipStartMs, EndMs: c.ClipEndMs,
-			AnchorMs: c.ClipStartMs, Title: strings.Join(c.Reasons, ", "), Reasons: c.Reasons, Peak: &peak, EvidenceIDs: c.EvidenceIDs}
+	tl, err := a.Timeline(ctx, sid)
+	if err != nil {
+		return nil, err
 	}
+	rules := map[string]domain.Candidate{}
+	var cands []domain.Candidate
 	if s.Kind == string(platform.KindLive) {
-		cands, _, err := a.cfg.Store.LiveCandidates(ctx, sid, 0)
+		if cands, _, err = a.cfg.Store.LiveCandidates(ctx, sid, 0); err != nil {
+			return nil, err
+		}
+	} else if tl.AnalysisID != "" {
+		an, err := a.cfg.Store.Analysis(ctx, tl.AnalysisID)
 		if err != nil {
 			return nil, err
 		}
-		for _, c := range cands {
-			out = append(out, rule(c))
+		cands = an.Candidates
+	}
+	for _, c := range cands {
+		rules[SourceRule+":"+c.ID] = c
+	}
+	out := []Moment{}
+	for _, it := range tl.Items {
+		if c, ok := rules[it.ID]; ok {
+			peak := c.Peak
+			out = append(out, Moment{ID: it.ID, Source: SourceRule, StartMs: c.ClipStartMs, EndMs: c.ClipEndMs,
+				AnchorMs: c.ClipStartMs, Title: strings.Join(c.Reasons, ", "), Reasons: c.Reasons, Peak: &peak, EvidenceIDs: c.EvidenceIDs})
+			continue
 		}
-	} else {
-		tl, err := a.Timeline(ctx, sid)
-		if err != nil {
-			return nil, err
+		m := Moment{ID: it.ID, Source: it.Source, StartMs: it.ClipStartMs, EndMs: it.ClipEndMs,
+			AnchorMs: it.AnchorMs, Title: it.Title, CommentText: it.CommentText, Rationale: it.Rationale,
+			Uncertainty: it.Uncertainty, Priority: it.Priority}
+		if it.Source == SourceAI {
+			m.RunID = tl.AIRunID
 		}
-		rules := map[string]domain.Candidate{}
-		if tl.AnalysisID != "" {
-			an, err := a.cfg.Store.Analysis(ctx, tl.AnalysisID)
-			if err != nil {
-				return nil, err
-			}
-			for _, c := range an.Candidates {
-				rules[SourceRule+":"+c.ID] = c
-			}
-		}
-		for _, it := range tl.Items {
-			if c, ok := rules[it.ID]; ok {
-				out = append(out, rule(c))
-				continue
-			}
-			m := Moment{ID: it.ID, Source: it.Source, StartMs: it.ClipStartMs, EndMs: it.ClipEndMs,
-				AnchorMs: it.AnchorMs, Title: it.Title, CommentText: it.CommentText, Rationale: it.Rationale,
-				Uncertainty: it.Uncertainty, Priority: it.Priority}
-			if it.Source == SourceAI {
-				m.RunID = tl.AIRunID
-			}
-			out = append(out, m)
-		}
+		out = append(out, m)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].StartMs < out[j].StartMs })
 	return out, nil

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, UnifiedTimeline } from "../../api/types";
+import { AIComparePanel } from "../../shared/ai/AIComparePanel";
+import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
+import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
@@ -16,10 +19,7 @@ import { sessionKindText } from "../../shared/sessionText";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { useJob } from "../../shared/useJob";
-import { AIComparePanel } from "./AIComparePanel";
-import { AIPanel } from "./AIPanel";
 import { CommentsPanel } from "./CommentsPanel";
-import { sourceLabel, UnifiedList } from "./UnifiedList";
 
 type PanelTab = "candidates" | "ai" | "comments" | "files";
 

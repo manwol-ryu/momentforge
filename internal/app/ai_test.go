@@ -23,6 +23,7 @@ type fakeAI struct {
 	failOnce error         // returned by the first call
 	block    chan struct{} // when set, Review waits on it (to test cancel)
 	keys     []string
+	chunks   []ai.Chunk // what was sent
 }
 
 func (f *fakeAI) ID() string           { return "fakeai" }
@@ -34,6 +35,7 @@ func (f *fakeAI) Review(ctx context.Context, key, model string, c ai.Chunk) (jso
 	f.mu.Lock()
 	f.calls++
 	f.keys = append(f.keys, key)
+	f.chunks = append(f.chunks, c)
 	first, block := f.calls == 1, f.block
 	f.mu.Unlock()
 	if block != nil {

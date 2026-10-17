@@ -99,6 +99,71 @@ def test_live_rejects_offline_and_wrong_form(page: Page, base_url: str) -> None:
 test_live_rejects_offline_and_wrong_form.allow_console = ["status of 400"]
 
 
+def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
+    """AI review of a running capture (REDESIGN 15): a confirmed candidate is
+    ticked, the plan is previewed and confirmed, and the synthetic provider's
+    recommendations join the candidates and the reaction timeline."""
+    open_home(page, base_url)
+    row = page.locator(".session-row", has=page.get_by_role("link", name="E2E 가짜 생방송 alpha"))
+    if row.count() == 0:  # running this test alone: make a capture first
+        live_form(page).get_by_label("치지직 생방송 주소").fill(LIVE_URL)
+        live_form(page).get_by_role("button", name="수집 시작").click()
+    else:
+        row.get_by_role("link").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    if page.get_by_role("button", name="이어 기록").count():
+        page.get_by_role("button", name="이어 기록").click()
+    expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
+    confirmed = page.locator("ol.candidates > li", has=page.locator(".candidate-state", has_text="확정"))
+    expect(confirmed.first).to_be_visible(timeout=20_000)
+    confirmed.first.get_by_label("AI 검토에 포함").check()
+    expect(page.get_by_text("AI 검토에 고른 후보 1개")).to_be_visible()
+    page.get_by_role("button", name="AI 검토로 이동").click()
+    expect(page.get_by_role("tab", name="AI 검토")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_text("미리보기를 만든 순간까지 저장된 채팅만 보내고", exact=False)).to_be_visible()
+
+    # Same provider, key and cost cap controls as a VOD.
+    page.get_by_label("AI 제공자").select_option(label="E2E 가짜 AI")
+    page.get_by_label(re.compile("E2E 가짜 AI API 키")).fill("test-key")
+    page.get_by_role("button", name="키 저장").click()
+    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(page.get_by_role("textbox", name=re.compile("^비용 한도"))).to_be_visible()
+
+    # A range with no end runs up to the analysed point; previewing sends nothing.
+    page.get_by_label("채팅 구간 직접 지정", exact=False).check()
+    # The burst is at 42:00 of the broadcast; once resumed, the analysis soon passes it.
+    expect(page.get_by_text(re.compile(r"끝 시각을 비우면 분석을 마친 0:[45]\d:\d\d까지 보냅니다"))).to_be_visible(timeout=10_000)
+    page.get_by_label("시작 시각").fill("0:40:00")
+    page.get_by_role("button", name="보낼 내용 미리보기").click()
+    preview = page.locator(".ai-preview")
+    expect(preview).to_contain_text(re.compile(r"요청 \d+회"))
+
+    page.get_by_label("후보 목록에서 고른 1개", exact=False).check()
+    expect(preview).to_have_count(0)  # a changed selection drops the preview
+    page.get_by_role("button", name="보낼 내용 미리보기").click()
+    expect(preview).to_contain_text(re.compile(r"요청 \d+회, 입력 추정 약 [\d,]+토큰"))
+    preview.get_by_text("보낼 내용 전체").click()
+    expect(preview.locator("pre")).to_contain_text('"source_type": "rule"')
+    expect(preview.locator("pre")).to_contain_text("ㅋㅋㅋㅋㅋ")
+    page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "live-ai-panel.png"))
+    page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
+    expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=15_000)
+
+    page.get_by_role("tab", name=re.compile("^후보")).click()
+    ai_items = page.locator("ol.candidates > li[data-source='ai']")
+    expect(ai_items.first).to_contain_text("가짜 AI 추천")
+    expect(ai_items.first.locator(".candidate-source")).to_have_text("AI 추천")
+    expect(page.locator(".timeline-marker[data-kind='ai']").first).to_be_attached()
+    page.screenshot(path=str(SHOTS / "live-ai.png"), full_page=True)
+    page.get_by_label("AI 추천", exact=True).check()  # the source filter
+    expect(page.locator("ol.candidates > li:not([data-source='ai'])")).to_have_count(0)
+    page.get_by_role("tab", name="파일").click()
+    expect(page.get_by_role("button", name="AI 추천 TXT")).to_be_visible()
+
+    page.get_by_role("button", name="수집 중단").click()
+    expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
+
+
 def test_live_view_dark_and_mobile(page: Page, base_url: str) -> None:
     open_home(page, base_url)
     row = page.locator(".session-row", has=page.get_by_role("link", name="E2E 가짜 생방송 alpha"))
