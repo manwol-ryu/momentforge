@@ -118,6 +118,7 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     the run stops with the address in the message and nothing leaves."""
     page.goto(base_url + "/settings")
     page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("radio", name="CLIProxyAPI").check()  # its card shows once it is chosen
     card = page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI"))
     address = card.get_by_label("CLIProxyAPI 주소")
     expect(address).to_have_attribute("placeholder", "http://127.0.0.1:8317/v1")
@@ -143,9 +144,10 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     expect(page.locator(".ai-status")).to_contain_text("CLIProxyAPI(http://127.0.0.1:9/v1)에 연결하지 못했습니다", timeout=15_000)
 
-    # Back to the default address for the rest of the run.
+    # Back to the default address and provider for the rest of the run.
     page.goto(base_url + "/settings")
     page.wait_for_selector(READY, timeout=10_000)
     page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI")).get_by_label("CLIProxyAPI 주소").fill("")
+    page.get_by_role("radio", name="Claude (Anthropic)").check()
     page.get_by_role("button", name="기본값 저장").click()
     expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()

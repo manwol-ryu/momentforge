@@ -134,7 +134,7 @@ cd momentforge && make build
 
 ## 설정
 
-왼쪽 작업 목록 아래 **설정**에서 정합니다. 기본값은 **기본값 저장**을 눌러야 저장되고, API 키는 제공자마다 **키 저장**으로 따로 저장합니다.
+왼쪽 작업 목록 아래 **설정**에서 정합니다. **기본 AI 제공자**를 고르면 그 아래에 그 제공자의 모델·키(CLIProxyAPI는 주소도) 칸이 나옵니다. 기본값은 **기본값 저장**을 눌러야 저장되고, API 키는 제공자마다 **키 저장**으로 따로 저장합니다.
 
 | 탭 | 항목 | 동작 |
 |---|---|---|
@@ -187,6 +187,8 @@ AI는 채팅 반응을 요약해 편집할 만한 구간을 다시 고르는 선
 - **OpenCode**는 [OpenCode](https://opencode.ai) CLI를 설치한 뒤 씁니다. Go 모델(`opencode-go/…`)은 터미널에서 `opencode`를 실행해 `/connect`로 OpenCode Go를 연결해야 하며 활성 OpenCode Go 구독이 필요합니다. MomentForge가 OpenCode를 직접 실행해 요청을 보내게 하며, `opencode`는 `PATH`, `~/.local/bin`, `~/.opencode/bin`, `/opt/homebrew/bin`, `/usr/local/bin` 순서로 찾습니다. 비용은 OpenCode가 알려 준 값으로 표시합니다. OpenCode Go는 코딩 에이전트용 구독이고 채팅 검토는 코딩 요청이 아니므로, 구독 제한을 받을 위험이 있다는 점을 알고 쓰세요.
 - OpenCode의 **무료 모델**(`opencode/deepseek-v4.1-flash-free`, `opencode/glm-5.3-flash-free` 같은 `opencode/…-free`)도 모델 목록에 나오며 구독 없이 씁니다. OpenCode는 무료 등급을 OpenCode 자체 기본 에이전트의 요청에만 응답하므로, 무료 모델은 그 기본 에이전트로 보내고 도구는 모두 "승인 필요"로 두어 CLI가 자동으로 거부하게 합니다(도구가 실제로 실행되면 결과를 쓰지 않음). 지시문은 메시지에 넣습니다. 모델이 도구를 먼저 시도했다가 거부당한 뒤 답하므로 Go 모델보다 조금 느릴 수 있습니다. 무료 모델은 모델마다 데이터 정책이 달라 일부는 무료 기간에 받은 내용을 모델 개선에 쓰거나 30일 보관합니다. [OpenCode Zen 문서](https://opencode.ai/docs/zen)에서 확인하세요.
 - **CLIProxyAPI**는 사용자가 실행하는 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)에 OpenAI 호환 Chat Completions로 보냅니다. 설정의 **CLIProxyAPI 주소**(비우면 `http://127.0.0.1:8317/v1`)와 CLIProxyAPI 설정의 `access.api-keys`에 있는 키를 넣고, **쓸 수 있는 모델 불러오기**로 모델을 고르세요. 어느 서비스·계정으로 갈지는 CLIProxyAPI와 모델 ID가 정합니다. 구독 계정(Claude Code·Codex·Gemini CLI 등)을 API처럼 쓰는 것은 그 서비스의 약관에 어긋날 수 있어 계정이 제한될 수 있습니다. 비용은 알 수 없어 토큰만 표시하고 비용 한도를 쓸 수 없습니다. CLIProxyAPI가 꺼져 있으면 "연결하지 못했습니다"와 주소를 보여 주고, 이때는 아무것도 보내지 않은 것입니다.
+  - 준비(macOS 예): [릴리스](https://github.com/router-for-me/CLIProxyAPI/releases)의 `CLIProxyAPI_<버전>_darwin_aarch64.tar.gz`에서 `cli-proxy-api`를 `~/.local/bin`에 두고, `~/.cli-proxy-api/config.yaml`에 `server.host: "127.0.0.1"`, `server.port: 8317`, `access.api-keys`(MomentForge에 넣을 키)를 적은 뒤 `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`로 실행합니다.
+  - 계정 연결: 같은 명령에 `-claude-login`, `-codex-login`, `-antigravity-login` 같은 옵션을 붙여 실행하면 브라우저에서 그 서비스에 로그인합니다. 로그인한 계정이 없으면 모델 목록이 비어 있고, MomentForge는 "CLIProxyAPI가 알려 준 모델이 없습니다"라고 알립니다.
 
 ### 비용 미리보기와 정확한 토큰 계산
 

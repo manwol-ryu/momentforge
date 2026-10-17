@@ -127,6 +127,8 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
     setDraft((d) => ({ ...d, ...patch }));
   };
   const defaultProvider = providers.some((p) => p.id === draft.aiProvider) ? draft.aiProvider : (providers[0]?.id ?? "");
+  // The choice above is also which provider's model, key and address are set below.
+  const shown = providers.find((p) => p.id === defaultProvider);
 
   return (
     <div className="settings">
@@ -151,20 +153,20 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                   />
                 )}
                 <p className="field-help">
-                  작업 화면의 AI 검토 탭이 이 제공자와 기본 모델로 시작합니다. 탭에서 바꾼 값은 그 검토에만 씁니다.
+                  작업 화면의 AI 검토 탭이 이 제공자와 기본 모델로 시작합니다. 탭에서 바꾼 값은 그 검토에만 씁니다. 아래에서 고른
+                  제공자의 모델·키를 정합니다.
                 </p>
                 <div className="providers">
-                  {providers.map((p) => (
+                  {shown && (
                     <ProviderSettings
-                      key={p.id}
-                      p={p}
-                      chosen={p.id === defaultProvider}
-                      model={draft.aiModels[p.id] ?? ""}
-                      onModel={(m) => change({ aiModels: { ...draft.aiModels, [p.id]: m } })}
-                      endpoint={draft.aiEndpoints[p.id] ?? ""}
-                      onEndpoint={(u) => change({ aiEndpoints: { ...draft.aiEndpoints, [p.id]: u } })}
+                      key={shown.id}
+                      p={shown}
+                      model={draft.aiModels[shown.id] ?? ""}
+                      onModel={(m) => change({ aiModels: { ...draft.aiModels, [shown.id]: m } })}
+                      endpoint={draft.aiEndpoints[shown.id] ?? ""}
+                      onEndpoint={(u) => change({ aiEndpoints: { ...draft.aiEndpoints, [shown.id]: u } })}
                     />
-                  ))}
+                  )}
                 </div>
               </div>
             ),
@@ -236,7 +238,6 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
 
 interface ProviderProps {
   p: AIProvider;
-  chosen: boolean;
   model: string;
   onModel: (model: string) => void;
   endpoint: string;
@@ -247,7 +248,7 @@ interface ProviderProps {
  * One provider: where it sends (for a proxy), its default model and its key
  * (or, for OpenCode, whether its own login is ready).
  */
-function ProviderSettings({ p, chosen, model, onModel, endpoint, onEndpoint }: ProviderProps) {
+function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderProps) {
   const [models, setModels] = useState<AIModel[]>([]);
   const loadModels = useMutation({ mutationFn: () => api.aiModels(p.id), onSuccess: (r) => setModels(r.models) });
   const titleId = `provider-${p.id}`;
@@ -260,12 +261,11 @@ function ProviderSettings({ p, chosen, model, onModel, endpoint, onEndpoint }: P
   );
 
   return (
-    <section className="sheet provider" aria-labelledby={titleId} data-chosen={chosen || undefined}>
+    <section className="sheet provider" aria-labelledby={titleId}>
       <header className="provider-head">
         <h3 id={titleId} className="provider-name">
           {p.name}
         </h3>
-        {chosen && <span className="provider-default">기본</span>}
         <span className="provider-state" data-ready={p.configured || undefined}>
           {stateText}
         </span>

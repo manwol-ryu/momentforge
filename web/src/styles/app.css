@@ -1234,15 +1234,6 @@ textarea {
   letter-spacing: -0.015em;
 }
 
-.provider-default {
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--tint-blue);
-  color: var(--link);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
 /* Key or login state, drawn like the connection: a dot and a word. */
 .provider-state {
   display: inline-flex;

@@ -50,6 +50,13 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     expect(page.get_by_role("button", name="기본값 저장")).to_be_disabled()  # nothing changed yet
     full_shot(page, "settings-light.png")
 
+    # Only the chosen provider's card is shown; choosing another shows its card instead.
+    expect(page.locator("section.provider")).to_have_count(1)
+    expect(page.get_by_role("region", name="Claude (Anthropic)", exact=True)).to_be_visible()
+    page.get_by_role("radio", name=FAKE, exact=True).check()
+    expect(page.locator("section.provider")).to_have_count(1)
+    expect(page.get_by_role("region", name="Claude (Anthropic)", exact=True)).to_have_count(0)
+
     # A key kept on this computer: in memory now, and in the data folder's .env for the next run.
     fake = fake_provider(page)
     clear = fake.get_by_role("button", name="키 지우기")
@@ -69,8 +76,6 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     fake.screenshot(path=str(SHOTS / "settings-provider.png"))
 
     # Defaults: this provider and model for the AI review, and the forms' options.
-    page.get_by_role("radio", name=FAKE, exact=True).check()
-    expect(fake.locator(".provider-default")).to_have_text("기본")
     fake.get_by_label("기본 모델 ID").fill("e2e-model-b")
     page.get_by_role("tab", name="새 작업 기본값").click()
     page.get_by_label("항상 가장 민감하게", exact=False).check()
@@ -114,8 +119,8 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     expect(fake.get_by_label("기본 모델 ID")).to_have_value("e2e-model-b")
 
     # Back to the built-in defaults so later tests start as before.
-    page.get_by_role("radio", name="Claude (Anthropic)").check()
     fake.get_by_label("기본 모델 ID").fill("")
+    page.get_by_role("radio", name="Claude (Anthropic)").check()
     page.get_by_role("tab", name="새 작업 기본값").click()
     page.get_by_label("항상 가장 민감하게", exact=False).uncheck()
     page.get_by_label("영상 댓글의 시청자 추천도 수집", exact=False).check()

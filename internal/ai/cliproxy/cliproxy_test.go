@@ -101,6 +101,11 @@ func TestHTTPErrors(t *testing.T) {
 		!strings.Contains(pe.Message, "Invalid API key") {
 		t.Fatalf("401: %v", err)
 	}
+	// CLIProxyAPI's own errors carry the text directly (seen from v8.0.32).
+	p, _, _ = server(t, http.StatusUnauthorized, `{"error":"Invalid API key"}`)
+	if _, _, err = p.Review(context.Background(), "wrong", "m", chunk); !errors.As(err, &pe) || !strings.Contains(pe.Message, "Invalid API key") {
+		t.Fatalf("plain error text: %v", err)
+	}
 	p, _, _ = server(t, http.StatusTooManyRequests, `{"error":{"message":"quota"}}`)
 	_, _, err = p.Review(context.Background(), "k", "m", chunk)
 	if !errors.As(err, &pe) || !pe.Retryable || pe.RetryAfter.Seconds() != 7 {

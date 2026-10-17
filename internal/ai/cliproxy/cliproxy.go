@@ -192,13 +192,7 @@ func (p *CLIProxy) do(ctx context.Context, method, path, key string, body []byte
 }
 
 func (p *CLIProxy) httpError(res *http.Response, raw []byte) error {
-	var body struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	json.Unmarshal(raw, &body)
-	detail := strings.TrimSpace(body.Error.Message)
+	detail := strings.TrimSpace(errorText(raw))
 	if r := []rune(detail); len(r) > 200 {
 		detail = string(r[:200]) + "…"
 	}
@@ -224,6 +218,26 @@ func (p *CLIProxy) httpError(res *http.Response, raw []byte) error {
 	}
 	return &ai.ProviderError{UserError: domain.NewUserError(fmt.Sprintf("AI_HTTP_%d", res.StatusCode), text),
 		Retryable: retryable, RetryAfter: wait}
+}
+
+// errorText is an error body's message: CLIProxyAPI's own errors are
+// {"error": "text"}, an upstream's passed on {"error": {"message": "text"}}.
+func errorText(raw []byte) string {
+	var body struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(body.Error, &text) == nil {
+		return text
+	}
+	var obj struct {
+		Message string `json:"message"`
+	}
+	json.Unmarshal(body.Error, &obj)
+	return obj.Message
 }
 
 // parse reads a Chat Completion: the first choice's text is the model's JSON.
