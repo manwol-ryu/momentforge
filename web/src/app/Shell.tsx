@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "../shared/navigation";
 import { BrandMark } from "./BrandMark";
+import { SettingsIcon } from "./SettingsIcon";
 import { Sidebar } from "./Sidebar";
 
 const COLLAPSED_KEY = "mf.sidebar.collapsed";
@@ -87,6 +88,14 @@ export function Shell({ path, children }: { path: string; children: ReactNode })
         </button>
         <Link href="/" className="icon-button" aria-label="새 작업" aria-current={path === "/" ? "page" : undefined}>
           <span className="plus-icon" aria-hidden="true" />
+        </Link>
+        <Link
+          href="/settings"
+          className="icon-button rail-settings"
+          aria-label="설정"
+          aria-current={path === "/settings" ? "page" : undefined}
+        >
+          <SettingsIcon />
         </Link>
       </div>
       <Sidebar id="sidebar" path={path} onFold={() => fold(true)} />

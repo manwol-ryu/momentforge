@@ -4,6 +4,7 @@ import type { Session } from "../api/types";
 import { useEvents, type ConnectionState } from "../shared/events";
 import { Link } from "../shared/navigation";
 import { BrandMark } from "./BrandMark";
+import { SettingsIcon } from "./SettingsIcon";
 import { isRunningLive, sessionHref, sessionKindText, sessionSummary } from "../shared/sessionText";
 
 const connectionText: Record<ConnectionState, string> = {
@@ -12,7 +13,7 @@ const connectionText: Record<ConnectionState, string> = {
   closed: "연결이 끊겨 다시 연결하는 중",
 };
 
-/** Saved work, newest first, with the way to start another and the app's connection. */
+/** Saved work, newest first, with the way to start another, the settings and the app's connection. */
 export function Sidebar({ id, path, onFold }: { id: string; path: string; onFold: () => void }) {
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
   const status = useQuery({ queryKey: ["status"], queryFn: api.status });
@@ -63,6 +64,10 @@ export function Sidebar({ id, path, onFold }: { id: string; path: string; onFold
         )}
       </nav>
 
+      <Link href="/settings" className="sidebar-link" aria-current={path === "/settings" ? "page" : undefined}>
+        <SettingsIcon />
+        설정
+      </Link>
       <details className="sidebar-manage">
         <summary>목록 정리</summary>
         <HistoryActions hasVisible={list.length > 0} />

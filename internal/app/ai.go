@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,16 +43,26 @@ func defaultAITiming() aiTiming {
 	return aiTiming{batchPoll: 30 * time.Second, batchPollMax: 5 * time.Minute}
 }
 
-// aiState keeps API keys and previews in memory only; keys are never
-// written to the database, files or logs.
+// aiState keeps API keys and previews in memory. A key is written to a
+// file only when the user asks to keep it on this computer (the data
+// folder's .env, 0600); never to the database or logs.
 type aiState struct {
-	mu       sync.Mutex
-	keys     map[string]string // provider ID → key
-	previews map[string]*aiPreview
-	active   map[string]*aiActive // run ID → work in progress
-	wg       sync.WaitGroup
-	timing   aiTiming
+	mu        sync.Mutex
+	keys      map[string]string // provider ID → key
+	keySource map[string]string // provider ID → KeyFromEnv, KeyFromFile or KeyInMemory
+	previews  map[string]*aiPreview
+	active    map[string]*aiActive // run ID → work in progress
+	wg        sync.WaitGroup
+	timing    aiTiming
+	fileMu    sync.Mutex // serializes updates of the key file
 }
+
+// Where a provider's key came from.
+const (
+	KeyFromEnv  = "env"    // an environment variable when the app started
+	KeyFromFile = "file"   // the data folder's .env
+	KeyInMemory = "memory" // entered on screen for this run only
+)
 
 // aiActive is a run being sent or waited for.
 type aiActive struct {
@@ -70,19 +81,43 @@ type aiPreview struct {
 }
 
 func (a *App) initAI() {
-	a.ai.keys, a.ai.previews, a.ai.active = map[string]string{}, map[string]*aiPreview{}, map[string]*aiActive{}
+	a.ai.keys, a.ai.keySource = map[string]string{}, map[string]string{}
+	a.ai.previews, a.ai.active = map[string]*aiPreview{}, map[string]*aiActive{}
 	a.ai.timing = defaultAITiming()
 	if a.cfg.AIBatchPoll > 0 {
 		a.ai.timing.batchPoll = a.cfg.AIBatchPoll
 		a.ai.timing.batchPollMax = 4 * a.cfg.AIBatchPoll
 	}
+	var saved []envEntry
+	if a.cfg.DataDir != "" && len(a.cfg.AI.All()) > 0 { // the MCP server registers no provider and never reads keys
+		var err error
+		if saved, err = readEnvFile(a.keyFilePath()); err != nil {
+			slog.Warn("key file unreadable; keys from it are not loaded", "err", err)
+		}
+	}
+	// A key kept with the app wins over the environment: it is the user's latest choice here.
 	for _, p := range a.cfg.AI.All() {
-		if env := p.KeyEnv(); env != "" {
+		if k, _ := lookupEnv(saved, keyName(p)); validKey(k) {
+			a.ai.keys[p.ID()], a.ai.keySource[p.ID()] = k, KeyFromFile
+		} else if env := p.KeyEnv(); env != "" {
 			if k := strings.TrimSpace(os.Getenv(env)); k != "" {
-				a.ai.keys[p.ID()] = k
+				a.ai.keys[p.ID()], a.ai.keySource[p.ID()] = k, KeyFromEnv
 			}
 		}
 	}
+}
+
+// keyName is a provider's line in the key file: its own environment
+// variable, or one made from its ID.
+func keyName(p ai.Provider) string {
+	if env := p.KeyEnv(); env != "" {
+		return env
+	}
+	return "MOMENTFORGE_" + envName(p.ID()) + "_API_KEY"
+}
+
+func validKey(k string) bool {
+	return k != "" && len(k) <= 1024 && !strings.ContainsAny(k, "\r\n")
 }
 
 // AIProvider is a registered provider as screens show it.
@@ -98,6 +133,8 @@ type AIProvider struct {
 	CanListModels bool
 	CanBatch      bool
 	HasPrices     bool
+	KeySource     string // KeyFromEnv, KeyFromFile, KeyInMemory, or "" without a key
+	KeyName       string // the environment variable and key-file line for the key
 }
 
 // AIProviders lists providers (the default first) and whether each has a key.
@@ -111,9 +148,10 @@ func (a *App) AIProviders() []AIProvider {
 		_, batch := p.(ai.BatchProvider)
 		_, priced := p.(ai.Priced)
 		v := AIProvider{ID: p.ID(), Name: p.Name(), Configured: a.ai.keys[p.ID()] != "",
-			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced}
+			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced,
+			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p)}
 		if sa, ok := p.(ai.SelfAuthenticated); ok {
-			v.SelfAuth, v.AuthHelp = true, sa.AuthHelp()
+			v.SelfAuth, v.AuthHelp, v.KeySource, v.KeyName = true, sa.AuthHelp(), "", ""
 			err := sa.Ready()
 			v.Configured = err == nil
 			if ue, ok := domain.AsUserError(err); ok {
@@ -127,30 +165,80 @@ func (a *App) AIProviders() []AIProvider {
 	return out
 }
 
-// SetAIKey keeps (or, when empty, forgets) a provider's key in memory. A
-// new key also resumes batches of that provider waiting for their results.
-func (a *App) SetAIKey(provider, key string) (bool, error) {
+// SetAIKey keeps (or, when empty, forgets) a provider's key. With persist
+// the key is also written to the data folder's .env so the next run has it;
+// without it, or when the key is cleared, the file no longer holds that
+// provider's key. A new key also resumes batches of that provider waiting
+// for their results. It returns where the key now is ("" when cleared).
+func (a *App) SetAIKey(provider, key string, persist bool) (string, error) {
 	p, ok := a.cfg.AI.Get(provider)
 	if !ok {
-		return false, domain.NewUserError("INPUT", "AI 제공자를 선택해 주세요.")
+		return "", domain.NewUserError("INPUT", "AI 제공자를 선택해 주세요.")
 	}
 	if _, self := p.(ai.SelfAuthenticated); self {
-		return false, domain.NewUserError("INPUT", "이 제공자는 MomentForge에 키를 넣지 않고 자체 로그인을 씁니다.")
+		return "", domain.NewUserError("INPUT", "이 제공자는 MomentForge에 키를 넣지 않고 자체 로그인을 씁니다.")
 	}
-	if len(key) > 1024 || strings.ContainsAny(key, "\r\n") {
-		return false, domain.NewUserError("INPUT", "API 키 형식을 확인해 주세요.")
+	if key = strings.TrimSpace(key); key != "" && !validKey(key) {
+		return "", domain.NewUserError("INPUT", "API 키 형식을 확인해 주세요.")
+	}
+	keep := persist && key != ""
+	if keep && a.cfg.DataDir == "" {
+		return "", domain.NewUserError("SETTINGS_UNAVAILABLE", "데이터 폴더가 없어 키를 이 컴퓨터에 저장할 수 없습니다.")
+	}
+	source := KeyInMemory
+	if keep {
+		source = KeyFromFile
+	}
+	// The file and memory change together, one save at a time.
+	a.ai.fileMu.Lock()
+	if a.cfg.DataDir != "" {
+		if err := a.updateKeyFile(keyName(p), key, keep); err != nil {
+			a.ai.fileMu.Unlock()
+			return "", err
+		}
 	}
 	a.ai.mu.Lock()
-	if key = strings.TrimSpace(key); key == "" {
+	if key == "" {
+		source = ""
 		delete(a.ai.keys, provider)
+		delete(a.ai.keySource, provider)
 	} else {
-		a.ai.keys[provider] = key
+		a.ai.keys[provider], a.ai.keySource[provider] = key, source
 	}
 	a.ai.mu.Unlock()
+	a.ai.fileMu.Unlock()
 	if key != "" {
 		a.resumeBatches(a.ctx)
 	}
-	return key != "", nil
+	return source, nil
+}
+
+// updateKeyFile puts name's line in the key file (keep) or takes it out,
+// leaving other lines alone. Nothing is written when nothing changes.
+func (a *App) updateKeyFile(name, key string, keep bool) error {
+	path := a.keyFilePath()
+	failed := func(err error) error {
+		return domain.WrapUserError("KEY_FILE", "키 파일을 고칠 수 없습니다: "+path+". 데이터 폴더의 쓰기 권한을 확인하세요.", err)
+	}
+	entries, err := readEnvFile(path)
+	if err != nil {
+		return failed(err)
+	}
+	var next []envEntry
+	for _, e := range entries {
+		if e.name != name {
+			next = append(next, e)
+		}
+	}
+	if keep {
+		next = append(next, envEntry{name, key})
+	} else if len(next) == len(entries) {
+		return nil
+	}
+	if err := writeEnvFile(path, keyFileHeader, next); err != nil {
+		return failed(err)
+	}
+	return nil
 }
 
 // providerKey returns the key to pass to a provider: the one in memory, or

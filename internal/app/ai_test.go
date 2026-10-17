@@ -108,7 +108,7 @@ func TestAIPreviewConfirmRunAndTimeline(t *testing.T) {
 	if _, err := a.StartAI(ctx, pv.ID, "other", false); !isCode(err, "PREVIEW") {
 		t.Fatalf("changed plan: %v", err)
 	}
-	if ok, _ := a.SetAIKey("fakeai", " key-1 "); !ok || !a.AIProviders()[0].Configured {
+	if src, _ := a.SetAIKey("fakeai", " key-1 ", false); src != KeyInMemory || !a.AIProviders()[0].Configured {
 		t.Fatal("key not kept")
 	}
 	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
@@ -156,7 +156,7 @@ func TestAICancelAndRecovery(t *testing.T) {
 	a := newAIApp(t, f)
 	ctx := context.Background()
 	demo, _ := a.CreateDemo(ctx, false)
-	a.SetAIKey("fakeai", "k")
+	a.SetAIKey("fakeai", "k", false)
 	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", StartMs: 0, EndMs: 600000})
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestAIPreviewPricesCountsAndCaps(t *testing.T) {
 	if _, err := a.CountAIPreview(ctx, pv.ID, pv.Plan.Fingerprint); !isCode(err, "CREDENTIALS") || p.counts != 0 {
 		t.Fatalf("count without a key: %v", err)
 	}
-	a.SetAIKey("priced", "k")
+	a.SetAIKey("priced", "k", false)
 	n, err := a.CountAIPreview(ctx, pv.ID, pv.Plan.Fingerprint)
 	if err != nil || n.InputTokens != 1000*pv.Plan.RequestCount || !n.HasPrice || n.CostUpperUSD <= 0 || n.CostUpperUSD > pv.Plan.CostUpperUSD {
 		t.Fatalf("count %+v err %v", n, err)
@@ -297,8 +297,8 @@ func TestAIBatchRunResumeCancelAndCompare(t *testing.T) {
 	a, p, _ := newPricedApp(t)
 	ctx := context.Background()
 	demo, _ := a.CreateDemo(ctx, false)
-	a.SetAIKey("priced", "k")
-	a.SetAIKey("fakeai", "k")
+	a.SetAIKey("priced", "k", false)
+	a.SetAIKey("fakeai", "k", false)
 	req := AIPreviewRequest{SessionID: demo.ID, Provider: "priced", Model: "m", All: true, CostCapUSD: 10, Delivery: "batch"}
 	pv, err := a.PreviewAI(ctx, req)
 	if err != nil || pv.Plan.Delivery != "batch" {
@@ -333,7 +333,7 @@ func TestAIBatchRunResumeCancelAndCompare(t *testing.T) {
 		}
 	}
 	a.stopAI(ctx) // shutdown: stop waiting, keep the batch
-	a.SetAIKey("priced", "")
+	a.SetAIKey("priced", "", false)
 	if err := a.RecoverAI(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestAIBatchRunResumeCancelAndCompare(t *testing.T) {
 	p.mu.Lock()
 	p.ended = true
 	p.mu.Unlock()
-	a.SetAIKey("priced", "k")
+	a.SetAIKey("priced", "k", false)
 	if v := waitAI(t, a, waiting); v.State != store.AICompleted || len(p.submitted) != 2 {
 		t.Fatalf("resumed batch %+v, %d submissions (never re-sent)", v, len(p.submitted))
 	}
@@ -431,7 +431,7 @@ func TestSelfAuthenticatedProviderNeedsNoKey(t *testing.T) {
 	if !p.SelfAuth || p.Configured || p.NotReady != "CLI를 찾지 못했습니다." || p.AuthHelp == "" {
 		t.Fatalf("provider %+v", p)
 	}
-	if _, err := a.SetAIKey("selfauth", "k"); !isCode(err, "INPUT") {
+	if _, err := a.SetAIKey("selfauth", "k", false); !isCode(err, "INPUT") {
 		t.Fatalf("a key for a self-authenticated provider: %v", err)
 	}
 	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "selfauth", Model: "m", StartMs: 0, EndMs: 600000})

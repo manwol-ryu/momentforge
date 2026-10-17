@@ -112,7 +112,7 @@ momentforge/
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
 ├─ web/                           Vite + React + TS (embed.go: 빌드 결과를 Go 패키지로 내장)
-│  ├─ src/features/{vod,live,timeline,ai,settings}/
+│  ├─ src/features/{home,session,live,settings}/
 │  └─ dist/ → go:embed
 ├─ e2e/                           Python Playwright 정상 작동 테스트 (개발용)
 ├─ .claude/
@@ -337,7 +337,7 @@ Claude 구현 규칙 (claude-api 스킬 기준, `internal/ai/anthropic`):
 | 비용 한도 | 미리보기에서 최대 비용이 한도를 넘는 요청은 "비용 한도"로 빼고, 바로 보내기 중에는 실제 비용 + 다음 요청 최대 비용이 한도를 넘으면 멈춤(`COST_CAP`). 가격을 모르는 모델은 한도·자동 선택을 쓸 수 없음 |
 | 오류 처리 | `errors.As`로 `*anthropic.Error`를 꺼내 상태 코드별 분기: 429·5xx·529와 전송 전 연결 실패는 재시도, 400·401·403·404는 즉시 실패 후 원인 표시. 전송 뒤 결과를 모르면 중복 비용을 막으려 재전송하지 않음 |
 | 거절 | `stop_reason: refusal`은 `AI_REFUSAL`로 표시. 서버 측 대체 모델(fallbacks)은 켜지 않음: 미리보기에서 확인한 모델이 아닌 모델로 채팅이 전송되기 때문 |
-| 인증 | API 키는 서버 메모리에만 보관. 환경변수 `ANTHROPIC_API_KEY`가 있으면 사용. 파일·DB·로그에 쓰지 않음 |
+| 인증 | API 키는 서버 메모리에 보관. 사용자가 "이 컴퓨터에도 저장"을 고른 키만 데이터 폴더의 `.env`(0600)에 쓰고 다음 실행 때 먼저 읽음. 없으면 환경변수 `ANTHROPIC_API_KEY` 사용. DB·로그에 쓰지 않음 (15절) |
 
 공통 흐름은 유지: **미리보기(전송 내용·최대 비용) → 사용자 확인 → 실행**. 수집이 끝나면 확인 없이 저절로 보내는 자동 분석은 하지 않습니다(15절).
 
@@ -405,7 +405,7 @@ type JobManager interface {
 - WAL 모드, 쓰기는 작업별 단일 writer goroutine, 읽기는 커넥션 풀. MCP 서버는 읽기 전용 연결로 같은 DB를 엶.
 - 마이그레이션은 `store/migrations/NNNN_*.sql` + `PRAGMA user_version`.
 - DB가 원본 기준이고 TXT는 DB에서 재생성 가능하다는 원칙 유지.
-- 데이터 폴더: 실행한 위치의 `.momentforge/` (`--data`로 변경). 하위에 `data/`(DB·백업), `exports/`, `runtime/`(접근 키, 서버 락).
+- 데이터 폴더: 실행한 위치의 `.momentforge/` (`--data`로 변경). 하위에 `data/`(DB·백업), `exports/`, `runtime/`(접근 키, 서버 락), `settings.env`(설정 화면의 기본값), `.env`(이 컴퓨터에 저장을 고른 API 키만, 0600). 설정은 DB가 아니라 이 두 파일에 두므로 스키마를 바꾸지 않음.
 
 ## 8. HTTP API
 
@@ -446,6 +446,8 @@ type JobManager interface {
 | `POST /api/ai/preview` `{…, mode: candidates\|all\|range, delivery: single\|batch, costCapUsd}` | 미리보기에 가격·최대 비용·비용 한도로 뺀 요청 포함 | 5 |
 | `POST /api/ai/preview/count` `{previewId, fingerprint}` | 정확한 입력 토큰과 최대 비용. 미리보기의 채팅을 제공자 토큰 계산 API로 보냄(사용자가 누를 때만) | 5 |
 | `GET /api/sessions/{id}/ai/runs`, `GET /api/ai/compare?a=&b=` | 세션의 AI 실행 목록, 두 실행 비교(겹침·한쪽에만 있는 추천) | 5 |
+| `GET /api/settings`, `POST /api/settings` `{aiProvider, aiModels, sensitive, includeComments, viewerAdaptive}` | 설정 화면의 기본값과 두 파일 위치. 저장은 모든 값을 함께 보내야 함(빠지면 `INPUT`) | 설정 |
+| `POST /api/ai/key` `{provider, key, persist}` | `persist`면 키를 데이터 폴더 `.env`에도 씀. 빈 키는 메모리와 `.env`에서 지움. 응답과 `GET /api/ai`는 키 대신 `keySource`(env·file·memory)와 `keyName`만 | 설정 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
 
@@ -457,7 +459,7 @@ type JobManager interface {
 - SSE 구독 훅 하나(`useEvents`)로 LIVE 채팅·후보·진행률 갱신.
 - LIVE 채팅 목록은 가상 스크롤.
 - HLS 재생은 `hls.js` npm 의존성으로 교체 (vendor 파일 제거).
-- 화면 구성: 앱 틀(왼쪽 작업 목록) 안에 새 작업(다시보기·생방송 탭) / 다시보기 작업대(영상·채팅·타임라인 + 후보·AI 검토·댓글·파일 탭) / 생방송 작업대(실시간 채팅·타임라인 + 후보·수집 상태·파일 탭). 2026-10-17 개정, 자세한 배치는 `docs/DESIGN-SYSTEM.md` 4절.
+- 화면 구성: 앱 틀(왼쪽 작업 목록) 안에 새 작업(다시보기·생방송 탭) / 다시보기 작업대(영상·채팅·타임라인 + 후보·AI 검토·댓글·파일 탭) / 생방송 작업대(실시간 채팅·타임라인 + 후보·수집 상태·파일 탭) / 설정(`/settings`, 작업 목록 아래: AI 검토 탭 = 기본 제공자·제공자별 기본 모델·API 키·OpenCode 준비 상태, 새 작업 기본값 탭 = 민감도·댓글 수집·시청자 수 보정). 처음 계획의 "설정(탐지 파라미터·AI 제공자)" 중 탐지 파라미터는 넣지 않음(15절). 2026-10-17 개정, 자세한 배치는 `docs/DESIGN-SYSTEM.md` 4절.
 
 디자인 진행 순서 (스킬의 "계획 → 검토 → 구현 → 자체 점검" 절차)
 
@@ -647,5 +649,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | Tracwell 테마 적용 (사용자 요청) | 사용자가 Tracwell 구조를 충분히 적용했는지 물었고, 앱 견본(사이드바·요약 숫자·막대 목록·카드 셸)과 랜딩 구성을 비교해 보고한 뒤 "해당 페이지 테마와 카드나 디자인들을 최대한 적용"을 요청함. 사이트 CSS의 중립 테마·데이터 색·모서리·그림자·버튼 모양을 토큰으로 옮기고, 참고 이미지 색(2026-10-16)과 "카드 대신 구분선" 원칙을 교체. 카드 셸·시트·떠 있는 틀, 요약 숫자 카드, 근거 채팅 비율 막대, 알약 탭, 세 단계 카드, 떠 있는 휴대폰 머리글을 더함. 주요 버튼 파랑은 흰 글자 대비 4.5:1을 위해 조금 진하게 함. Inter 서체 파일은 넣지 않고 운영체제 UI 서체를 씀(실행 중 외부 서체 금지·실행파일 크기). 자세한 값은 `docs/DESIGN-SYSTEM.md` 2·3·4·7절 |
 | 2026-10-17 | 앱 안 영상 재생 순서 (사용성 점검) | Chrome 141 이후는 HLS 자체 재생을 지원한다고 답하는데, 그 경로는 먼 위치로 이동할 때 영상을 처음부터 내려받아 4시간 다시보기의 2:40:00 후보가 45초 넘게 재생되지 않았음. hls.js를 먼저 쓰고, Media Source를 지원하지 않는 환경(iPhone Safari)에서만 브라우저 자체 재생을 씀. 또 후보의 "영상에서 보기"를 누르면 영상이 화면 밖일 때 영상 쪽으로 스크롤함(움직임 줄이기 설정이면 즉시) |
 | 2026-10-17 | 화면 움직임 (사용자 요청) | 참고 사이트 두 곳(Lucian UX/UI Prompt, Tracwell)의 코드를 분석해 작업 도구에 맞는 움직임만 적용(사용자 선택: "작업 도구에 맞게"). 원칙 3을 "상태 변화에 대한 응답"으로 넓히고 홈 제목 등장 하나만 예외로 둠. 패턴·토큰·규칙은 DESIGN-SYSTEM.md 8절. 후보 출처 선택 상자를 선택 알약(라디오 묶음)으로 바꿈. E2E는 움직임 줄이기 환경에서 돌리고 `test_motion.py`가 움직임을 켜고 확인 |
+| 2026-10-17 | 설정 화면 (사용자 선택) | 작업 목록 아래 **설정**(`/settings`). 항목은 제안대로: 기본 AI 제공자, 제공자별 기본 모델, 제공자별 API 키 입력·지우기와 상태, OpenCode CLI 준비 상태, 새 작업 수집 옵션 기본값 3개. 탐지 임계값은 넣지 않음(같은 채팅이면 같은 후보라는 규칙 버전 원칙). 비밀이 아닌 기본값은 DB 마이그레이션이나 브라우저 저장 대신 사용자가 고른 **데이터 폴더의 `settings.env`**(KEY=값, 0600)에 둠. 데이터 폴더마다 따로이고 `.gitignore` 대상. 화면 양식은 이 값으로 시작하고 양식에서 바꾼 값은 그 작업에만 씀 |
+| 2026-10-17 | API 키 파일 저장 (사용자 선택, 규칙 변경) | 기존 "키는 메모리에만" 규칙을 사용자가 바꿈: 키를 저장할 때 **이 컴퓨터에도 저장**을 고르면 그 키를 데이터 폴더의 `.env`에 평문으로 씀(0600, 임시 파일을 바꿔 끼워 씀, 줄 이름은 `ANTHROPIC_API_KEY`·`OPENAI_API_KEY`, 그 밖의 제공자는 `MOMENTFORGE_<ID>_API_KEY`). 기본은 꺼짐. 시작할 때 `.env`가 환경변수보다 먼저(앱에서 한 마지막 선택). 키 지우기와 고르지 않은 새 키 저장은 그 줄을 지우고, 마지막 줄이면 파일도 지움. DB·로그·브라우저 저장소·API 응답에는 여전히 두지 않음. CLAUDE.md, privacy-security.md, PRIVACY.md 함께 수정 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

@@ -302,6 +302,30 @@ export interface AIProvider {
   canListModels: boolean;
   canBatch: boolean;
   hasPrices: boolean;
+  /** Where the key came from: the environment, the data folder's .env, or entered for this run. */
+  keySource?: AIKeySource;
+  /** The key's environment variable and its line in the data folder's .env. */
+  keyName?: string;
+}
+
+export type AIKeySource = "env" | "file" | "memory";
+
+/** Defaults the screens start from (the data folder's settings.env). Nothing secret. */
+export interface Settings {
+  /** "" for the first provider. */
+  aiProvider: string;
+  /** Provider ID → model; a missing one uses the provider's own default. */
+  aiModels: Record<string, string>;
+  sensitive: boolean;
+  includeComments: boolean;
+  viewerAdaptive: boolean;
+}
+
+export interface SettingsInfo extends Settings {
+  /** settings.env */
+  file: string;
+  /** .env: only the keys the user chose to keep on this computer. */
+  keyFile: string;
 }
 
 export interface AIModel {

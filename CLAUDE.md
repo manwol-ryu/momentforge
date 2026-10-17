@@ -51,7 +51,7 @@ MF_MCP_EVAL_DATA=<빈 폴더> go test ./cmd/momentforge -run TestMCPEvalAnswers 
 
 - 서버는 `127.0.0.1`에만 바인딩하고, 로컬 접근 키·Host·Origin 검사를 유지합니다.
 - 채팅 작성자는 세션별 salt 가명 키로만 저장·표시합니다. 원본 ID·닉네임·프로필·접속 토큰은 저장하지 않습니다.
-- API 키는 메모리에만 둡니다. AI 전송은 사용자가 미리보기를 확인한 뒤에만 실행합니다.
+- API 키는 메모리에 둡니다. 사용자가 "이 컴퓨터에도 저장"을 고른 키만 데이터 폴더의 `.env`(0600)에 쓰고, DB·로그·브라우저 저장소에는 두지 않습니다. AI 전송은 사용자가 미리보기를 확인한 뒤에만 실행합니다.
 - 수집 데이터(`.momentforge/`, `.czzedit/`, `e2e/.data/`)는 커밋하지 않습니다.
 - 자세한 내용: `.claude/skills/momentforge-architecture/references/privacy-security.md`
 

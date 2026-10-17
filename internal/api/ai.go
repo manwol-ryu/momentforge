@@ -22,29 +22,33 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		CanListModels bool   `json:"canListModels"`
 		CanBatch      bool   `json:"canBatch"`
 		HasPrices     bool   `json:"hasPrices"`
+		KeySource     string `json:"keySource,omitempty"` // env | file | memory
+		KeyName       string `json:"keyName,omitempty"`
 	}
 	out := []providerJSON{}
 	for _, p := range h.cfg.Core.AIProviders() {
 		out = append(out, providerJSON(p))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providers": out, "keyStorage": "memory"})
+	writeJSON(w, http.StatusOK, map[string]any{"providers": out})
 }
 
-// aiKey keeps a key in server memory; it is never echoed back or stored.
+// aiKey keeps a key in server memory, and in the data folder's .env only
+// with persist. The key is never echoed back or logged.
 func (h *handler) aiKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
+		Persist  bool   `json:"persist"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	ok, err := h.cfg.Core.SetAIKey(body.Provider, body.Key)
+	source, err := h.cfg.Core.SetAIKey(body.Provider, body.Key, body.Persist)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"configured": ok, "storage": "memory"})
+	writeJSON(w, http.StatusOK, map[string]any{"configured": source != "", "keySource": source})
 }
 
 // aiModels asks the provider which models the key can use (only the key is sent).

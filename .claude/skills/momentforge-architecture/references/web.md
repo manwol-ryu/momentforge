@@ -15,7 +15,7 @@
 - Vite + React + TypeScript `strict`. `any`를 쓰지 않습니다. 서버 응답 타입은 `web/src/api/types.ts`에 둡니다.
 - 서버 상태는 TanStack Query로만 가져옵니다. 컴포넌트에서 `fetch`를 직접 호출하지 않습니다.
 - 실시간 데이터는 `useEvents` 훅 하나로 SSE를 구독합니다. `setInterval` 폴링을 만들지 않습니다.
-- 기능별 폴더: `web/src/features/{home,session,live}/`. 기능끼리 서로 import하지 않고, 공용 코드는 `web/src/shared/`에 둡니다. 앱 틀(작업 목록 사이드바·휴대폰 서랍)은 `web/src/app/`에 두며 `shared`만 씁니다. 화면을 고르고 틀에 넣는 일은 `main.tsx`만 합니다.
+- 기능별 폴더: `web/src/features/{home,session,live,settings}/`. 기능끼리 서로 import하지 않고, 공용 코드는 `web/src/shared/`에 둡니다. 앱 틀(작업 목록 사이드바·휴대폰 서랍)은 `web/src/app/`에 두며 `shared`만 씁니다. 화면을 고르고 틀에 넣는 일은 `main.tsx`만 합니다.
 - 긴 채팅 목록은 가상 스크롤을 씁니다.
 - HLS 재생은 npm `hls.js`를 씁니다.
 - 빌드 결과(`web/dist`)는 Go `embed`로 실행파일에 들어갑니다. 실행 중에 외부 CDN에서 스크립트·서체를 불러오지 않습니다 (로컬 앱 원칙).
