@@ -10,6 +10,7 @@ import { RollingNumber } from "../../shared/motion/RollingNumber";
 import { Stats } from "../../shared/motion/Stats";
 import { Tabs } from "../../shared/motion/Tabs";
 import { useDocumentTitle } from "../../shared/navigation";
+import { VideoPlayer } from "../../shared/player/VideoPlayer";
 import { liveStateText } from "../../shared/sessionText";
 import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { Timeline } from "../../shared/timeline/Timeline";
@@ -21,9 +22,9 @@ const viewerText = { active: "적용 중", warming_up: "학습 중", missing: "�
 type PanelTab = "candidates" | "status" | "files";
 
 /**
- * A LIVE capture as a workbench: state and controls on top, the incoming
- * chat and the reaction timeline held in view, and candidates, capture
- * state and files in tabs beside them.
+ * A LIVE capture as a workbench: state and controls on top, the broadcast,
+ * the incoming chat and the reaction timeline held in view, and candidates,
+ * capture state and files in tabs beside them.
  */
 export function LiveView({ id }: { id: string }) {
   const status = useQuery({ queryKey: ["live", id], queryFn: () => api.liveStatus(id) });
@@ -156,8 +157,9 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
 
   return (
     <>
-      <section className="ws-stage" aria-label="실시간 채팅과 타임라인">
-        <div className="stage-media">
+      <section className="ws-stage" aria-label={v.session.canPlay ? "영상, 실시간 채팅, 타임라인" : "실시간 채팅과 타임라인"}>
+        <div className="stage-media" data-video={v.session.canPlay || undefined}>
+          {v.session.canPlay && <LiveVideo v={v} />}
           <div className="stage-chat card">
             <div className="card-head">
               <h2 id="live-chat-title" className="stage-title">
@@ -242,6 +244,34 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
         />
       </aside>
     </>
+  );
+}
+
+/**
+ * The broadcast as the platform streams it now. It plays only while the
+ * capture runs: an old capture would otherwise show whatever the channel
+ * broadcasts today, and nothing loads until play is pressed.
+ */
+function LiveVideo({ v }: { v: LiveStatus }) {
+  const elsewhere = v.session.watchUrl ? `위의 ‘${v.session.platformName}에서 열기’로 볼 수 있습니다.` : undefined;
+  return (
+    <div className="stage-video card">
+      <div className="card-head">
+        <h2 className="stage-title">영상</h2>
+        <span className="stage-time">{v.running ? "지금 방송" : "꺼짐"}</span>
+      </div>
+      <div className="card-body card-screen">
+        {v.running ? (
+          <VideoPlayer sessionId={v.session.id} live fallback={elsewhere} />
+        ) : (
+          <div className="player-off">
+            <p className="player-note">
+              생방송 영상은 수집하는 동안에만 보여 줍니다.{v.session.canResume ? " 이어 기록하면 다시 불러옵니다." : ""}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -150,6 +150,7 @@ type LiveSource interface {                      // 끝이 없는 채팅 스트�
 
 type CommentSource interface { Comments(ctx context.Context, t Target) ([]Comment, error) }
 type PlaybackSource interface { HLS(ctx context.Context, t Target) (PlaybackInfo, error) }
+type LivePlaybackSource interface { LivePlayback(ctx context.Context, t Target) (Playback, error) } // 생방송의 지금 방송 (15절 2026-10-17)
 type ViewerSource interface { Viewers(ctx context.Context, t Target) (int, error) }
 ```
 
@@ -421,7 +422,7 @@ type JobManager interface {
 | `GET /api/sessions`, `GET /api/sessions/{id}` | 저장한 작업 목록·상세 (salt·원문 제외) | 2 |
 | `POST /api/sessions/{id}/resume`, `/analyses` | 이어받기, 다시 분석 (202) | 2 |
 | `GET /api/sessions/{id}/chats?at=&analysis=` | 재생 위치 앞뒤 30초 채팅 (앞뒤 150건씩) | 2 |
-| `GET /api/sessions/{id}/playback` | 공개 HLS 주소 (저장하지 않음) | 2 |
+| `GET /api/sessions/{id}/playback` | 공개 HLS 주소: 다시보기 영상, 생방송 수집이면 그 채널의 지금 방송 (저장하지 않음) | 2 |
 | `GET /api/sessions/{id}/files`, `/files/*` | 내보내기 파일 목록·다운로드 | 2 |
 | `GET /api/analyses/{id}` | 분석 결과 (창, 후보, 근거 요약, 플랫폼 링크) | 2 |
 | `GET /api/analyses/{id}/candidates/{cid}/chats?offset=` | 후보 편집 구간 채팅 (근거 표시, 페이지) | 2 |
@@ -647,5 +648,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | Tracwell 테마 적용 (사용자 요청) | 사용자가 Tracwell 구조를 충분히 적용했는지 물었고, 앱 견본(사이드바·요약 숫자·막대 목록·카드 셸)과 랜딩 구성을 비교해 보고한 뒤 "해당 페이지 테마와 카드나 디자인들을 최대한 적용"을 요청함. 사이트 CSS의 중립 테마·데이터 색·모서리·그림자·버튼 모양을 토큰으로 옮기고, 참고 이미지 색(2026-10-16)과 "카드 대신 구분선" 원칙을 교체. 카드 셸·시트·떠 있는 틀, 요약 숫자 카드, 근거 채팅 비율 막대, 알약 탭, 세 단계 카드, 떠 있는 휴대폰 머리글을 더함. 주요 버튼 파랑은 흰 글자 대비 4.5:1을 위해 조금 진하게 함. Inter 서체 파일은 넣지 않고 운영체제 UI 서체를 씀(실행 중 외부 서체 금지·실행파일 크기). 자세한 값은 `docs/DESIGN-SYSTEM.md` 2·3·4·7절 |
 | 2026-10-17 | 앱 안 영상 재생 순서 (사용성 점검) | Chrome 141 이후는 HLS 자체 재생을 지원한다고 답하는데, 그 경로는 먼 위치로 이동할 때 영상을 처음부터 내려받아 4시간 다시보기의 2:40:00 후보가 45초 넘게 재생되지 않았음. hls.js를 먼저 쓰고, Media Source를 지원하지 않는 환경(iPhone Safari)에서만 브라우저 자체 재생을 씀. 또 후보의 "영상에서 보기"를 누르면 영상이 화면 밖일 때 영상 쪽으로 스크롤함(움직임 줄이기 설정이면 즉시) |
 | 2026-10-17 | 화면 움직임 (사용자 요청) | 참고 사이트 두 곳(Lucian UX/UI Prompt, Tracwell)의 코드를 분석해 작업 도구에 맞는 움직임만 적용(사용자 선택: "작업 도구에 맞게"). 원칙 3을 "상태 변화에 대한 응답"으로 넓히고 홈 제목 등장 하나만 예외로 둠. 패턴·토큰·규칙은 DESIGN-SYSTEM.md 8절. 후보 출처 선택 상자를 선택 알약(라디오 묶음)으로 바꿈. E2E는 움직임 줄이기 환경에서 돌리고 `test_motion.py`가 움직임을 켜고 확인 |
+| 2026-10-17 | 생방송 영상 재생 (사용자 요청, 기존에 없던 기능) | 다시보기용 `PlaybackSource`와 따로 선택 인터페이스 `LivePlaybackSource`를 둠(생방송만·다시보기만 재생하는 플랫폼을 구분하고, E2E 가짜 다시보기 화면을 바꾸지 않기 위함). 같은 `GET /api/sessions/{id}/playback`이 작업 종류에 따라 고름. 치지직은 `LiveMeta`가 읽는 같은 `live-detail`(v2)의 `livePlaybackJson`에서 `mediaId` HLS(없으면 LLHLS)를 쓰고, 다시보기와 같은 `paidLive`·`playbackAuthType` 검사에 방송 중·연령 제한·유료 상품 검사를 더함. 화면 요청이라 재시도 없이 한 번(8초) 요청. 실제 확인에서 생방송 CDN이 요청마다 바뀌는 것(GCDN `ex-nlive-streaming.navercdn.com`, LCDN `livecloud.pstatic.net`, NVELOP `nvelop-livecloud.pstatic.net`)을 발견해 생방송에만 `*.pstatic.net`을 허용하고 치지직 CSP 미디어 출처에 더함(다시보기는 `*.navercdn.com`만). 재생 주소는 기존처럼 돌려주기만 하고 저장하지 않음. 화면은 생방송 무대에 '영상' 카드를 두되 수집 중일 때만 재생기를 띄움(멈춘 기록에서 열면 그때가 아니라 지금 방송이 나오고 외부 요청도 생기기 때문). hls.js는 재생을 누를 때 받기 시작하고 멈추면 받기를 멈춤(`autoStartLoad: false`, 몇 시간 띄워 두는 작업이라). 치지직 생방송 재생 목록은 10초 조각이라 선언하고 2초 조각을 담으므로, 기본 지연(목표 길이 3배 = 30초 창의 맨 앞) 대신 초 단위 지연을 씀(실제 약 11초). 그 재생 목록의 `EXT-X-DATERANGE` 때문에 hls.js가 `data:` 트랙을 만들어 CSP에 막히므로 시간 메타데이터 큐를 끔(다시보기도 같이). 무대가 좁아 영상 위·채팅 아래로 나뉘면 생방송은 채팅에 더 많은 높이를 줌. E2E는 가짜 플랫폼이 루프백 서버에서 만드는 무음 AAC 생방송 HLS를 실제로 재생해 확인(외부 연결 없음) |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

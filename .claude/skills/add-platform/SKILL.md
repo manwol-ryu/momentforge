@@ -23,6 +23,7 @@ metadata:
 | `PlaybackSource` | 앱 안 재생 시 | 공개 HLS 주소. 서명된 주소이므로 저장하지 않음 |
 | `LinkSource` | 권장 | 플랫폼 자체 플레이어의 해당 시각 링크 |
 | `LiveSource` | 3단계 | 생방송 채팅 스트림 |
+| `LivePlaybackSource` | 생방송 앱 안 재생 시 | 채널의 지금 방송 공개 HLS 주소. 방송 중이 아니면 `LIVE_OFFLINE`. 저장하지 않으며, 영상 CDN이 여러 곳이면 모두 `MediaOrigins()`에 넣음 |
 
 ## 2. 구현 규칙
 

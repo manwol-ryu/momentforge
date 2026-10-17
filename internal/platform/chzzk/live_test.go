@@ -197,6 +197,85 @@ func TestParseLiveMeta(t *testing.T) {
 	}
 }
 
+// livePB is a livePlaybackJson shaped like CHZZK's (2026-10 check): an
+// LLHLS and a plain HLS media on the live CDN. All values are synthetic.
+func livePB(paid bool, auth string, media ...map[string]any) string {
+	list := make([]any, len(media))
+	for i, m := range media {
+		list[i] = m
+	}
+	b, _ := json.Marshal(map[string]any{"meta": map[string]any{"paidLive": paid, "playbackAuthType": auth, "cdnInfo": map[string]any{"cdnType": "GCDN"}},
+		"media": list, "live": map[string]any{"status": "STARTED"}})
+	return string(b)
+}
+
+func TestLivePlayback(t *testing.T) {
+	const hls, ll = "https://ex-nlive-streaming.navercdn.com/chzzk/x_hls_playlist.m3u8?hdnts=st", "https://ex-nlive-streaming.navercdn.com/chzzk/x_playlist.m3u8?hdnts=st"
+	both := livePB(false, "NONE", map[string]any{"mediaId": "LLHLS", "protocol": "HLS", "path": ll},
+		map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": hls})
+	open := func(extra map[string]any) map[string]any {
+		c := map[string]any{"status": "OPEN", "adult": false, "paidProduct": nil, "paidPromotion": false, "livePlaybackJson": both}
+		for k, v := range extra {
+			c[k] = v
+		}
+		return c
+	}
+	cases := map[string]struct {
+		content map[string]any
+		url     string
+		code    string
+	}{
+		"plain HLS first": {open(nil), hls, ""},
+		"livecloud CDN": {open(map[string]any{"livePlaybackJson": livePB(false, "NONE",
+			map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": "https://livecloud.pstatic.net/chzzk/x_hls_playlist.m3u8"})}), "https://livecloud.pstatic.net/chzzk/x_hls_playlist.m3u8", ""},
+		"LLHLS only": {open(map[string]any{"livePlaybackJson": livePB(false, "NONE",
+			map[string]any{"mediaId": "LLHLS", "protocol": "HLS", "path": ll})}), ll, ""},
+		"offline":        {open(map[string]any{"status": "CLOSE", "livePlaybackJson": nil}), "", "LIVE_OFFLINE"},
+		"adult":          {open(map[string]any{"adult": true, "livePlaybackJson": nil}), "", "PLAYBACK_RESTRICTED"},
+		"paid product":   {open(map[string]any{"paidProduct": map[string]any{"id": "p1"}}), "", "PLAYBACK_RESTRICTED"},
+		"paid live":      {open(map[string]any{"livePlaybackJson": livePB(true, "NONE", map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": hls})}), "", "PLAYBACK_UNAVAILABLE"},
+		"auth":           {open(map[string]any{"livePlaybackJson": livePB(false, "TOKEN", map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": hls})}), "", "PLAYBACK_UNAVAILABLE"},
+		"other cdn":      {open(map[string]any{"livePlaybackJson": livePB(false, "NONE", map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": "https://evil.example/x.m3u8"})}), "", "PLAYBACK_UNAVAILABLE"},
+		"plain http":     {open(map[string]any{"livePlaybackJson": livePB(false, "NONE", map[string]any{"mediaId": "HLS", "protocol": "HLS", "path": "http://a.navercdn.com/x.m3u8"})}), "", "PLAYBACK_UNAVAILABLE"},
+		"no stream":      {open(map[string]any{"livePlaybackJson": nil}), "", "PLAYBACK_UNAVAILABLE"},
+		"broken json":    {open(map[string]any{"livePlaybackJson": "{"}), "", "PLAYBACK_UNAVAILABLE"},
+		"missing detail": {nil, "", "LIVE_MISSING"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var path string
+			c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				if tc.content == nil {
+					w.Write([]byte(`{"code":200,"content":null}`))
+					return
+				}
+				w.Write(content(tc.content))
+			})
+			got, err := c.LivePlayback(context.Background(), liveTarget)
+			if path != "/service/v2/channels/"+liveTarget.ID+"/live-detail" {
+				t.Fatalf("requested %q", path)
+			}
+			if tc.code == "" {
+				if err != nil || got.URL != tc.url || got.Type != "hls" {
+					t.Fatalf("got %+v, %v", got, err)
+				}
+				return
+			}
+			if code(err) != tc.code {
+				t.Fatalf("err = %v, want %s", err, tc.code)
+			}
+		})
+	}
+}
+
+func TestLivePlaybackAccessDenied(t *testing.T) {
+	c := fake(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := c.LivePlayback(context.Background(), liveTarget); code(err) != "LIVE_ACCESS" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestMatchLive(t *testing.T) {
 	id := strings.Repeat("AB", 16)
 	got, ok, err := New().Match("https://chzzk.naver.com/live/" + id)

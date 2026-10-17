@@ -235,6 +235,7 @@ func TestPlayback(t *testing.T) {
 		"adult":     {map[string]any{"adult": true}, "", "PLAYBACK_RESTRICTED"},
 		"paid":      {map[string]any{"paidProductId": "p1"}, "", "PLAYBACK_RESTRICTED"},
 		"other cdn": {map[string]any{"liveRewindPlaybackJson": pb("https://evil.example/x.m3u8", "NONE")}, "", "PLAYBACK_UNAVAILABLE"},
+		"live cdn":  {map[string]any{"liveRewindPlaybackJson": pb("https://livecloud.pstatic.net/x.m3u8", "NONE")}, "", "PLAYBACK_UNAVAILABLE"},
 		"auth":      {map[string]any{"liveRewindPlaybackJson": pb("https://a.navercdn.com/x.m3u8", "TOKEN")}, "", "PLAYBACK_UNAVAILABLE"},
 	}
 	for name, tc := range cases {

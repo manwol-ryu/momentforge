@@ -60,7 +60,7 @@ func newFakeLive(origin time.Time) *fakeLive {
 		StartedAt: origin, Viewers: 1000}}
 }
 
-func newLiveApp(t *testing.T, src *fakeLive, tune func(*liveTiming)) *App {
+func newLiveApp(t *testing.T, src platform.Platform, tune func(*liveTiming)) *App {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), dir, "test")
@@ -338,6 +338,73 @@ func TestLiveEndsWhenBroadcastCloses(t *testing.T) {
 	}
 	if _, err := a.ResumeLive(context.Background(), info.ID); !isCode(err, "LIVE_OFFLINE") {
 		t.Fatalf("resume after end: %v", err)
+	}
+}
+
+// fakeLivePlay is fakeLive with a public stream of the current broadcast.
+type fakeLivePlay struct {
+	*fakeLive
+	asked []platform.Target
+}
+
+func (f *fakeLivePlay) LivePlayback(ctx context.Context, t platform.Target) (platform.Playback, error) {
+	f.asked = append(f.asked, t)
+	return platform.Playback{URL: "https://media.example/" + t.ID + ".m3u8?sig=secret", Type: "hls"}, nil
+}
+
+func TestLivePlaybackResolvesTheBroadcastWithoutStoringIt(t *testing.T) {
+	ctx := context.Background()
+	origin := time.Now().Add(-10 * time.Minute)
+	idle := func(ctx context.Context, n int, sink platform.LiveSink) error {
+		sink.Connected(origin.Add(10 * time.Minute))
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	src := newFakeLive(origin)
+	src.script = idle
+	play := &fakeLivePlay{fakeLive: src}
+	a := newLiveApp(t, play, nil)
+	info, err := a.StartLive(ctx, LiveRequest{URL: "live:ch1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.CanPlay {
+		t.Fatal("a LIVE capture on a platform with a live stream should be playable")
+	}
+	pb, err := a.Playback(ctx, info.ID)
+	if err != nil || pb.URL != "https://media.example/ch1.m3u8?sig=secret" || pb.Type != "hls" {
+		t.Fatalf("playback = %+v, %v", pb, err)
+	}
+	if len(play.asked) != 1 || play.asked[0] != (platform.Target{Platform: "fakelive", Kind: platform.KindLive, ID: "ch1"}) {
+		t.Fatalf("asked %+v", play.asked)
+	}
+	a.StopLive(info.ID)
+	waitLive(t, a, info.ID, "stop", stopped)
+	a.Shutdown(ctx)
+	// The signed URL was returned, never written down.
+	filepath.WalkDir(a.cfg.DataDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), "sig=secret") {
+			t.Errorf("%s contains the stream URL", path)
+		}
+		return nil
+	})
+
+	// A platform without a live stream: not playable, refused.
+	plain := newFakeLive(origin)
+	plain.script = idle
+	b := newLiveApp(t, plain, nil)
+	info, err = b.StartLive(ctx, LiveRequest{URL: "live:ch1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.CanPlay {
+		t.Fatal("a platform without LivePlayback should not be playable")
+	}
+	if _, err := b.Playback(ctx, info.ID); !isCode(err, "PLAYBACK_UNAVAILABLE") {
+		t.Fatalf("playback without a stream: %v", err)
 	}
 }
 

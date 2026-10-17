@@ -35,7 +35,7 @@ type SessionInfo struct {
 	UpdatedAt          time.Time
 	IsDemo             bool
 	CanResume          bool // paused and the platform can collect it
-	CanPlay            bool // the platform can stream it in the app
+	CanPlay            bool // the platform can stream it (a LIVE capture: the channel's current broadcast) in the app
 	CanReadComments    bool // the platform can read the video's comments
 	WatchURL           string
 }
@@ -53,7 +53,9 @@ func (a *App) info(s store.Session) SessionInfo {
 		_, live := p.(platform.LiveSource)
 		_, play := p.(platform.PlaybackSource)
 		if s.Kind == string(platform.KindLive) {
+			_, livePlay := p.(platform.LivePlaybackSource)
 			out.CanResume = live && (s.State == store.LiveStopped || s.State == store.LiveError || s.State == store.LiveIncomplete)
+			out.CanPlay = livePlay
 		} else {
 			_, comments := p.(platform.CommentSource)
 			out.CanResume = vod && (s.State == store.StatePaused || s.State == store.StateCommentsOnly)
@@ -196,22 +198,29 @@ type PlaybackInfo struct {
 	Type string // "hls"
 }
 
-// Playback resolves a public stream for a session's video. The URL is
-// signed and short-lived; it is returned, never stored.
+// Playback resolves a public stream for a session's video: the VOD, or for
+// a LIVE capture the channel's current broadcast. The URL is signed and
+// short-lived; it is returned, never stored.
 func (a *App) Playback(ctx context.Context, sid string) (PlaybackInfo, error) {
 	s, err := a.cfg.Store.Session(ctx, sid)
 	if err != nil {
 		return PlaybackInfo{}, err
 	}
+	t := platform.Target{Platform: s.Platform, Kind: platform.Kind(s.Kind), ID: s.TargetID}
 	p, ok := a.cfg.Platforms.Get(s.Platform)
-	src, can := p.(platform.PlaybackSource)
-	if !ok || !can {
+	var resolve func(context.Context, platform.Target) (platform.Playback, error)
+	if src, can := p.(platform.LivePlaybackSource); can && t.Kind == platform.KindLive {
+		resolve = src.LivePlayback
+	} else if src, can := p.(platform.PlaybackSource); can && t.Kind != platform.KindLive {
+		resolve = src.Playback
+	}
+	if !ok || resolve == nil {
 		if IsDemo(s) {
 			return PlaybackInfo{}, domain.NewUserError("DEMO", "샘플 채팅에는 연결된 영상이 없습니다.")
 		}
 		return PlaybackInfo{}, domain.NewUserError("PLAYBACK_UNAVAILABLE", "이 작업은 앱 안에서 재생할 수 없습니다.")
 	}
-	pb, err := src.Playback(ctx, platform.Target{Platform: s.Platform, Kind: platform.Kind(s.Kind), ID: s.TargetID})
+	pb, err := resolve(ctx, t)
 	if err != nil {
 		return PlaybackInfo{}, err
 	}
