@@ -315,6 +315,10 @@ textarea {
   font-size: var(--text-xs);
 }
 
+.check[data-disabled] {
+  color: var(--muted);
+}
+
 .collect {
   min-width: 0;
 }
@@ -1950,6 +1954,10 @@ textarea {
   align-items: center;
   margin-top: var(--space-2);
   font-size: var(--text-xs);
+}
+
+.candidate-actions:empty {
+  display: none;
 }
 
 .evidence {

@@ -72,6 +72,7 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		ItemIDs    []string `json:"itemIds"`
 		StartMs    int64    `json:"startMs"`
 		EndMs      int64    `json:"endMs"`
+		ToEnd      bool     `json:"toEnd"`
 		Delivery   string   `json:"delivery"` // single | batch
 		CostCapUSD float64  `json:"costCapUsd"`
 	}
@@ -79,7 +80,7 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := app.AIPreviewRequest{SessionID: body.SessionID, Provider: body.Provider, Model: body.Model,
-		StartMs: body.StartMs, EndMs: body.EndMs, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD}
+		StartMs: body.StartMs, EndMs: body.EndMs, ToEnd: body.ToEnd, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD}
 	switch body.Mode {
 	case "all":
 		req.All = true

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIDelivery, AIModel, AIPreview, AIRun, AITokenCount, Session } from "../../api/types";
-import { useEvents } from "../../shared/events";
-import { timecode, tokens, usd } from "../../shared/format";
-import { Segmented } from "../../shared/motion/Segmented";
+import { useEvents } from "../events";
+import { timecode, tokens, usd } from "../format";
+import { Segmented } from "../motion/Segmented";
 
 const runStateText: Record<AIRun["state"], string> = {
   running: "보내는 중",
@@ -18,6 +18,12 @@ const modeHelp = {
   candidates: "후보 목록에서 ‘AI 검토에 포함’으로 고른 후보의 편집 구간과 앞뒤 채팅을 보냅니다.",
   all: "자동 탐지와 시청자 추천 후보를 모두 고르고, 비용 한도 안에서만 보냅니다.",
   range: "지정한 구간의 채팅을 그대로 보냅니다.",
+} as const;
+
+const liveModeHelp = {
+  candidates: "후보 목록에서 ‘AI 검토에 포함’으로 고른 확정 후보의 편집 구간과 앞뒤 채팅을 보냅니다.",
+  all: "확정된 자동 탐지 후보를 모두 고르고, 비용 한도 안에서만 보냅니다.",
+  range: (endMs: number) => `지정한 구간의 채팅을 그대로 보냅니다. 끝 시각을 비우면 분석을 마친 ${timecode(endMs, true)}까지 보냅니다.`,
 } as const;
 
 const deliveryHelp = {
@@ -63,6 +69,12 @@ interface Props {
   s: Session;
   /** Timeline item IDs ticked in the candidate list. */
   selection: string[];
+  /**
+   * A LIVE capture's analysed point: a range ends by it (an empty end asks
+   * the server for its own), and the help says a plan holds only the chat
+   * stored when it was previewed.
+   */
+  liveEndMs?: number;
 }
 
 /**
@@ -70,7 +82,7 @@ interface Props {
  * with its most possible cost, and nothing is sent until the user confirms
  * that exact plan.
  */
-export function AIPanel({ s, selection }: Props) {
+export function AIPanel({ s, selection, liveEndMs }: Props) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
@@ -81,7 +93,8 @@ export function AIPanel({ s, selection }: Props) {
   const [key, setKey] = useState("");
   const [mode, setMode] = useState<"candidates" | "all" | "range">("candidates");
   const [from, setFrom] = useState("0:00:00");
-  const [to, setTo] = useState(timecode(s.durationMs, true));
+  const live = liveEndMs !== undefined;
+  const [to, setTo] = useState(live ? "" : timecode(s.durationMs, true));
   const [delivery, setDelivery] = useState<AIDelivery>("single");
   const [cap, setCap] = useState("");
   const [preview, setPreview] = useState<AIPreview | null>(null);
@@ -116,6 +129,7 @@ export function AIPanel({ s, selection }: Props) {
     if (!runId && running) setRunId(running.id);
   }, [runId, running]);
 
+  const toEnd = live && to.trim() === "";
   const capValue = cap.trim() === "" ? undefined : Number(cap);
   const capInvalid = capValue !== undefined && (!Number.isFinite(capValue) || capValue <= 0);
 
@@ -140,7 +154,9 @@ export function AIPanel({ s, selection }: Props) {
         mode,
         itemIds: mode === "candidates" ? selection : undefined,
         startMs: mode === "range" ? parseTime(from) : undefined,
-        endMs: mode === "range" ? parseTime(to) : undefined,
+        // An empty LIVE end is the server's analysed point when previewing, not this screen's last copy of it.
+        endMs: mode === "range" && !toEnd ? parseTime(to) : undefined,
+        toEnd: mode === "range" && toEnd ? true : undefined,
         delivery,
         costCapUsd: capValue,
       }),
@@ -186,6 +202,7 @@ export function AIPanel({ s, selection }: Props) {
         고른 후보 앞뒤 채팅이나 지정한 구간의 채팅만 외부 AI API로 보냅니다. 보내기 전에 보낼 내용과 최대 비용을 그대로 보여
         드리고, 확인해야 보냅니다. API 키는 앱이 실행되는 동안 메모리에만 둡니다. 제공자의 데이터 보관 정책이 따로 적용될 수
         있습니다.
+        {live && " 생방송은 수집 중에도 저절로 보내지 않으며, 미리보기를 만든 순간까지 저장된 채팅만 보내고 그 뒤에 받은 채팅은 넣지 않습니다."}
       </p>
       <div className="ai-grid">
         {list.length > 1 && (
@@ -263,11 +280,19 @@ export function AIPanel({ s, selection }: Props) {
             { value: "range" as const, label: "채팅 구간 직접 지정" },
           ]}
         />
-        <p className="field-help">{modeHelp[mode]}</p>
+        <p className="field-help">
+          {!live ? modeHelp[mode] : mode === "range" ? liveModeHelp.range(liveEndMs) : liveModeHelp[mode]}
+        </p>
         {mode === "range" && (
           <span className="ai-range">
             <input type="text" aria-label="시작 시각" value={from} onChange={(e) => setFrom(e.target.value)} /> ~{" "}
-            <input type="text" aria-label="끝 시각" value={to} onChange={(e) => setTo(e.target.value)} />
+            <input
+              type="text"
+              aria-label="끝 시각"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder={live ? "분석한 위치" : undefined}
+            />
           </span>
         )}
       </div>

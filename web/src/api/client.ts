@@ -100,6 +100,8 @@ export const api = {
     itemIds?: string[];
     startMs?: number;
     endMs?: number;
+    /** Range up to where the session offers (a VOD's end, a LIVE capture's analysed point) instead of endMs. */
+    toEnd?: boolean;
     delivery: AIDelivery;
     costCapUsd?: number;
   }) => postJSON<AIPreview>("/api/ai/preview", req),

@@ -196,9 +196,10 @@ type AIPreviewRequest struct {
 	Provider   string
 	Model      string
 	ItemIDs    []string // unified timeline item IDs (not AI ones); nil for All or a range
-	All        bool     // every rule and viewer candidate (automatic selection; needs a cost cap)
+	All        bool     // every candidate offered: rule and viewer ones, a LIVE capture's settled ones (needs a cost cap)
 	StartMs    int64    // range mode
 	EndMs      int64
+	ToEnd      bool    // range mode: up to where the session offers instead of EndMs (aiSource.endMs)
 	Delivery   string  // single (default) | batch
 	CostCapUSD float64 // 0: no limit
 }
@@ -210,7 +211,8 @@ type AIPreview struct {
 	Plan      ai.Plan
 }
 
-// PreviewAI prepares (but does not send) a review.
+// PreviewAI prepares (but does not send) a review of a VOD or a LIVE capture,
+// running or not (aiSource says what each offers).
 func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, error) {
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" || len(req.Model) > aiMaxModelLength {
@@ -246,30 +248,17 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	if req.CostCapUSD > 0 && in.Price == nil {
 		return AIPreview{}, domain.NewUserError("INPUT", "가격을 알 수 없는 모델에는 비용 한도를 적용할 수 없습니다.")
 	}
-	tl, err := a.Timeline(ctx, req.SessionID)
+	src, err := a.aiSource(ctx, req.SessionID)
 	if err != nil {
 		return AIPreview{}, err
 	}
-	maxSeq := int64(store.AllSeq)
-	stats := map[string]map[string]any{}
-	if tl.AnalysisID != "" {
-		an, err := a.cfg.Store.Analysis(ctx, tl.AnalysisID)
-		if err != nil {
-			return AIPreview{}, err
-		}
-		maxSeq = an.MaxSeq
-		for _, c := range an.Candidates {
-			stats[SourceRule+":"+c.ID] = map[string]any{"n": c.Peak.N, "u": c.Peak.U, "ratio": c.Peak.Ratio, "z": c.Peak.Z,
-				"baseline_n": c.Peak.BaselineN}
-		}
-	}
 	in.Chats = func(from, to int64) ([]domain.ChatEvent, error) {
-		chats, _, err := a.cfg.Store.ChatsBetween(ctx, req.SessionID, from, to, maxSeq, 1_000_000, 0)
+		chats, _, err := a.cfg.Store.ChatsBetween(ctx, req.SessionID, from, to, src.maxSeq, 1_000_000, 0)
 		return chats, err
 	}
 	add := func(it TimelineItem) {
 		in.Candidates = append(in.Candidates, ai.Candidate{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs,
-			Title: it.Title, Statistics: stats[it.ID]})
+			Title: it.Title, Statistics: src.stats[it.ID]})
 		start := it.ClipStartMs
 		if it.Source == SourceViewer {
 			start = max(0, it.AnchorMs-30000)
@@ -279,13 +268,11 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	}
 	switch {
 	case req.All:
-		for _, it := range tl.Items {
-			if it.Source != SourceAI {
-				add(it)
-			}
+		for _, it := range src.items {
+			add(it)
 		}
 		if len(in.Candidates) == 0 {
-			return AIPreview{}, domain.NewUserError("INPUT", "검토할 후보가 없습니다. 먼저 분석하거나 영상 댓글을 읽어 주세요.")
+			return AIPreview{}, domain.NewUserError("INPUT", src.none)
 		}
 	case req.ItemIDs != nil:
 		if len(req.ItemIDs) == 0 {
@@ -295,18 +282,26 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 		for _, id := range req.ItemIDs {
 			want[id] = true
 		}
-		for _, it := range tl.Items {
-			if want[it.ID] && it.Source != SourceAI {
+		for _, it := range src.items {
+			if want[it.ID] {
 				delete(want, it.ID)
 				add(it)
+			}
+		}
+		for id := range want {
+			if src.pending[id] {
+				return AIPreview{}, domain.NewUserError("INPUT", "아직 반응이 이어지는 후보는 보낼 수 없습니다. 후보가 확정되면 다시 미리보기를 만들어 주세요.")
 			}
 		}
 		if len(want) > 0 {
 			return AIPreview{}, domain.NewUserError("INPUT", "선택한 원본 후보를 찾을 수 없습니다.")
 		}
 	default:
-		if req.StartMs < 0 || req.EndMs <= req.StartMs || req.EndMs > tl.DurationMs {
-			return AIPreview{}, domain.NewUserError("INPUT", "채팅 탐색 범위를 확인해 주세요.")
+		if req.ToEnd {
+			req.EndMs = src.endMs
+		}
+		if req.StartMs < 0 || req.EndMs <= req.StartMs || req.EndMs > src.endMs {
+			return AIPreview{}, domain.NewUserError("INPUT", src.badRange)
 		}
 		in.Ranges = []ai.Range{{StartMs: req.StartMs, EndMs: req.EndMs}}
 	}

@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { Candidate, TimelineItem, TimelineSource } from "../../api/types";
-import { CandidateItem } from "../../shared/candidates/CandidateList";
-import { timecode } from "../../shared/format";
+import { CandidateItem } from "./CandidateList";
+import { timecode } from "../format";
 
 export const sourceLabel: Record<TimelineSource, string> = {
   rule: "자동 탐지",
@@ -20,10 +20,12 @@ interface Props {
   longForm: boolean;
   canPlay: boolean;
   platformName: string;
-  onSeek: (ms: number, itemId: string) => void;
+  onSeek?: (ms: number, itemId: string) => void;
   /** Timeline item IDs ticked for an AI review. */
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
+  /** Whether a non-AI item can be ticked now (default: always); a LIVE candidate waits until it is settled. */
+  canPick?: (it: TimelineItem) => boolean;
   renderRuleDetail: (c: Candidate) => ReactNode;
 }
 
@@ -42,11 +44,12 @@ export function UnifiedList({
   onSeek,
   aiSelection,
   onToggleAI,
+  canPick,
   renderRuleDetail,
 }: Props) {
   const actions = (it: TimelineItem) => (
     <>
-      {canPlay && (
+      {canPlay && onSeek && (
         <button
           type="button"
           className="link-button"
@@ -61,12 +64,18 @@ export function UnifiedList({
           {platformName}에서 열기
         </a>
       )}
-      {it.source !== "ai" && (
-        <label className="check check-inline">
-          <input type="checkbox" checked={aiSelection.has(it.id)} onChange={() => onToggleAI(it.id)} />
-          AI 검토에 포함
-        </label>
-      )}
+      {it.source !== "ai" &&
+        (canPick?.(it) ?? true ? (
+          <label className="check check-inline">
+            <input type="checkbox" checked={aiSelection.has(it.id)} onChange={() => onToggleAI(it.id)} />
+            AI 검토에 포함
+          </label>
+        ) : (
+          <label className="check check-inline" data-disabled>
+            <input type="checkbox" checked={false} disabled />
+            AI 검토에 포함 (확정 후)
+          </label>
+        ))}
     </>
   );
   let ruleIndex = 0;

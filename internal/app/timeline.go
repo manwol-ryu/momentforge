@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/export"
 	"github.com/manwol-ryu/momentforge/internal/platform"
 )
@@ -35,6 +36,7 @@ type TimelineItem struct {
 
 // UnifiedTimeline merges a video's latest rule analysis, comment capture and
 // AI run in time order (CzzEdit's 통합 타임라인); each item keeps its source.
+// For a LIVE capture it holds the rule candidates and the latest AI run.
 type UnifiedTimeline struct {
 	SessionID  string
 	Title      string
@@ -45,7 +47,13 @@ type UnifiedTimeline struct {
 	Items      []TimelineItem
 }
 
-// Timeline builds the unified timeline of a VOD session.
+// ruleItem is a rule candidate as a timeline item.
+func ruleItem(c domain.Candidate, watch func(int64) string) TimelineItem {
+	return TimelineItem{ID: SourceRule + ":" + c.ID, Source: SourceRule, OriginID: c.ID, AnchorMs: c.ClipStartMs,
+		ClipStartMs: c.ClipStartMs, ClipEndMs: c.ClipEndMs, Title: strings.Join(c.Reasons, " · "), WatchURL: watch(c.ClipStartMs)}
+}
+
+// Timeline builds the unified timeline of a VOD session or LIVE capture.
 func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error) {
 	st := a.cfg.Store
 	s, err := st.Session(ctx, sid)
@@ -53,15 +61,26 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 		return nil, err
 	}
 	t := &UnifiedTimeline{SessionID: s.ID, Title: s.Title, DurationMs: s.DurationMs, Items: []TimelineItem{}}
-	if s.Kind != string(platform.KindVOD) {
+	live := s.Kind == string(platform.KindLive)
+	if s.Kind != string(platform.KindVOD) && !live {
 		return t, nil
 	}
+	// A LIVE moment has no link of its own: the platform opens the broadcast now.
 	link := a.linker(s)
 	watch := func(ms int64) string {
-		if link == nil {
+		if link == nil || live {
 			return ""
 		}
 		return link(ms)
+	}
+	if live {
+		cands, _, err := st.LiveCandidates(ctx, sid, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range cands {
+			t.Items = append(t.Items, ruleItem(c, watch))
+		}
 	}
 	if s.LatestAnalysisID != "" {
 		an, err := st.Analysis(ctx, s.LatestAnalysisID)
@@ -70,9 +89,7 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 		}
 		t.AnalysisID = an.ID
 		for _, c := range an.Candidates {
-			t.Items = append(t.Items, TimelineItem{ID: SourceRule + ":" + c.ID, Source: SourceRule, OriginID: c.ID,
-				AnchorMs: c.ClipStartMs, ClipStartMs: c.ClipStartMs, ClipEndMs: c.ClipEndMs,
-				Title: strings.Join(c.Reasons, " · "), WatchURL: watch(c.ClipStartMs)})
+			t.Items = append(t.Items, ruleItem(c, watch))
 		}
 	}
 	if v, err := a.Comments(ctx, sid); err != nil {
