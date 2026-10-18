@@ -3064,6 +3064,51 @@ button.chat-row:hover {
   color: var(--alert);
 }
 
+/* A search round's results waiting for the user (컷 분석, "검색마다 확인"). */
+.ai-pending {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font-size: var(--text-xs);
+}
+
+.ai-pending-head {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+}
+
+.ai-pending-list {
+  max-height: 14rem;
+  margin: 0 0 var(--space-2);
+  padding: 0 0 0 var(--space-4);
+  overflow: auto;
+}
+
+.ai-pending-list li {
+  margin: 0 0 var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.ai-confirm-searches {
+  margin-top: var(--space-2);
+}
+
+.cut-search {
+  color: var(--ink-muted);
+}
+
+.search-budget-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.search-budget-fields input {
+  width: 6rem;
+}
+
 .ai-cost {
   font-weight: 600;
 }

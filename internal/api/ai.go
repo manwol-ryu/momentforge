@@ -87,12 +87,15 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		ToEnd      bool     `json:"toEnd"`
 		Delivery   string   `json:"delivery"` // single | batch
 		CostCapUSD float64  `json:"costCapUsd"`
+		// Cut analysis: each search round's results wait for the user before they are sent.
+		ConfirmSearches bool `json:"confirmSearches"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
 	req := app.AIPreviewRequest{SessionID: body.SessionID, Provider: body.Provider, Model: body.Model, Kind: body.Kind,
-		StartMs: body.StartMs, EndMs: body.EndMs, ToEnd: body.ToEnd, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD}
+		StartMs: body.StartMs, EndMs: body.EndMs, ToEnd: body.ToEnd, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD,
+		ConfirmSearches: body.ConfirmSearches}
 	switch body.Mode {
 	case "all":
 		req.All = true
@@ -189,6 +192,22 @@ func (h *handler) cutPlan(w http.ResponseWriter, r *http.Request) {
 func (h *handler) aiCancel(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Core.CancelAI(chi.URLParam(r, "id"))
 	writeJSON(w, http.StatusAccepted, map[string]bool{"cancelling": true})
+}
+
+// aiContinue answers a cut run waiting at a search round: send what it
+// found, or go on without it.
+func (h *handler) aiContinue(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Send bool `json:"send"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	if err := h.cfg.Core.ContinueAI(chi.URLParam(r, "id"), body.Send); err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"continued": true})
 }
 
 type aiRecJSON struct {

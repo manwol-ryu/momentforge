@@ -1,6 +1,9 @@
 """Phase 6-B: a NAS backup folder (chzzk-automation's files) imported as a
 session. The fixture is synthetic; the E2E binary's fake speech engine
-returns a fixed transcript, so nothing is read from real audio."""
+returns a fixed transcript, so nothing is read from real audio. Phase 6-C:
+the fake transcript's promise is at 1:05, before the first candidate's
+window, so the cut analysis searches for it, asks before sending what it
+found, and links it as the story's origin."""
 from __future__ import annotations
 
 import re
@@ -52,23 +55,45 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     expect(lines.locator("li")).to_have_count(1)
     expect(lines).to_contain_text("벌칙으로 노래")
     lines.locator("li").first.get_by_role("button").click()
-    expect(page.locator(".stage-timeline .stage-time")).to_contain_text("03:35")
+    expect(page.locator(".stage-timeline .stage-time")).to_contain_text("01:05")
     page.screenshot(path=str(SHOTS / "backup-transcript.png"))
 
-    # The cut analysis reads the transcript: the promise utterance is in the first candidate's window.
+    # The cut analysis reads the transcript, but the promise is before the first
+    # candidate's window: the preview does not hold it, the search finds it.
     page.get_by_role("tab", name=re.compile("^후보")).click()
-    page.locator("ol.candidates > li").first.get_by_label("AI 검토에 포함").check()
+    first = page.locator("ol.candidates > li").first
+    first.get_by_label("AI 검토에 포함").check()
     page.get_by_role("button", name="AI 검토로 이동").click()
     page.get_by_role("radio", name="컷 분석").check()
+    page.get_by_label("검색 결과를 보내기 전에 매번 확인").check()
     from test_phase6 import pick_provider
 
     pick_provider(page, "E2E 가짜 AI")
     page.get_by_role("button", name="보낼 내용 미리보기").click()
     preview = page.locator(".ai-preview[data-kind='cut']")
     expect(preview).to_contain_text(re.compile(r"발언 \d+건과 채팅 \d+건"))
+    expect(preview).to_contain_text("(보내기 전에 매번 확인)")
     preview.get_by_text("보낼 내용 전체").click()
-    expect(preview.locator("pre")).to_contain_text("벌칙으로 노래")
     expect(preview.locator("pre")).to_contain_text(re.compile(r'"kind":\s*"chat"'))
+    expect(preview.locator("pre")).not_to_contain_text("벌칙으로 노래")
+    page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
+    # The run stops with what the search found and waits for the user.
+    pending = page.locator(".ai-pending")
+    expect(pending).to_contain_text("검색 결과를 보낼까요?", timeout=15_000)
+    expect(pending).to_contain_text("발언 1건")
+    expect(pending.locator("li")).to_contain_text(["벌칙으로 노래"])
+    pending.screenshot(path=str(SHOTS / "cut-search-consent.png"))
+    pending.get_by_role("button", name="보내고 계속").click()
+    status = page.locator(".ai-status")
+    expect(status).to_contain_text("AI 완료", timeout=15_000)
+    expect(status).to_contain_text("5/11회 완료")  # analyze twice, plan, two checks
+    page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
+    note = first.locator(".cut-note")
+    expect(note).to_contain_text("검수 통과")
+    expect(note.locator(".cut-search")).to_contain_text("검색 1단계로 근거 1건을 더 읽음")
+    expect(note.locator(".cut-search")).to_contain_text("이야기 시작 01:05")
+    expect(note.locator(".cut-spans li").first).to_contain_text("01:05")  # the found promise is the setup span
+    note.screenshot(path=str(SHOTS / "cut-note-searched.png"))
 
     # The files tab has the caption files beside the chat.
     page.get_by_role("tab", name="파일").click()

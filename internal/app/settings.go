@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/ai/cut"
 	"github.com/manwol-ryu/momentforge/internal/asr"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
@@ -31,6 +33,8 @@ const (
 	envSensitive        = "COLLECT_SENSITIVE"
 	envIncludeComments  = "COLLECT_COMMENTS"
 	envViewerAdaptive   = "LIVE_VIEWER_ADAPTIVE"
+	envCutSearchRounds  = "AI_CUT_SEARCH_ROUNDS" // cut analysis: analyze rounds after the first (0 = no searching)
+	envCutSearchKB      = "AI_CUT_SEARCH_KB"     // cut analysis: text searches may add per candidate
 )
 
 var settingsHeader = []string{
@@ -58,6 +62,11 @@ type Settings struct {
 	// engines' settings (engine ID → setting key → path).
 	ASREngine string
 	ASRPaths  map[string]map[string]string
+	// The cut analysis's search budget per candidate (docs/AI-CUT-ANALYSIS.md 3.2):
+	// how many more analyze rounds searches may add, and how many KB of
+	// evidence they may bring in.
+	CutSearchRounds int
+	CutSearchKB     int
 }
 
 // SettingsInfo is Settings with the files that keep them and the keys.
@@ -104,6 +113,14 @@ func (a *App) Settings() SettingsInfo {
 		}
 		return def
 	}
+	number := func(name string, def, lo, hi int) int {
+		if v, ok := lookupEnv(raw, name); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= lo && n <= hi {
+				return n
+			}
+		}
+		return def
+	}
 	s := Settings{
 		AIModels:        map[string]string{},
 		AIEndpoints:     map[string]string{},
@@ -111,6 +128,8 @@ func (a *App) Settings() SettingsInfo {
 		Sensitive:       flag(envSensitive, false),
 		IncludeComments: flag(envIncludeComments, true),
 		ViewerAdaptive:  flag(envViewerAdaptive, true),
+		CutSearchRounds: number(envCutSearchRounds, cut.DefaultSearchRounds, 0, cut.MaxSearchRounds),
+		CutSearchKB:     number(envCutSearchKB, cut.DefaultSearchKB, 0, cut.MaxSearchKB),
 	}
 	if id, _ := lookupEnv(raw, envAIProvider); id != "" {
 		if _, ok := a.cfg.AI.Get(id); ok {
@@ -245,10 +264,18 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 			}
 		}
 	}
+	if s.CutSearchRounds < 0 || s.CutSearchRounds > cut.MaxSearchRounds {
+		return SettingsInfo{}, domain.NewUserError("INPUT", fmt.Sprintf("컷 분석의 검색 단계 수는 0~%d 사이여야 합니다.", cut.MaxSearchRounds))
+	}
+	if s.CutSearchKB < 0 || s.CutSearchKB > cut.MaxSearchKB {
+		return SettingsInfo{}, domain.NewUserError("INPUT", fmt.Sprintf("컷 분석의 검색 추가 전송량은 0~%dKB 사이여야 합니다.", cut.MaxSearchKB))
+	}
 	entries = append(entries,
 		envEntry{envSensitive, strconv.FormatBool(s.Sensitive)},
 		envEntry{envIncludeComments, strconv.FormatBool(s.IncludeComments)},
 		envEntry{envViewerAdaptive, strconv.FormatBool(s.ViewerAdaptive)},
+		envEntry{envCutSearchRounds, strconv.Itoa(s.CutSearchRounds)},
+		envEntry{envCutSearchKB, strconv.Itoa(s.CutSearchKB)},
 	)
 	a.settings.mu.Lock()
 	err := writeEnvFile(a.settingsPath(), settingsHeader, entries)

@@ -77,11 +77,13 @@ func TestSettingsGetAndSave(t *testing.T) {
 	if rec := requestBody(h, "POST", "/api/settings", `{"aiProvider":"","sensitive":true}`, hdr); rec.Code != 400 || errorCode(t, rec) != "INPUT" {
 		t.Fatalf("partial: %d %s", rec.Code, rec.Body)
 	}
-	body := `{"aiProvider":"anthropic","aiModels":{"anthropic":"m2"},"sensitive":true,"includeComments":false,"viewerAdaptive":false}`
+	body := `{"aiProvider":"anthropic","aiModels":{"anthropic":"m2"},"sensitive":true,"includeComments":false,"viewerAdaptive":false,` +
+		`"cutSearchRounds":2,"cutSearchKb":40}`
 	if rec := requestBody(h, "POST", "/api/settings", body, hdr); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"aiModels":{"anthropic":"m2"}`) {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body)
 	}
-	if s := *core.saved; s.AIProvider != "anthropic" || s.AIModels["anthropic"] != "m2" || !s.Sensitive || s.IncludeComments || s.ViewerAdaptive {
+	if s := *core.saved; s.AIProvider != "anthropic" || s.AIModels["anthropic"] != "m2" || !s.Sensitive || s.IncludeComments || s.ViewerAdaptive ||
+		s.CutSearchRounds != 2 || s.CutSearchKB != 40 {
 		t.Fatalf("passed on = %+v", s)
 	}
 

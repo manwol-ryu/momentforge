@@ -19,7 +19,7 @@ const runStateText: Record<AIRun["state"], string> = {
 
 const kindHelp = {
   explain: "고른 후보마다 장면이 무엇인지 짧은 설명을 받습니다. 요청이 적고 빠릅니다.",
-  cut: "고른 후보마다 원인 분석 → 편집 구간 계획 → 검수 2회를 차례로 보내, 근거가 붙은 편집 구간(컷 계획)을 받습니다. 후보당 4~7회 요청합니다. 아직 읽은 범위(편집 구간 앞뒤 1분) 밖은 검색하지 않습니다.",
+  cut: "고른 후보마다 원인 분석 → 편집 구간 계획 → 검수 2회를 차례로 보내, 근거가 붙은 편집 구간(컷 계획)을 받습니다. 분석이 앞선 맥락(\"아까\", 약속)을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 다시 분석합니다(설정의 검색 예산까지).",
 } as const;
 
 const modeHelp = {
@@ -115,6 +115,8 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
   const [to, setTo] = useState(live ? "" : timecode(s.durationMs, true));
   const [delivery, setDelivery] = useState<AIDelivery>("single");
   const [cap, setCap] = useState("");
+  // Cut analysis: stop before each search round's results go out.
+  const [confirmSearches, setConfirmSearches] = useState(false);
   const [preview, setPreview] = useState<AIPreview | null>(null);
   const [counted, setCounted] = useState<AITokenCount | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -141,8 +143,8 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
   }, [current?.id, firstModel, current?.canBatch, current?.hasPrices]);
   // Any change to what would be sent drops the preview.
   const inputs = useMemo(
-    () => JSON.stringify([current?.id, model, kind, mode, from, to, selection, delivery, cap]),
-    [current?.id, model, kind, mode, from, to, selection, delivery, cap],
+    () => JSON.stringify([current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches]),
+    [current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches],
   );
   useEffect(() => {
     setPreview(null);
@@ -177,6 +179,7 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
         toEnd: mode === "range" && toEnd ? true : undefined,
         delivery,
         costCapUsd: capValue,
+        confirmSearches: kind === "cut" ? confirmSearches : undefined,
       }),
     onSuccess: setPreview,
   });
@@ -193,6 +196,7 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
   });
   const run = useQuery({ queryKey: ["aiRun", runId], queryFn: () => api.aiRun(runId!), enabled: !!runId });
   const cancel = useMutation({ mutationFn: () => api.aiCancel(runId!) });
+  const proceed = useMutation({ mutationFn: (send: boolean) => api.aiContinue(runId!, send) });
 
   useEffect(
     () =>
@@ -233,7 +237,7 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
     </button>
   );
   const r = run.data;
-  const failed = makePreview.error ?? start.error ?? cancel.error ?? loadModels.error ?? count.error;
+  const failed = makePreview.error ?? start.error ?? cancel.error ?? proceed.error ?? loadModels.error ?? count.error;
   if (list.length === 0) return null;
   const plan = preview?.plan;
   const destOpen = showDest ?? true;
@@ -286,6 +290,18 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
                   ? liveModeHelp.range(liveEndMs)
                   : liveModeHelp[mode]}
           </p>
+          {kind === "cut" && (
+            <label className="check check-option ai-confirm-searches">
+              <input type="checkbox" checked={confirmSearches} onChange={(e) => setConfirmSearches(e.target.checked)} />
+              <span>
+                검색 결과를 보내기 전에 매번 확인
+                <span className="check-help">
+                  켜면 검색이 찾은 발언·채팅을 보내기 전에 멈추고 보여 줍니다. 끄면 미리보기에 적힌 상한 안에서 바로 보내고, 보낸 것은
+                  실행 기록에 남습니다.
+                </span>
+              </span>
+            </label>
+          )}
           {mode === "range" && (
             <span className="ai-range">
               <input type="text" aria-label="시작 시각" value={from} onChange={(e) => setFrom(e.target.value)} /> ~{" "}
@@ -427,7 +443,12 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
                 {plan.request_count}회), 읽는 자료 {preview.cut.hasTranscript ? `발언 ${preview.cut.utteranceCount}건과 ` : ""}채팅{" "}
                 {preview.cut.chatCount}건, 입력 추정 약 {tokens(plan.planned_input_token_estimate)}토큰.{" "}
                 {preview.cut.hasTranscript ? "" : "이 작업에는 전사가 없어 채팅만으로 분석합니다. "}
-                {preview.cut.searchExecuted ? "" : "읽은 범위 밖은 검색하지 않습니다. "}10분 뒤 만료됩니다.
+                {preview.cut.searchExecuted
+                  ? `필요하면 이 방송의 발언·채팅을 최대 ${preview.cut.searchRounds}단계·${preview.cut.searchMaxKb}KB까지 더 보냅니다${
+                      preview.cut.confirmSearches ? "(보내기 전에 매번 확인)" : ""
+                    }. `
+                  : "읽은 범위 밖은 검색하지 않습니다. "}
+                10분 뒤 만료됩니다.
               </p>
             ) : (
               <p className="ai-preview-sum">
@@ -514,6 +535,32 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
             </>
           )}
         </p>
+      )}
+      {r && r.state === "running" && r.pending && (
+        <div className="ai-pending" role="status" aria-live="polite">
+          <p className="ai-pending-head">
+            검색 결과를 보낼까요? {r.pending.round}단계 검색이 발언 {r.pending.utterances}건·채팅 {r.pending.chats}건(
+            {Math.max(1, Math.round(r.pending.bytes / 1024))}KB)을 찾았습니다. 보내면 이 근거로 분석을 다시 하고, 보내지 않으면 미리보기의
+            범위만으로 계획합니다.
+          </p>
+          <ul className="ai-pending-list">
+            {r.pending.evidence.map((e) => (
+              <li key={e.ref}>
+                <span className="timecode">{timecode(e.start_ms, s.durationMs >= 3_600_000)}</span>{" "}
+                <span className="chat-author">{e.kind === "utterance" ? (e.speaker ?? "방송자") : (e.author?.slice(0, 4) ?? "익명")}</span>{" "}
+                {e.text}
+              </li>
+            ))}
+          </ul>
+          <p className="actions">
+            <button type="button" className="button" onClick={() => proceed.mutate(true)} disabled={proceed.isPending}>
+              보내고 계속
+            </button>
+            <button type="button" className="button button-quiet" onClick={() => proceed.mutate(false)} disabled={proceed.isPending}>
+              보내지 않고 계속
+            </button>
+          </p>
+        </div>
       )}
       {r && r.state !== "running" && r.recommendations > 0 && (
         <p className="ai-done" role="status">

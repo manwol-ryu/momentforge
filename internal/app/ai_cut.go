@@ -17,33 +17,45 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/store"
 )
 
-// The cut analysis (docs/AI-CUT-ANALYSIS.md). Phase 6-A: one candidate at a
-// time, read from a window around its clip, no searching yet (the search
-// requests a model makes are recorded, not executed).
+// The cut analysis (docs/AI-CUT-ANALYSIS.md): one candidate at a time, read
+// from a window around its clip; the model's search requests run within a
+// budget (ai_tools.go) and the analyze step repeats with what they found.
 const (
 	cutWindowPadMs    = 60_000 // read this much before and after the clip
 	cutMaxChats       = 400    // per window
 	cutMaxUtterances  = 200
 	cutMaxReplans     = 1 // a plan that fails a check is redone once with the reasons
 	cutMaxOutputStep  = 4000
-	cutPlannedPerCand = 4 // steps without a re-plan
+	cutPlannedPerCand = 4 // steps without a re-plan or a search
 )
 
-// cutPreview is what a cut-analysis preview will send: one input per candidate.
-type cutPreview struct {
-	Inputs []cut.Input `json:"inputs"`
-}
-
-// CutPreview is the preview's cut part for the API (inputs and the budget).
+// CutPreview is the preview's cut part for the API (inputs and the budget)
+// and what the run starts from.
 type CutPreview struct {
 	Inputs               []cut.Input `json:"inputs"`
 	RequestsPerCandidate int         `json:"requestsPerCandidate"`
 	PlannedPerCandidate  int         `json:"plannedPerCandidate"`
-	SearchExecuted       bool        `json:"searchExecuted"` // false until phase 6-C
+	SearchExecuted       bool        `json:"searchExecuted"` // searches run (the budget allows at least one round)
+	SearchRounds         int         `json:"searchRounds"`
+	SearchMaxKB          int         `json:"searchMaxKb"`
+	ConfirmSearches      bool        `json:"confirmSearches"` // each round's results wait for the user before they are sent
 	HasTranscript        bool        `json:"hasTranscript"`
 	UtteranceCount       int         `json:"utteranceCount"`
 	ChatCount            int         `json:"chatCount"`
 	EvidenceBytes        int         `json:"evidenceBytes"`
+	// What the searches read from, fixed at preview time: the transcript
+	// and, for a LIVE capture, the chat saved so far (nothing newer is sent).
+	TranscriptID string `json:"-"`
+	MaxSeq       int64  `json:"-"`
+	EndMs        int64  `json:"-"`
+}
+
+// cutBudget is the search budget from the settings.
+func (a *App) cutBudget() cut.Budget {
+	b := cut.DefaultBudget()
+	st := a.Settings()
+	b.MaxRounds, b.MaxBytes = st.CutSearchRounds, st.CutSearchKB*1024
+	return b
 }
 
 // previewCut builds the preview of a cut analysis of the chosen timeline
@@ -77,12 +89,26 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 	for _, it := range src.items {
 		byID[it.ID] = it
 	}
-	pv := &CutPreview{RequestsPerCandidate: cut.RequestsPerCandidate, PlannedPerCandidate: cutPlannedPerCand, HasTranscript: hasTranscript}
+	budget := a.cutBudget()
+	perCand := cut.MaxRequests(budget)
+	pv := &CutPreview{RequestsPerCandidate: perCand, PlannedPerCandidate: cutPlannedPerCand, HasTranscript: hasTranscript,
+		SearchExecuted: budget.MaxRounds > 0, SearchRounds: budget.MaxRounds, SearchMaxKB: budget.MaxBytes / 1024,
+		ConfirmSearches: req.ConfirmSearches && budget.MaxRounds > 0, TranscriptID: transcript.ID, MaxSeq: src.maxSeq, EndMs: src.endMs}
+	note := "입력 토큰은 UTF-8 바이트 수로 잡은 상한이며 실제 토큰 수는 보통 더 적습니다. 후보마다 분석·계획·검수 2회의 네 단계를 보내고, " +
+		"검수에 걸리면 계획과 검수를 한 번 더 보냅니다. "
+	if budget.MaxRounds > 0 {
+		note += fmt.Sprintf("분석이 '아까'·약속 같은 앞선 맥락을 물으면 이 방송 안의 발언·채팅을 검색해 최대 %d단계·%dKB까지 더 보내고 분석을 다시 합니다(후보당 최대 %d회).",
+			budget.MaxRounds, budget.MaxBytes/1024, perCand)
+		if pv.ConfirmSearches {
+			note += " 검색 결과는 보내기 전에 매번 확인을 받습니다."
+		}
+	} else {
+		note += "설정에서 검색 단계를 0으로 두어 읽은 범위 밖은 검색하지 않습니다."
+	}
 	plan := ai.Plan{SessionID: req.SessionID, Kind: store.AIKindCut, Provider: req.Provider, Model: req.Model, Delivery: ai.DeliverySingle,
 		PromptVersion: cut.PipelineVersion, Prompt: cut.PromptAnalyze, Chunks: []ai.Chunk{}, Omitted: []ai.Omitted{},
-		Price: price, CostCapUSD: req.CostCapUSD,
-		EstimateNote: "입력 토큰은 UTF-8 바이트 수로 잡은 상한이며 실제 토큰 수는 보통 더 적습니다. 후보마다 분석·계획·검수 2회의 네 단계를 보내고, " +
-			"검수에 걸리면 계획과 검수를 한 번 더 보냅니다(최대 7회). 이 단계에서는 읽은 범위 밖을 검색하지 않습니다."}
+		Price: price, CostCapUSD: req.CostCapUSD, EstimateNote: note,
+		SearchRounds: budget.MaxRounds, SearchMaxBytes: budget.MaxBytes, ConfirmSearches: pv.ConfirmSearches}
 	seen := map[string]bool{}
 	for _, id := range req.ItemIDs {
 		it, ok := byID[id]
@@ -111,12 +137,16 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 				pv.ChatCount++
 			}
 		}
-		// The plan step carries the analysis too, and a re-plan repeats plan and checks.
+		// The plan step carries the analysis too, and a re-plan repeats plan and
+		// checks; every search round sends the input again with up to the
+		// budget's bytes added.
+		searchEst := est + budget.MaxBytes/3
 		plan.PlannedInputEstimate += est * cutPlannedPerCand
-		plan.InputUpperEstimate += est * cut.RequestsPerCandidate
-		plan.RequestCount += cut.RequestsPerCandidate
+		plan.InputUpperEstimate += est*cut.BaseRequestsPerCandidate + searchEst*budget.MaxRounds
+		plan.RequestCount += perCand
 		if price != nil {
-			plan.CostUpperUSD += price.UpperCost(est, cutMaxOutputStep, false) * cut.RequestsPerCandidate
+			plan.CostUpperUSD += price.UpperCost(est, cutMaxOutputStep, false)*cut.BaseRequestsPerCandidate +
+				price.UpperCost(searchEst, cutMaxOutputStep, false)*float64(budget.MaxRounds)
 		}
 	}
 	if len(pv.Inputs) == 0 {
@@ -152,23 +182,13 @@ func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, sr
 		if err != nil {
 			return in, err
 		}
-		for _, u := range utts {
-			in.Evidence = append(in.Evidence, cut.Evidence{Ref: "utt:" + u.ID, Kind: cut.KindUtterance, StartMs: u.StartMs, EndMs: u.EndMs,
-				Speaker: u.Speaker, Text: u.Text})
-		}
+		in.Evidence = append(in.Evidence, utteranceEvidence(utts)...)
 	}
 	chats, _, err := a.cfg.Store.ChatsBetween(ctx, s.ID, from, to, src.maxSeq, cutMaxChats, 0)
 	if err != nil {
 		return in, err
 	}
-	for _, c := range chats {
-		e := cut.Evidence{Ref: "chat:" + c.ID, Kind: cut.KindChat, StartMs: c.OffsetMs, Text: c.Text}
-		if c.AuthorKey != "" {
-			author := c.AuthorKey
-			e.Author = &author
-		}
-		in.Evidence = append(in.Evidence, e)
-	}
+	in.Evidence = append(in.Evidence, chatEvidence(chats)...)
 	if it.Source == SourceViewer && it.CommentText != "" {
 		in.Sources = append(in.Sources, "comment")
 		in.Evidence = append(in.Evidence, cut.Evidence{Ref: "comment:" + it.OriginID, Kind: cut.KindComment, StartMs: it.AnchorMs, Text: it.CommentText})
@@ -180,26 +200,43 @@ func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, sr
 	return in, nil
 }
 
-// sentLogEntry records what one step sent (the run's sent_log).
+// sentLogEntry records what one step sent (the run's sent_log): how many
+// refs and bytes, and which refs the user had not seen in the preview
+// (what searches added; the user reads them here afterwards).
 type sentLogEntry struct {
 	Candidate string   `json:"candidate"`
 	Step      string   `json:"step"`
+	Round     int      `json:"round,omitempty"` // analyze steps after the first
 	Refs      int      `json:"refs"`
 	Bytes     int      `json:"bytes"`
-	NewRefs   []string `json:"new_refs,omitempty"` // refs first sent in this step (searches, from 6-C)
+	NewRefs   []string `json:"new_refs,omitempty"`
 	At        string   `json:"at"`
 }
 
-// runCut analyses each candidate in turn: analyze → plan → check → the two
-// verifications, with one re-plan when a check fails. Every plan is saved,
-// trusted or not, with the reasons.
-func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, inputs []cut.Input, provider ai.StepProvider, key string) {
+// AIPending is a search round's results waiting for the user's go-ahead
+// (the preview's "검색마다 확인" option): what would be sent next.
+type AIPending struct {
+	Candidate  string         `json:"candidate"`
+	Round      int            `json:"round"`
+	Utterances int            `json:"utterances"`
+	Chats      int            `json:"chats"`
+	Bytes      int            `json:"bytes"`
+	Evidence   []cut.Evidence `json:"evidence"`
+}
+
+// runCut analyses each candidate in turn: analyze (with search rounds) →
+// plan → check → the two verifications, with one re-plan when a check
+// fails. Every plan is saved, trusted or not, with the reasons.
+func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPreview, provider ai.StepProvider, key string) {
 	ctx := act.ctx
 	bg := context.WithoutCancel(ctx)
 	var usage []ai.Usage
 	var total ai.Usage
 	var sentLog []sentLogEntry
 	var planIDs []string
+	inputs := cp.Inputs
+	sentRefs := map[string]bool{} // refs already sent for the current candidate
+	round := 0
 	save := func() {
 		run.RecommendationsJSON, _ = json.Marshal(planIDs)
 		run.UsageJSON, _ = json.Marshal(usage)
@@ -221,8 +258,18 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, inputs []cut.
 			plan.Price.Cost(total, false)+plan.Price.UpperCost(est, step.OutputLimit(), false) > plan.CostCapUSD {
 			return nil, errAICostCap
 		}
-		sentLog = append(sentLog, sentLogEntry{Candidate: candidate, Step: step.Name, Refs: countRefs(step), Bytes: len(step.InputJSON()),
-			At: time.Now().UTC().Format(time.RFC3339)})
+		entry := sentLogEntry{Candidate: candidate, Step: step.Name, Refs: 0, Bytes: len(step.InputJSON()), At: time.Now().UTC().Format(time.RFC3339)}
+		if step.Name == "analyze" {
+			entry.Round = round
+		}
+		for _, ref := range stepRefs(step) {
+			entry.Refs++
+			if !sentRefs[ref] {
+				sentRefs[ref] = true
+				entry.NewRefs = append(entry.NewRefs, ref)
+			}
+		}
+		sentLog = append(sentLog, entry)
 		for try := 0; ; try++ {
 			run.Attempts++
 			out, u, err := provider.Step(ctx, key, plan.Model, step)
@@ -250,7 +297,15 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, inputs []cut.
 	var failure error
 	done := 0
 	for _, in := range inputs {
-		p, err := a.analyzeCandidate(ctx, run, plan, in, send)
+		sentRefs, round = map[string]bool{}, 0
+		// The preview's refs are what the user saw; the first step is not "new".
+		for _, e := range in.Evidence {
+			sentRefs[e.Ref] = true
+		}
+		searcher := &cutSearcher{a: a, sid: run.SessionID, transcriptID: cp.TranscriptID, maxSeq: cp.MaxSeq, endMs: cp.EndMs,
+			budget: cut.Budget{MaxRounds: plan.SearchRounds, MaxRequestsPerRound: cut.DefaultSearchRequestsPerRound, MaxBytes: plan.SearchMaxBytes}}
+		cr := cutRun{act: act, run: run, plan: plan, searcher: searcher, round: &round}
+		p, err := a.analyzeCandidate(ctx, cr, in, send)
 		if err != nil {
 			failure = err
 			break
@@ -288,37 +343,54 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, inputs []cut.
 	a.publishAI(run, nil)
 }
 
-func countRefs(step ai.StepRequest) int {
+// stepRefs lists the evidence refs a step sends.
+func stepRefs(step ai.StepRequest) []string {
+	var out []string
+	add := func(ev []cut.Evidence) {
+		for _, e := range ev {
+			out = append(out, e.Ref)
+		}
+	}
 	switch in := step.Input.(type) {
 	case cut.Input:
-		return len(in.Evidence)
+		add(in.Evidence)
 	case map[string]any:
 		if i, ok := in["input"].(cut.Input); ok {
-			return len(i.Evidence)
+			add(i.Evidence)
 		}
-		n := 0
 		for _, k := range []string{"selected", "context"} {
 			if ev, ok := in[k].([]cut.Evidence); ok {
-				n += len(ev)
+				add(ev)
 			}
 		}
 		if spans, ok := in["spans"].([]cut.ClipSpan); ok {
 			for _, s := range spans {
-				n += len(s.Evidence)
+				add(s.Evidence)
 			}
 		}
-		return n
 	}
-	return 0
+	return out
 }
 
-// analyzeCandidate runs the steps for one input and builds its plan.
-func (a *App) analyzeCandidate(ctx context.Context, run store.AIRun, plan ai.Plan, in cut.Input,
+// cutRun is what one candidate's analysis runs with.
+type cutRun struct {
+	act      *aiActive
+	run      store.AIRun
+	plan     ai.Plan
+	searcher *cutSearcher
+	round    *int // the current analyze round, for the sent log
+}
+
+// analyzeCandidate runs the steps for one input and builds its plan: the
+// analyze step, repeated with search results while the model asks and the
+// budget allows; then plan, checks and the verifications.
+func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 	send func(string, ai.StepRequest) (json.RawMessage, error)) (cut.Plan, error) {
+	run, plan := cr.run, cr.plan
 	cand := in.Candidates[0].ID
 	known := cut.Known(in.Evidence)
 	out := cut.Plan{RunID: run.ID, SessionID: run.SessionID, State: cut.StateFailed, Sources: in.Sources,
-		SearchedRanges: []cut.SearchRequest{}, UnresolvedQuestions: []string{}, UserNotes: []cut.UserNote{},
+		SearchedRanges: []cut.SearchRequest{}, Searches: []cut.SearchResult{}, UnresolvedQuestions: []string{}, UserNotes: []cut.UserNote{},
 		AnalysisEvidenceRefs: []string{}, RequiredContextRefs: []string{}, OptionalContextRefs: []string{}, SelectedSpans: []cut.Span{}}
 	for _, c := range in.Candidates {
 		out.CandidateIDs = append(out.CandidateIDs, c.ID)
@@ -328,27 +400,74 @@ func (a *App) analyzeCandidate(ctx context.Context, run store.AIRun, plan ai.Pla
 		Model: plan.Model, Sources: in.Sources}
 	out.Verification = cut.Verification{EvidenceMatch: "all_read", Issues: []string{}}
 
-	raw, err := send(cand, cut.AnalyzeStep(in))
-	if err != nil {
-		return out, err
+	var an cut.Analysis
+	budget := cr.searcher.budget
+	for round := 0; ; round++ {
+		*cr.round = round
+		raw, err := send(cand, cut.AnalyzeStep(in))
+		if err != nil {
+			return out, err
+		}
+		var dropped int
+		an, dropped, err = cut.ParseAnalysis(raw, known)
+		if err != nil {
+			return out, err
+		}
+		if dropped > 0 {
+			out.Verification.EvidenceMatch = "some_unread"
+		}
+		if len(an.SearchRequests) == 0 {
+			break
+		}
+		if round >= budget.MaxRounds {
+			// The model still wanted to read more; the budget stops here.
+			cr.searcher.use.Exhausted = true
+			break
+		}
+		results, added, err := cr.searcher.run(ctx, round+1, an.SearchRequests, &in, known)
+		if err != nil {
+			return out, err
+		}
+		out.Searches = append(out.Searches, results...)
+		for _, r := range results {
+			if r.Ran {
+				out.SearchedRanges = append(out.SearchedRanges, r.Request)
+			}
+		}
+		if len(added) == 0 && !activityIn(results) {
+			break // nothing new to analyse with
+		}
+		if plan.ConfirmSearches && len(added) > 0 {
+			ok, err := a.awaitSearchConsent(cr.act, run, pendingOf(cand, round+1, added, known))
+			if err != nil {
+				return out, err
+			}
+			if !ok {
+				// The user kept the results on this computer: forget them and plan with what was previewed.
+				cr.searcher.use.Declined = true
+				in.Evidence, known = withoutRefs(in.Evidence, added), cut.Known(nil)
+				for _, e := range in.Evidence {
+					known[e.Ref] = e
+				}
+				break
+			}
+		}
 	}
-	an, dropped, err := cut.ParseAnalysis(raw, known)
-	if err != nil {
-		return out, err
-	}
+	out.SearchBudget = cr.searcher.use
 	out.Reaction.Target, out.Causes, out.CauseStatus = an.Target, an.Causes, an.CauseStatus
 	out.UnresolvedQuestions = append(out.UnresolvedQuestions, an.Questions...)
-	// Searches are not executed in this phase; what the model wanted is kept for the record.
-	out.SearchedRanges = an.SearchRequests
-	if dropped > 0 {
-		out.Verification.EvidenceMatch = "some_unread"
+	if out.SearchBudget.Exhausted && len(an.Questions) > 0 {
+		out.UnresolvedQuestions = append(out.UnresolvedQuestions, "검색 범위 안에서 확인하지 못함 (검색 예산을 다 씀)")
+	}
+	if out.SearchBudget.Declined {
+		out.UnresolvedQuestions = append(out.UnresolvedQuestions, "검색 결과를 보내지 않아 그 근거 없이 계획함")
 	}
 
 	var issues []string
 	var answer cut.PlanAnswer
 	var checked cut.Checked
 	for attempt := 0; attempt <= cutMaxReplans; attempt++ {
-		raw, err = send(cand, cut.PlanStep(in, an, issues, nil))
+		raw, err := send(cand, cut.PlanStep(in, an, issues, nil))
 		if err != nil {
 			return out, err
 		}
@@ -390,6 +509,83 @@ func (a *App) analyzeCandidate(ctx context.Context, run store.AIRun, plan ai.Pla
 	}
 	fillPlan(&out, answer, checked, known, issues)
 	return out, nil
+}
+
+func activityIn(results []cut.SearchResult) bool {
+	for _, r := range results {
+		if len(r.Activity) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingOf(cand string, round int, refs []string, known map[string]cut.Evidence) AIPending {
+	p := AIPending{Candidate: cand, Round: round, Evidence: []cut.Evidence{}}
+	for _, ref := range refs {
+		e := known[ref]
+		p.Evidence = append(p.Evidence, e)
+		p.Bytes += len(e.Text)
+		if e.Kind == cut.KindUtterance {
+			p.Utterances++
+		} else {
+			p.Chats++
+		}
+	}
+	return p
+}
+
+func withoutRefs(ev []cut.Evidence, refs []string) []cut.Evidence {
+	drop := map[string]bool{}
+	for _, r := range refs {
+		drop[r] = true
+	}
+	out := ev[:0]
+	for _, e := range ev {
+		if !drop[e.Ref] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// awaitSearchConsent shows the user what a search round found and waits
+// for "보내기" or "보내지 않기" (ContinueAI), or for the run to be cancelled.
+func (a *App) awaitSearchConsent(act *aiActive, run store.AIRun, p AIPending) (bool, error) {
+	decision := make(chan bool, 1)
+	a.ai.pendMu.Lock()
+	a.ai.pending[run.ID], a.ai.decisions[run.ID] = &p, decision
+	a.ai.pendMu.Unlock()
+	a.publishAI(run, nil)
+	defer func() {
+		a.ai.pendMu.Lock()
+		delete(a.ai.pending, run.ID)
+		delete(a.ai.decisions, run.ID)
+		a.ai.pendMu.Unlock()
+		a.publishAI(run, nil)
+	}()
+	select {
+	case ok := <-decision:
+		return ok, nil
+	case <-act.ctx.Done():
+		return false, errAICancelled
+	}
+}
+
+// ContinueAI answers a run waiting at a search round: send what it found
+// (true) or go on without it (false).
+func (a *App) ContinueAI(id string, send bool) error {
+	a.ai.pendMu.Lock()
+	defer a.ai.pendMu.Unlock()
+	decision := a.ai.decisions[id]
+	if decision == nil {
+		return domain.NewUserError("NOT_WAITING", "이 AI 작업은 지금 확인을 기다리고 있지 않습니다.")
+	}
+	select {
+	case decision <- send:
+	default: // already answered
+	}
+	return nil
 }
 
 // fillPlan copies the (last) answer into the plan and resolves its times.
@@ -541,6 +737,13 @@ func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem,
 			CutPlanID: rec.ID, Verified: rec.State == cut.StateOK, Version: rec.Version}
 		if len(p.Causes) > 0 {
 			it.Rationale = p.Causes[0].Summary
+		}
+		it.SearchRounds = p.SearchBudget.Rounds
+		for _, r := range p.Searches {
+			it.SearchAdded += len(r.FoundRefs)
+		}
+		if p.Times.StoryOriginRef != "" {
+			it.StoryOriginMs, it.HasOrigin = p.Times.StoryOriginMs, true
 		}
 		if len(p.Verification.Issues) > 0 {
 			it.Uncertainty = strings.Join(p.Verification.Issues, " · ")

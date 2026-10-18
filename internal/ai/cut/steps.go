@@ -95,6 +95,7 @@ func VerifySourceStep(target, chosen string, spans []Span, required []string, en
 // Steps lists the step names in order, for budgets and logs.
 var Steps = []string{"analyze", "plan", "verify_clip", "verify_source"}
 
-// RequestsPerCandidate is the most requests one candidate takes without
-// searching: the four steps and one re-plan with its two checks.
-const RequestsPerCandidate = 7
+// BaseRequestsPerCandidate is the most requests one candidate takes without
+// searching: the four steps and one re-plan with its two checks. Searching
+// adds one analyze step per round (MaxRequests).
+const BaseRequestsPerCandidate = 7

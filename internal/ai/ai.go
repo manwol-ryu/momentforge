@@ -276,7 +276,12 @@ type Plan struct {
 	Price                *Price    `json:"price,omitempty"`          // nil when the model's price is unknown
 	CostUpperUSD         float64   `json:"cost_upper_usd,omitempty"` // most the plan can cost (0 without a price)
 	CostCapUSD           float64   `json:"cost_cap_usd,omitempty"`   // the user's limit (0 none)
-	Fingerprint          string    `json:"fingerprint"`
+	// Cut analysis (internal/ai/cut): how far its searches may go beyond the
+	// previewed windows, and whether each round's results wait for the user.
+	SearchRounds    int    `json:"search_rounds,omitempty"`
+	SearchMaxBytes  int    `json:"search_max_bytes,omitempty"`
+	ConfirmSearches bool   `json:"confirm_searches,omitempty"`
+	Fingerprint     string `json:"fingerprint"`
 }
 
 // MaxOutputTokens is the default answer limit of one request (CzzEdit's).

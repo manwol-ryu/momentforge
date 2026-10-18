@@ -104,3 +104,16 @@ func (s *Store) UtteranceCount(ctx context.Context, transcriptID string) (int, e
 	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM utterances WHERE transcript_id=?", transcriptID).Scan(&n)
 	return n, err
 }
+
+// SearchUtterances returns a transcript's utterances starting in [from, to)
+// whose text contains query (letters A–Z match either case), in time order.
+func (s *Store) SearchUtterances(ctx context.Context, transcriptID, query string, from, to int64, limit int) ([]domain.Utterance, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+utteranceColumns+` FROM utterances
+		WHERE transcript_id=? AND start_ms>=? AND start_ms<? AND text LIKE ? ESCAPE '\'
+		ORDER BY start_ms, seq LIMIT ?`, transcriptID, from, to, "%"+escapeLike(query)+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUtterances(rows)
+}

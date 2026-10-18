@@ -1,7 +1,7 @@
 package cut
 
 // PromptVersions change whenever a step's instruction or schema changes.
-var PromptVersions = map[string]int{"analyze": 1, "plan": 1, "verify_clip": 1, "verify_source": 1}
+var PromptVersions = map[string]int{"analyze": 2, "plan": 1, "verify_clip": 1, "verify_source": 1}
 
 // Every instruction is fixed text with no times, IDs or anything that
 // varies, so providers can cache it (Claude caches a prefix of 512 tokens
@@ -16,14 +16,15 @@ const PromptAnalyze = `방송 편집 후보 하나를 받아, 시청자가 무�
 - candidates: 분석할 후보. source_type이 rule이면 채팅 통계로 찾은 반응 구간이고, viewer_comment이면 시청자가 영상 댓글에 적은 시각이다. anchor_ms는 기준 시각, clip_start_ms와 clip_end_ms는 탐지기가 잡은 임시 편집 구간, statistics는 최고점 통계(n 채팅 수, u 작성자 수, ratio 평소 대비 배율)다.
 - window_start_ms, window_end_ms: 이번에 읽은 범위. 이 범위 밖은 아직 읽지 않았다.
 - sources: 이 세션에 있는 근거 종류. utterances가 없으면 방송자의 말은 전혀 모르는 상태이므로 모든 판단은 채팅으로 짐작한 것이다.
-- evidence: 인용할 수 있는 근거 목록. ref가 utt:로 시작하면 발언(start_ms~end_ms, speaker는 역할명), chat:은 채팅(author는 세션마다 새로 만든 가명이므로 실제 사용자를 추정하거나 언급하지 마라), comment:는 영상 댓글이다.
+- evidence: 인용할 수 있는 근거 목록. ref가 utt:로 시작하면 발언(start_ms~end_ms, speaker는 역할명), chat:은 채팅(author는 세션마다 새로 만든 가명이므로 실제 사용자를 추정하거나 언급하지 마라), comment:는 영상 댓글이다. found_by_search가 true인 근거는 앞선 검색 요청으로 읽은 범위 밖에서 가져온 것이다.
+- searched: 이 후보에 대해 이미 실행한 검색 요청과 결과(found_refs는 그 요청이 새로 가져온 근거의 ref, note는 요청을 줄이거나 건너뛴 이유). 처음 읽을 때는 없다. 같은 요청을 되풀이하지 마라. 결과가 비었으면 표현을 바꿔 다시 찾거나(음성 인식은 띄어쓰기·어미가 다를 수 있다) activity로 반응이 몰린 곳을 훑은 뒤 read_around로 읽어라. 질문이 모두 풀렸으면 search_requests를 빈 배열로 두어 검색을 끝내라.
 
 ## 할 일
 1. target: 시청자가 무엇에 반응했는지 한 문장으로. 단정하지 말고 근거가 가리키는 것을 적어라.
 2. causes: 원인 후보를 **여러 개** 적어라. 가장 근거가 강한 것부터 순서대로 두고, 근거가 약해도 가능한 대안을 하나 이상 남겨라. kind는 broadcast_event(방송에서 일어난 일), callback_to_earlier(앞선 발언·약속·장담을 되짚는 반응), viewer_joke(시청자끼리의 농담이나 채팅 흐름), donation(후원·알림), unknown 중 하나다. 각 원인마다 support에 지지 근거 ref를, against에 반대 근거 ref를 적어라. direction은 반응의 방향이다: broadcast_to_viewers(방송 사건 → 시청자 반응), viewer_to_broadcaster_to_viewers(시청자 말 → 방송자가 읽고 반응 → 다른 시청자 반응), unknown.
 3. cause_status: 첫 번째 원인을 얼마나 믿을 수 있는지. confirmed는 발언과 채팅이 같은 사건을 가리킬 때, likely는 한쪽 근거만 있을 때, undetermined는 근거가 부족할 때다.
 4. questions: 이 범위만 읽고는 알 수 없는 것. 예를 들어 채팅의 "아까", "그거", "다시"가 무엇을 가리키는지, 약속이나 조건이 무엇이었는지, 같은 시도인지.
-5. search_requests: questions를 풀려면 어디를 더 읽어야 하는지. tool은 search(query로 발언·채팅 찾기, before_ms 이전에서), read_around(at_ms 앞뒤 window_s초), read_range(from_ms~to_ms), events, activity 중 하나다. 찾을 것이 없으면 빈 배열이다.
+5. search_requests: questions를 풀려면 어디를 더 읽어야 하는지. tool은 search(query로 발언·채팅 찾기, before_ms 이전에서; query는 40자 이내의 짧은 표현, in은 utterances·chats·both), read_around(at_ms 앞뒤 window_s초, 300초 이내), read_range(from_ms~to_ms, 10분 이내), activity(from_ms~to_ms의 채팅량을 window_s초 칸으로) 중 하나다. 서버가 한 번에 요청 6개까지 실행하고, 검색은 후보당 몇 단계와 몇 KB까지로 제한된다. 찾을 것이 없으면 빈 배열이다.
 
 ## 판단 기준
 - 한두 사람의 반복이나 도배는 큰 반응으로 보지 마라. 여러 작성자가 함께 반응했는지 보라.

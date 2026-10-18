@@ -54,6 +54,7 @@ type Core interface {
 	StartAI(ctx context.Context, previewID, fingerprint string, regenerate bool) (string, error)
 	AIRun(ctx context.Context, id string) (app.AIRunView, error)
 	CancelAI(id string)
+	ContinueAI(id string, send bool) error
 	AIModels(ctx context.Context, provider string) ([]app.AIModel, error)
 	CountAIPreview(ctx context.Context, previewID, fingerprint string) (app.AITokenCount, error)
 	AIRuns(ctx context.Context, sid string) ([]app.AIRunView, error)
@@ -191,6 +192,7 @@ func (h *handler) apiRoutes(r chi.Router) {
 		r.Get("/ai/runs/{id}", h.aiRun)
 		r.Get("/cuts/{id}", h.cutPlan)
 		r.Post("/ai/runs/{id}/cancel", h.aiCancel)
+		r.Post("/ai/runs/{id}/continue", h.aiContinue)
 		r.Get("/analyses/{id}", h.analysis)
 		r.Get("/analyses/{id}/candidates/{cid}/chats", h.candidateChats)
 	}

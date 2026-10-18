@@ -11,6 +11,7 @@ import (
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/ai/cut"
+	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/store"
 )
 
@@ -92,7 +93,7 @@ func TestCutAnalysisSavesAPlanWithSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pv.Cut == nil || len(pv.Cut.Inputs) != 1 || !pv.Cut.HasTranscript || pv.Cut.UtteranceCount == 0 || pv.Plan.Kind != store.AIKindCut ||
-		pv.Plan.RequestCount != cut.RequestsPerCandidate || len(f.steps) != 0 {
+		pv.Plan.RequestCount != cut.MaxRequests(cut.DefaultBudget()) || !pv.Cut.SearchExecuted || pv.Cut.SearchRounds != cut.DefaultSearchRounds || len(f.steps) != 0 {
 		t.Fatalf("preview %+v cut %+v", pv.Plan, pv.Cut)
 	}
 	// The window holds the planted promise utterance and the callback chat, as the sample promises.
@@ -198,4 +199,210 @@ func waitIdle(t *testing.T, a *App) {
 		}
 	}
 	t.Fatal("AI work still registered")
+}
+
+// farTranscript replaces the sample's transcript with one whose penalty
+// promise is at 0:30, far before the first candidate's window, so the
+// analysis has to search for it.
+func farTranscript(t *testing.T, a *App, sid string) {
+	t.Helper()
+	utts := []domain.Utterance{{StartMs: 30000, EndMs: 34000, Speaker: "방송자", Text: "이번 판 지면 벌칙으로 노래 부를게요. 약속"}}
+	for ms := int64(65000); ms < domain.DemoDurationMs; ms += 30000 {
+		utts = append(utts, domain.Utterance{StartMs: ms, EndMs: ms + 4000, Speaker: "방송자", Text: "계속 가 볼게요"})
+	}
+	if _, err := a.cfg.Store.SaveTranscript(context.Background(), store.Transcript{SessionID: sid, Source: "demo"}, utts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func cutSetup(t *testing.T, confirm bool) (*App, *stepAI, string, AIPreview) {
+	t.Helper()
+	f := &stepAI{}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	farTranscript(t, a, demo.ID)
+	tl, _ := a.Timeline(ctx, demo.ID)
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{tl.Items[0].ID},
+		ConfirmSearches: confirm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range pv.Cut.Inputs[0].Evidence {
+		if strings.Contains(e.Text, "벌칙으로 노래") {
+			t.Fatal("the promise is inside the previewed window; the test needs it outside")
+		}
+	}
+	if pv.Cut.ConfirmSearches != confirm || !strings.Contains(pv.Plan.EstimateNote, "검색해") {
+		t.Fatalf("preview %+v note %q", pv.Cut, pv.Plan.EstimateNote)
+	}
+	a.SetAIKey("fakeai", "k", false)
+	return a, f, demo.ID, pv
+}
+
+func lastPlan(t *testing.T, a *App, sid string) cut.Plan {
+	t.Helper()
+	plans, err := a.CutPlans(context.Background(), sid)
+	if err != nil || len(plans) == 0 {
+		t.Fatalf("plans %+v err %v", plans, err)
+	}
+	_, raw, err := a.CutPlan(context.Background(), plans[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p cut.Plan
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestCutAnalysisSearchesForTheStoryOrigin(t *testing.T) {
+	a, f, sid, pv := cutSetup(t, false)
+	ctx := context.Background()
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitAI(t, a, id)
+	if v.State != store.AICompleted || v.CompletedRequests != 5 || strings.Join(f.steps, ",") != "analyze,analyze,plan,verify_clip,verify_source" {
+		t.Fatalf("run %+v steps %v", v, f.steps)
+	}
+	p := lastPlan(t, a, sid)
+	// Round 1 found the promise; the fake asks the same thing again in round 2,
+	// which is recorded as skipped, not run, and ends the searching.
+	if p.State != cut.StateOK || p.Times.StoryOriginMs != 30000 || p.Times.OriginConfidence != "found_in_search_range" ||
+		len(p.Searches) != 2 || !p.Searches[0].Ran || len(p.Searches[0].FoundRefs) == 0 || p.Searches[0].Request.BeforeMs == 0 ||
+		p.Searches[1].Ran || p.Searches[1].Note == "" ||
+		p.SearchBudget.Rounds != 1 || p.SearchBudget.Requests != 1 || p.SearchBudget.Bytes == 0 || p.SearchBudget.Exhausted ||
+		len(p.SearchedRanges) != 1 || p.SelectedSpans[0].Role != "setup" || p.SelectedSpans[0].StartMs != 30000 {
+		t.Fatalf("plan %+v", p)
+	}
+	// The second analyze step sent what the search found, and the log says so.
+	run, err := a.cfg.Store.AIRun(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log []sentLogEntry
+	if json.Unmarshal(run.SentLogJSON, &log) != nil || len(log) != 5 || log[0].Round != 0 || len(log[0].NewRefs) != 0 ||
+		log[1].Step != "analyze" || log[1].Round != 1 || len(log[1].NewRefs) == 0 || !strings.HasPrefix(log[1].NewRefs[0], "utt:") ||
+		log[1].Refs != log[0].Refs+len(log[1].NewRefs) || len(log[2].NewRefs) != 0 {
+		t.Fatalf("sent log %s", run.SentLogJSON)
+	}
+	// The timeline item carries the search and the origin.
+	tl, _ := a.Timeline(ctx, sid)
+	for _, it := range tl.Items {
+		if it.Kind == "cut" {
+			if it.SearchRounds != 1 || it.SearchAdded == 0 || !it.HasOrigin || it.StoryOriginMs != 30000 {
+				t.Fatalf("timeline item %+v", it)
+			}
+		}
+	}
+}
+
+func waitPending(t *testing.T, a *App, id string) AIRunView {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		v, err := a.AIRun(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Pending != nil || v.State != store.AIRunning {
+			return v
+		}
+	}
+	t.Fatal("the run never waited for the user")
+	return AIRunView{}
+}
+
+func TestCutAnalysisWaitsForTheUserBeforeSendingSearchResults(t *testing.T) {
+	a, f, sid, pv := cutSetup(t, true)
+	ctx := context.Background()
+	if err := a.ContinueAI("nope", true); !isCode(err, "NOT_WAITING") {
+		t.Fatalf("continue without a run: %v", err)
+	}
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitPending(t, a, id)
+	if v.Pending == nil || v.Pending.Round != 1 || v.Pending.Utterances != 1 || len(v.Pending.Evidence) != v.Pending.Utterances+v.Pending.Chats ||
+		!strings.Contains(v.Pending.Evidence[0].Text, "벌칙") || len(f.steps) != 1 {
+		t.Fatalf("pending %+v steps %v", v.Pending, f.steps)
+	}
+	if err := a.ContinueAI(id, true); err != nil {
+		t.Fatal(err)
+	}
+	v = waitAI(t, a, id)
+	if v.State != store.AICompleted || v.Pending != nil || strings.Join(f.steps, ",") != "analyze,analyze,plan,verify_clip,verify_source" {
+		t.Fatalf("run %+v steps %v", v, f.steps)
+	}
+	if p := lastPlan(t, a, sid); p.Times.StoryOriginMs != 30000 || p.SearchBudget.Declined {
+		t.Fatalf("plan %+v", p)
+	}
+}
+
+func TestCutAnalysisGoesOnWithoutDeclinedSearchResults(t *testing.T) {
+	a, f, sid, pv := cutSetup(t, true)
+	ctx := context.Background()
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPending(t, a, id)
+	if err := a.ContinueAI(id, false); err != nil {
+		t.Fatal(err)
+	}
+	v := waitAI(t, a, id)
+	// No second analyze step: the plan is made from the previewed window alone.
+	if v.State != store.AICompleted || !strings.HasPrefix(strings.Join(f.steps, ","), "analyze,plan") {
+		t.Fatalf("run %+v steps %v", v, f.steps)
+	}
+	p := lastPlan(t, a, sid)
+	if !p.SearchBudget.Declined || p.Times.StoryOriginMs != 0 || len(p.UnresolvedQuestions) == 0 || p.State == cut.StateOK {
+		t.Fatalf("plan state %s origin %d questions %v budget %+v", p.State, p.Times.StoryOriginMs, p.UnresolvedQuestions, p.SearchBudget)
+	}
+	run, _ := a.cfg.Store.AIRun(ctx, id)
+	if strings.Contains(string(run.SentLogJSON), "utt:"+p.ID) || strings.Contains(string(run.PlanJSON), "벌칙으로 노래") {
+		t.Fatalf("the declined evidence was sent: %s", run.SentLogJSON)
+	}
+}
+
+func TestCutAnalysisWithoutSearchBudgetSendsNoSearch(t *testing.T) {
+	f := &stepAI{}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	st := a.Settings().Settings
+	st.CutSearchRounds = 0
+	if _, err := a.SaveSettings(st); err != nil {
+		t.Fatal(err)
+	}
+	demo, _ := a.CreateDemo(ctx, false)
+	farTranscript(t, a, demo.ID)
+	tl, _ := a.Timeline(ctx, demo.ID)
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{tl.Items[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.Cut.SearchExecuted || pv.Plan.RequestCount != cut.BaseRequestsPerCandidate || !strings.Contains(pv.Plan.EstimateNote, "검색하지 않습니다") {
+		t.Fatalf("preview %+v", pv.Cut)
+	}
+	a.SetAIKey("fakeai", "k", false)
+	id, _ := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	waitAI(t, a, id)
+	if p := lastPlan(t, a, demo.ID); len(p.Searches) != 0 || !p.SearchBudget.Exhausted || p.SearchBudget.Requests != 0 {
+		t.Fatalf("plan %+v", p.SearchBudget)
+	}
+	if st.CutSearchRounds = 99; true {
+		if _, err := a.SaveSettings(st); !isCode(err, "INPUT") {
+			t.Fatalf("rounds 99: %v", err)
+		}
+	}
 }

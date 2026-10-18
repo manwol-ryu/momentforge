@@ -211,6 +211,23 @@ function CutNote({ it, longForm, onPlay, onPlayAll }: { it: TimelineItem; longFo
         <strong className="ai-note-title">{it.title}</strong>
       </p>
       {it.rationale && <p className="ai-note-text">원인: {it.rationale}</p>}
+      {(it.searchRounds ?? 0) > 0 && (
+        <p className="ai-note-text cut-search">
+          검색 {it.searchRounds}단계로 근거 {it.searchAdded ?? 0}건을 더 읽음
+          {it.storyOriginMs !== undefined && (
+            <>
+              {" · "}이야기 시작{" "}
+              {onPlay ? (
+                <button type="button" className="link-button timecode" onClick={() => onPlay(it.storyOriginMs!)}>
+                  {timecode(it.storyOriginMs, longForm)}
+                </button>
+              ) : (
+                <span className="timecode">{timecode(it.storyOriginMs, longForm)}</span>
+              )}
+            </>
+          )}
+        </p>
+      )}
       <ol className="cut-spans">
         {spans.map((sp, i) => (
           <li key={i}>

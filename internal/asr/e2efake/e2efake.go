@@ -24,12 +24,13 @@ func (*Engine) Ready(context.Context) (bool, string)         { return true, "" }
 func (*Engine) Probe(context.Context, string) (int64, error) { return 20 * 60 * 1000, nil }
 
 // Transcribe returns one line every 30 seconds for 20 minutes, with a
-// penalty promise at 3:40 like the sample's.
+// penalty promise at 1:05: more than a minute before the fixture's first
+// candidate, so the cut analysis has to search for it (phase 6-C).
 func (*Engine) Transcribe(ctx context.Context, audio string, opts asr.Options, progress func(asr.Progress)) ([]domain.Utterance, error) {
 	var out []domain.Utterance
 	for t := int64(5000); t < 20*60*1000; t += 30000 {
 		text := fmt.Sprintf("가짜 발언 %d분 %d초", t/60000, t%60000/1000)
-		if t == 215000 {
+		if t == 65000 {
 			text = "이번 판 지면 벌칙으로 노래 부를게요. 약속"
 		}
 		out = append(out, domain.Utterance{StartMs: t, EndMs: t + 4000, Speaker: "방송자", Text: text, Confidence: 0.9})

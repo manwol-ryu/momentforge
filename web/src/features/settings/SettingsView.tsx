@@ -43,6 +43,8 @@ function valuesOf(s: Settings): Settings {
     viewerAdaptive: s.viewerAdaptive,
     asrEngine: s.asrEngine ?? "",
     asrPaths: filledPaths(s.asrPaths),
+    cutSearchRounds: s.cutSearchRounds ?? 4,
+    cutSearchKb: s.cutSearchKb ?? 80,
   };
 }
 
@@ -201,6 +203,38 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                     />
                   )}
                 </div>
+                <fieldset className="settings-group search-budget">
+                  <legend className="field-label">컷 분석의 검색 예산 (후보당)</legend>
+                  <p className="field-help">
+                    컷 분석이 "아까"·약속 같은 앞선 맥락을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 분석을 다시 합니다. 미리보기에
+                    보인 범위 밖에서 얼마나 더 보낼 수 있는지의 상한입니다. 검색 단계를 0으로 두면 검색하지 않습니다.
+                  </p>
+                  <div className="search-budget-fields">
+                    <label className="field">
+                      <span className="field-label">검색 단계</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={draft.cutSearchRounds}
+                        onChange={(e) => change({ cutSearchRounds: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+                      />
+                      <span className="field-help">회 (0~10, 기본 4)</span>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">검색으로 더 보내는 글</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1024}
+                        step={10}
+                        value={draft.cutSearchKb}
+                        onChange={(e) => change({ cutSearchKb: Math.max(0, Math.min(1024, Number(e.target.value) || 0)) })}
+                      />
+                      <span className="field-help">KB (0~1024, 기본 80)</span>
+                    </label>
+                  </div>
+                </fieldset>
               </div>
             ),
           },

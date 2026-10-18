@@ -44,7 +44,8 @@ def test_cut_analysis_keeps_the_promise_as_setup(page: Page, base_url: str) -> N
     pick_provider(page, "E2E 가짜 AI")
     page.get_by_role("button", name="보낼 내용 미리보기").click()
     preview = page.locator(".ai-preview[data-kind='cut']")
-    expect(preview).to_contain_text(re.compile(r"후보 1개, 후보당 4~7회"))
+    expect(preview).to_contain_text(re.compile(r"후보 1개, 후보당 4~11회"))
+    expect(preview).to_contain_text("최대 4단계·80KB까지 더 보냅니다")  # the search budget (6-C)
     expect(preview).to_contain_text(re.compile(r"발언 \d+건과 채팅 \d+건"))  # the sample's transcript is read
     preview.get_by_text("보낼 내용 전체").click()
     expect(preview.locator("pre")).to_contain_text('"utt:')
@@ -58,6 +59,7 @@ def test_cut_analysis_keeps_the_promise_as_setup(page: Page, base_url: str) -> N
 
     note = first.locator(".cut-note")
     expect(note).to_contain_text("검수 통과")
+    expect(note.locator(".cut-search")).to_have_count(0)  # the promise was inside the window: nothing to search
     expect(note.locator(".cut-spans li")).to_have_count(2)
     expect(note.locator(".cut-spans li").first).to_contain_text("앞선 맥락")
     expect(note.locator(".cut-spans li").first).to_contain_text("03:40")  # the promise utterance

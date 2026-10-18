@@ -12,6 +12,8 @@ export const builtInSettings: Settings = {
   viewerAdaptive: true,
   asrEngine: "",
   asrPaths: {},
+  cutSearchRounds: 4,
+  cutSearchKb: 80,
 };
 
 /** The saved defaults (the data folder's settings.env). */

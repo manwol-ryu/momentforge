@@ -88,7 +88,9 @@ func (f *Fake) Review(ctx context.Context, key, model string, c ai.Chunk) (json.
 // Step answers the cut analysis deterministically. The full fake reads the
 // window, names the first utterance as the cause, keeps the earliest
 // "약속" utterance as required context with its own setup span, and passes
-// both checks. The plain fake chooses a span that leaves its required
+// both checks; when the window has no such utterance it asks the server to
+// search for "벌칙" before the clip (phase 6-C) and analyses again with what
+// came back. The plain fake chooses a span that leaves its required
 // context out, so the plan fails the structural check twice and is saved
 // as verify_failed with the reasons.
 func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
@@ -107,6 +109,14 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 		in := step.Input.(cut.Input)
 		utt, chat := firstOf(in.Evidence, cut.KindUtterance), firstOf(in.Evidence, cut.KindChat)
 		support := refsOf(utt, chat)
+		searches := []any{}
+		questions := []string{}
+		if promiseOf(in.Evidence) == nil && len(in.Searched) == 0 {
+			// The chat calls back to something this window does not hold: look for it earlier.
+			questions = []string{"'아까'가 무엇을 가리키는가"}
+			searches = []any{map[string]any{"tool": "search", "query": "벌칙", "in": "both", "before_ms": in.Candidates[0].ClipStartMs,
+				"at_ms": 0, "from_ms": 0, "to_ms": 0, "window_s": 0}}
+		}
 		out = map[string]any{
 			"target": f.name + "가 짐작한 장면: 방송자의 말에 시청자가 웃음으로 반응",
 			"causes": []any{
@@ -115,9 +125,7 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 				map[string]any{"kind": "viewer_joke", "summary": "채팅끼리의 농담일 가능성", "support": refsOf(chat),
 					"against": refsOf(utt), "direction": "unknown"},
 			},
-			"cause_status": "likely", "questions": []string{"'아까'가 무엇을 가리키는가"},
-			"search_requests": []any{map[string]any{"tool": "search", "query": "벌칙", "in": "both", "before_ms": in.WindowStartMs,
-				"at_ms": 0, "from_ms": 0, "to_ms": 0, "window_s": 0}},
+			"cause_status": "likely", "questions": questions, "search_requests": searches,
 		}
 	case "plan":
 		in := step.Input.(map[string]any)["input"].(cut.Input)

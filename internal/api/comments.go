@@ -111,6 +111,10 @@ type timelineItemJSON struct {
 	CutPlanID string             `json:"cutPlanId,omitempty"`
 	Verified  bool               `json:"verified,omitempty"`
 	Version   int                `json:"version,omitempty"`
+	// Cut plans: searches run and what they added; the story's origin when found.
+	SearchRounds  int    `json:"searchRounds,omitempty"`
+	SearchAdded   int    `json:"searchAdded,omitempty"`
+	StoryOriginMs *int64 `json:"storyOriginMs,omitempty"`
 }
 
 // timeline is the unified timeline: rule candidates, viewer and AI recommendations.
@@ -125,7 +129,12 @@ func (h *handler) timeline(w http.ResponseWriter, r *http.Request) {
 		items[i] = timelineItemJSON{ID: it.ID, Source: it.Source, OriginID: it.OriginID, AnchorMs: it.AnchorMs,
 			ClipStartMs: it.ClipStartMs, ClipEndMs: it.ClipEndMs, Title: it.Title, CommentText: it.CommentText,
 			Rationale: it.Rationale, Uncertainty: it.Uncertainty, Priority: it.Priority, SourceCandidateIDs: it.SourceCandidateIDs,
-			WatchURL: it.WatchURL, Kind: it.Kind, Spans: it.Spans, CutPlanID: it.CutPlanID, Verified: it.Verified, Version: it.Version}
+			WatchURL: it.WatchURL, Kind: it.Kind, Spans: it.Spans, CutPlanID: it.CutPlanID, Verified: it.Verified, Version: it.Version,
+			SearchRounds: it.SearchRounds, SearchAdded: it.SearchAdded}
+		if it.HasOrigin {
+			origin := it.StoryOriginMs
+			items[i].StoryOriginMs = &origin
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessionId": t.SessionID, "title": t.Title, "durationMs": t.DurationMs,
 		"analysisId": t.AnalysisID, "captureId": t.CaptureID, "aiRunId": t.AIRunID, "items": items})

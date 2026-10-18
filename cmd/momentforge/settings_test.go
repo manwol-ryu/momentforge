@@ -23,8 +23,9 @@ func TestSettingsAndKeptKeyAcrossRestart(t *testing.T) {
 		t.Fatalf("defaults: %d %s", code, body)
 	}
 	code, body = post(t, s.URL+"/api/settings", string(key),
-		`{"aiProvider":"openai","aiModels":{"openai":"my-model"},"sensitive":true,"includeComments":false,"viewerAdaptive":true}`)
-	if code != 200 {
+		`{"aiProvider":"openai","aiModels":{"openai":"my-model"},"sensitive":true,"includeComments":false,"viewerAdaptive":true,`+
+			`"cutSearchRounds":3,"cutSearchKb":50}`)
+	if code != 200 || !strings.Contains(body, `"cutSearchRounds":3`) || !strings.Contains(body, `"cutSearchKb":50`) {
 		t.Fatalf("save: %d %s", code, body)
 	}
 	if code, body = post(t, s.URL+"/api/settings", string(key),

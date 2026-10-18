@@ -146,3 +146,60 @@ func TestVerificationParsing(t *testing.T) {
 		t.Error("missing answers passed")
 	}
 }
+
+func TestClampAppliesDefaultsAndLimits(t *testing.T) {
+	in := Input{WindowStartMs: 215000, WindowEndMs: 415000, DurationMs: 1_200_000,
+		Candidates: []Candidate{{ID: "rule:m1", ClipStartMs: 275000, ClipEndMs: 355000}}}
+	r, why := Clamp(SearchRequest{Tool: ToolSearch, Query: "  벌칙  ", AtMs: 5}, in)
+	if why != "" || r.Query != "벌칙" || r.BeforeMs != 275000 || r.In != "both" || r.AtMs != 0 {
+		t.Fatalf("search %+v %q", r, why)
+	}
+	long := SearchRequest{Tool: ToolSearch, Query: string(make([]rune, 0)) + "가나다라마바사아자차카타파하가나다라마바사아자차카타파하가나다라마바사아자차카타파하", BeforeMs: 9_999_999}
+	r, _ = Clamp(long, in)
+	if len([]rune(r.Query)) != SearchMaxQueryRunes || r.BeforeMs != 275000 {
+		t.Fatalf("long query %+v", r)
+	}
+	if _, why := Clamp(SearchRequest{Tool: ToolSearch, Query: " "}, in); why == "" {
+		t.Fatal("empty query ran")
+	}
+	r, why = Clamp(SearchRequest{Tool: ToolReadAround, AtMs: 60000, WindowS: 900}, in)
+	if why != "" || r.WindowS != ReadAroundMaxWindowS {
+		t.Fatalf("read_around %+v %q", r, why)
+	}
+	if _, why := Clamp(SearchRequest{Tool: ToolReadAround, AtMs: 2_000_000}, in); why == "" {
+		t.Fatal("read_around past the end ran")
+	}
+	r, why = Clamp(SearchRequest{Tool: ToolReadRange, FromMs: 0, ToMs: 1_100_000}, in)
+	if why != "" || r.ToMs != ReadRangeMaxMs {
+		t.Fatalf("read_range %+v %q", r, why)
+	}
+	r, why = Clamp(SearchRequest{Tool: ToolActivity}, in)
+	if why != "" || r.FromMs != 0 || r.ToMs != 1_200_000 || r.WindowS < ActivityMinBucketS {
+		t.Fatalf("activity %+v %q", r, why)
+	}
+	for _, tool := range []string{ToolEvents, ToolListThreads, "sql"} {
+		if _, why := Clamp(SearchRequest{Tool: tool}, in); why == "" {
+			t.Fatalf("%s ran", tool)
+		}
+	}
+	if MaxRequests(DefaultBudget()) != BaseRequestsPerCandidate+DefaultSearchRounds {
+		t.Fatalf("max requests %d", MaxRequests(DefaultBudget()))
+	}
+}
+
+func TestMergeMarksNewEvidenceAndKeepsOrder(t *testing.T) {
+	in := Input{Evidence: []Evidence{{Ref: "chat:b", Kind: KindChat, StartMs: 300000, Text: "b"}}}
+	known := Known(in.Evidence)
+	added := Merge(&in, known, []Evidence{
+		{Ref: "utt:a", Kind: KindUtterance, StartMs: 30000, EndMs: 34000, Text: "a"},
+		{Ref: "chat:b", Kind: KindChat, StartMs: 300000, Text: "b"}, // already there
+	})
+	if len(added) != 1 || added[0] != "utt:a" || len(in.Evidence) != 2 || in.Evidence[0].Ref != "utt:a" || !in.Evidence[0].FoundBySearch ||
+		!known["utt:a"].FoundBySearch || in.Evidence[1].FoundBySearch {
+		t.Fatalf("added %v evidence %+v", added, in.Evidence)
+	}
+	if !SameRequest(SearchRequest{Tool: ToolSearch, Query: "a", BeforeMs: 1}, SearchRequest{Tool: ToolSearch, Query: "a", BeforeMs: 1}) ||
+		SameRequest(SearchRequest{Tool: ToolSearch, Query: "a"}, SearchRequest{Tool: ToolSearch, Query: "b"}) {
+		t.Fatal("SameRequest")
+	}
+}

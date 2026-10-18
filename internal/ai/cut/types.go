@@ -23,6 +23,8 @@ type Evidence struct {
 	Speaker string  `json:"speaker,omitempty"` // utterances: a role such as 방송자
 	Author  *string `json:"author,omitempty"`  // chats: the per-session pseudonym
 	Text    string  `json:"text"`
+	// FoundBySearch marks evidence a search brought in after the first reading.
+	FoundBySearch bool `json:"found_by_search,omitempty"`
 }
 
 // Candidate is the detected moment the analysis is about.
@@ -46,6 +48,9 @@ type Input struct {
 	DurationMs    int64       `json:"duration_ms"`
 	Sources       []string    `json:"sources"` // utterances | chat | comment, what this session has
 	Evidence      []Evidence  `json:"evidence"`
+	// Searched lists the requests already run for this candidate and what
+	// they found (empty on the first analyze step).
+	Searched []SearchResult `json:"searched,omitempty"`
 }
 
 // Cause kinds and reaction directions.
@@ -66,10 +71,10 @@ type Cause struct {
 	Direction string   `json:"direction"` // broadcast_to_viewers | viewer_to_broadcaster_to_viewers | unknown
 }
 
-// SearchRequest is what the model asks the server to look up (executed from
-// phase 6-C; recorded, not executed, before that).
+// SearchRequest is what the model asks the server to look up (search.go:
+// the server runs it within the budget and analyses again with the result).
 type SearchRequest struct {
-	Tool     string `json:"tool"` // search | read_around | read_range | events | activity
+	Tool     string `json:"tool"` // search | read_around | read_range | events | activity | list_threads
 	Query    string `json:"query,omitempty"`
 	In       string `json:"in,omitempty"` // utterances | chats | both
 	BeforeMs int64  `json:"before_ms,omitempty"`
@@ -236,7 +241,9 @@ type Plan struct {
 	} `json:"boundary_decisions"`
 	Ending Ending `json:"ending"`
 
-	SearchedRanges      []SearchRequest `json:"searched_ranges"`
+	SearchedRanges      []SearchRequest `json:"searched_ranges"` // the requests that ran
+	Searches            []SearchResult  `json:"searches"`        // each with what it found
+	SearchBudget        BudgetUse       `json:"search_budget"`
 	UnresolvedQuestions []string        `json:"unresolved_questions"`
 	Verification        Verification    `json:"verification"`
 	AnalysisVersion     Version         `json:"analysis_version"`
@@ -248,5 +255,5 @@ type Plan struct {
 const (
 	MaxSpans        = 4
 	MaxTotalSpanMs  = 10 * 60 * 1000
-	PipelineVersion = 1
+	PipelineVersion = 2 // 2: searches run (6-C)
 )

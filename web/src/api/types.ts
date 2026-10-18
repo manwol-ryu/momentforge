@@ -356,6 +356,10 @@ export interface TimelineItem {
   kind?: "cut";
   spans?: TimelineSpan[];
   cutPlanId?: string;
+  /** Cut plans: search rounds run, evidence they added, the story's origin when found. */
+  searchRounds?: number;
+  searchAdded?: number;
+  storyOriginMs?: number;
   verified?: boolean;
   version?: number;
 }
@@ -444,6 +448,9 @@ export interface Settings {
   asrEngine: string;
   /** Engine ID → setting key → path, for engines that take paths. */
   asrPaths: Record<string, Record<string, string>>;
+  /** Cut analysis: search rounds per candidate (0 = no searching) and the KB of evidence searches may add. */
+  cutSearchRounds: number;
+  cutSearchKb: number;
 }
 
 export interface SettingsInfo extends Settings {
@@ -514,7 +521,12 @@ export interface AICutPreview {
   }[];
   requestsPerCandidate: number;
   plannedPerCandidate: number;
+  /** Searches run: the budget allows at least one round. */
   searchExecuted: boolean;
+  searchRounds: number;
+  searchMaxKb: number;
+  /** Each search round's results wait for the user before they are sent. */
+  confirmSearches: boolean;
   hasTranscript: boolean;
   utteranceCount: number;
   chatCount: number;
@@ -568,9 +580,21 @@ export interface AIRun {
   costCapUsd: number | null;
   /** A submitted batch needs the key again to fetch its results. */
   waitingForKey: boolean;
+  /** A cut run waiting for the user before it sends a search round's results. */
+  pending?: AIPending;
   errorCode?: string;
   errorMessage?: string;
   createdAt: string;
+}
+
+/** What a search round found, waiting for "보내기" or "보내지 않기". */
+export interface AIPending {
+  candidate: string;
+  round: number;
+  utterances: number;
+  chats: number;
+  bytes: number;
+  evidence: { ref: string; kind: string; start_ms: number; end_ms?: number; speaker?: string; author?: string; text: string }[];
 }
 
 export interface AIRecommendation {

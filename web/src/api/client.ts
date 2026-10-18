@@ -122,6 +122,8 @@ export const api = {
     toEnd?: boolean;
     delivery: AIDelivery;
     costCapUsd?: number;
+    /** Cut analysis: each search round's results wait for the user before they are sent. */
+    confirmSearches?: boolean;
   }) => postJSON<AIPreview>("/api/ai/preview", req),
   aiCount: (previewId: string, fingerprint: string) =>
     postJSON<AITokenCount>("/api/ai/preview/count", { previewId, fingerprint }),
@@ -133,6 +135,8 @@ export const api = {
   cutPlans: (sessionId: string) => getJSON<{ plans: CutPlanSummary[] }>(`/api/sessions/${enc(sessionId)}/cuts`),
   cutPlan: (id: string) => getJSON<{ summary: CutPlanSummary; plan: unknown }>(`/api/cuts/${enc(id)}`),
   aiCancel: (id: string) => postJSON<{ cancelling: boolean }>(`/api/ai/runs/${enc(id)}/cancel`),
+  /** Answer a cut run waiting at a search round: send what it found, or go on without it. */
+  aiContinue: (id: string, send: boolean) => postJSON<{ continued: boolean }>(`/api/ai/runs/${enc(id)}/continue`, { send }),
   demo: (sensitive = false) => postJSON<Session>("/api/demo", { sensitive }),
   scanBackups: (dir: string) => postJSON<{ broadcasts: BackupBroadcast[] }>("/api/import/scan", { dir }),
   importBackup: (req: { path: string; transcribe: boolean; sensitive: boolean }) => postJSON<JobStatus>("/api/import/backup", req),

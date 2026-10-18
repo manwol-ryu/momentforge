@@ -54,6 +54,12 @@ type aiState struct {
 	keyWhere  map[string]string // provider ID → the file a KeyFromTool key came from
 	previews  map[string]*aiPreview
 	active    map[string]*aiActive // run ID → work in progress
+	// Cut runs waiting for the user before a search round's results go out
+	// (run ID → what is waiting, and the channel that answers it). Their own
+	// lock: the run view reads them, and it is built while mu is held.
+	pendMu    sync.Mutex
+	pending   map[string]*AIPending
+	decisions map[string]chan bool
 	wg        sync.WaitGroup
 	timing    aiTiming
 	fileMu    sync.Mutex // serializes updates of the key file
@@ -87,6 +93,7 @@ type aiPreview struct {
 func (a *App) initAI() {
 	a.ai.keys, a.ai.keySource, a.ai.keyWhere = map[string]string{}, map[string]string{}, map[string]string{}
 	a.ai.previews, a.ai.active = map[string]*aiPreview{}, map[string]*aiActive{}
+	a.ai.pending, a.ai.decisions = map[string]*AIPending{}, map[string]chan bool{}
 	a.ai.timing = defaultAITiming()
 	if a.cfg.AIBatchPoll > 0 {
 		a.ai.timing.batchPoll = a.cfg.AIBatchPoll
@@ -321,6 +328,8 @@ type AIPreviewRequest struct {
 	ToEnd      bool    // range mode: up to where the session offers instead of EndMs (aiSource.endMs)
 	Delivery   string  // single (default) | batch
 	CostCapUSD float64 // 0: no limit
+	// Cut analysis: each search round's results wait for the user before they are sent.
+	ConfirmSearches bool
 }
 
 // AIPreview is a plan the user must confirm before anything is sent.
@@ -610,15 +619,11 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 	}
 	pv.runID = run.ID
 	act := a.startActive(run.ID, batch)
-	inputs := []cut.Input(nil)
-	if pv.cut != nil {
-		inputs = pv.cut.Inputs
-	}
 	go func() {
 		defer a.endActive(run.ID, act)
 		switch {
 		case stepper != nil:
-			a.runCut(act, run, plan, inputs, stepper, key)
+			a.runCut(act, run, plan, pv.cut, stepper, key)
 		case batch:
 			a.runBatch(act, run, plan, provider.(ai.BatchProvider), key)
 		default:
@@ -851,28 +856,30 @@ func (a *App) writeAIRun(run store.AIRun, plan ai.Plan, recs []ai.Recommendation
 // AIRunView is a review's progress and result. It is also published on the
 // event bus as "ai".
 type AIRunView struct {
-	ID                string    `json:"id"`
-	SessionID         string    `json:"sessionId"`
-	Provider          string    `json:"provider"`
-	Model             string    `json:"model"`
-	Kind              string    `json:"kind"`     // explain | cut
-	Delivery          string    `json:"delivery"` // single | batch
-	State             string    `json:"state"`
-	RequestCount      int       `json:"requestCount"`
-	CompletedRequests int       `json:"completedRequests"`
-	Attempts          int       `json:"attempts"`
-	Rejected          int       `json:"rejected"`
-	Recommendations   int       `json:"recommendations"`
-	InputTokens       int       `json:"inputTokens"` // all input, cached or not
-	CacheReadTokens   int       `json:"cacheReadTokens"`
-	CacheWriteTokens  int       `json:"cacheWriteTokens"`
-	OutputTokens      int       `json:"outputTokens"`
-	CostUSD           *float64  `json:"costUsd"`
-	CostCapUSD        *float64  `json:"costCapUsd"`
-	WaitingForKey     bool      `json:"waitingForKey"` // a submitted batch needs the key to fetch its results
-	ErrorCode         string    `json:"errorCode,omitempty"`
-	ErrorMessage      string    `json:"errorMessage,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
+	ID                string   `json:"id"`
+	SessionID         string   `json:"sessionId"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	Kind              string   `json:"kind"`     // explain | cut
+	Delivery          string   `json:"delivery"` // single | batch
+	State             string   `json:"state"`
+	RequestCount      int      `json:"requestCount"`
+	CompletedRequests int      `json:"completedRequests"`
+	Attempts          int      `json:"attempts"`
+	Rejected          int      `json:"rejected"`
+	Recommendations   int      `json:"recommendations"`
+	InputTokens       int      `json:"inputTokens"` // all input, cached or not
+	CacheReadTokens   int      `json:"cacheReadTokens"`
+	CacheWriteTokens  int      `json:"cacheWriteTokens"`
+	OutputTokens      int      `json:"outputTokens"`
+	CostUSD           *float64 `json:"costUsd"`
+	CostCapUSD        *float64 `json:"costCapUsd"`
+	WaitingForKey     bool     `json:"waitingForKey"` // a submitted batch needs the key to fetch its results
+	// A cut run waiting for the user before it sends a search round's results.
+	Pending      *AIPending `json:"pending,omitempty"`
+	ErrorCode    string     `json:"errorCode,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 func (a *App) publishAI(run store.AIRun, recs []ai.Recommendation) {
@@ -901,6 +908,14 @@ func (a *App) aiRunView(run store.AIRun, recs int) AIRunView {
 		a.ai.mu.Lock()
 		v.WaitingForKey = a.ai.active[run.ID] == nil && a.ai.keys[run.Provider] == ""
 		a.ai.mu.Unlock()
+	}
+	if run.State == store.AIRunning {
+		a.ai.pendMu.Lock()
+		if p := a.ai.pending[run.ID]; p != nil {
+			cp := *p
+			v.Pending = &cp
+		}
+		a.ai.pendMu.Unlock()
 	}
 	return v
 }

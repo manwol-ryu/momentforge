@@ -41,6 +41,12 @@ type TimelineItem struct {
 	CutPlanID string
 	Verified  bool
 	Version   int
+	// Cut plans: how far the searches went (rounds run, evidence they added)
+	// and where the story the reaction calls back to begins, when found.
+	SearchRounds  int
+	SearchAdded   int
+	StoryOriginMs int64
+	HasOrigin     bool
 }
 
 // TimelineSpan is one span of a cut plan.
