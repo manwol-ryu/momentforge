@@ -191,8 +191,8 @@ func (s *Store) SavePage(ctx context.Context, sid string, p Page) ([]domain.Chat
 	maxEnd := int64(0)
 	for _, e := range p.Events {
 		maxEnd = max(maxEnd, e.OffsetMs+1)
-		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO chat_events (session_id, event_id, offset_ms, author_key, text, page_id)
-			VALUES (?,?,?,NULLIF(?,''),?,?)`, sid, e.ID, e.OffsetMs, e.AuthorKey, e.Text, pageID)
+		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO chat_events (session_id, event_id, offset_ms, author_key, text, page_id, kind, amount, hidden)
+			VALUES (?,?,?,NULLIF(?,''),?,?,?,NULLIF(?,0),?)`, sid, e.ID, e.OffsetMs, e.AuthorKey, e.Text, pageID, e.KindOrChat(), e.Amount, boolInt(e.Hidden))
 		if err != nil {
 			return nil, fmt.Errorf("insert chat: %w", err)
 		}

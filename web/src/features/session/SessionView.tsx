@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, UnifiedTimeline } from "../../api/types";
+import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, TimelineSpan, UnifiedTimeline } from "../../api/types";
 import { AIComparePanel } from "../../shared/ai/AIComparePanel";
 import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
+import { foldAI } from "../../shared/candidates/foldAI";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
@@ -20,8 +21,22 @@ import { Timeline } from "../../shared/timeline/Timeline";
 import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { useJob } from "../../shared/useJob";
 import { CommentsPanel } from "./CommentsPanel";
+import { TranscriptPanel } from "./TranscriptPanel";
 
-type PanelTab = "candidates" | "ai" | "comments" | "files";
+type PanelTab = "candidates" | "ai" | "transcript" | "comments" | "files";
+
+/** How much of the timeline is drawn: the whole length, or a window around the playhead. */
+type Zoom = "all" | "1800000" | "600000" | "120000";
+
+const zoomText: Record<Zoom, string> = { all: "전체", "1800000": "30분", "600000": "10분", "120000": "2분" };
+
+/** Keys typed into a field, a tab list or a choice belong to that control, not the page. */
+function keyForControl(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target.closest('[role="tab"], [role="tablist"]')) return true;
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  return target instanceof HTMLInputElement && !["range", "checkbox", "button", "submit"].includes(target.type);
+}
 
 /**
  * A saved VOD as an editing workbench (docs/DESIGN-SYSTEM.md 4): the title
@@ -47,6 +62,12 @@ export function SessionView({ id }: { id: string }) {
       return next;
     });
   const [tab, setTab] = useState<PanelTab>("candidates");
+  // Counts the times the candidate list asked for an AI review; the AI tab previews the picked candidates each time.
+  const [previewAsk, setPreviewAsk] = useState(0);
+  const askAI = () => {
+    setTab("ai");
+    setPreviewAsk((n) => n + 1);
+  };
   const job = useJob();
   // The job that was already there when the page opened (null: none); later jobs are news.
   const [openedJobId, setOpenedJobId] = useState<string | null | undefined>(undefined);
@@ -66,6 +87,19 @@ export function SessionView({ id }: { id: string }) {
   useAppState(ready ? "ready" : session.isError || analysis.isError || timeline.isError ? "error" : "loading");
   useDocumentTitle(session.data?.title);
 
+  const a = analysis.data;
+  const tl = timeline.data;
+  const items: TimelineItem[] = useMemo(
+    () =>
+      tl?.items ??
+      (a?.candidates ?? []).map((c) => ({
+        id: "rule:" + c.id, source: "rule" as const, originId: c.id, anchorMs: c.clipStartMs,
+        clipStartMs: c.clipStartMs, clipEndMs: c.clipEndMs, title: c.reasons.join(" · "), watchUrl: c.watchUrl,
+      })),
+    [tl, a],
+  );
+  const folded = useMemo(() => foldAI(items), [items]);
+
   const s = session.data;
   if (session.isError) {
     return (
@@ -84,9 +118,9 @@ export function SessionView({ id }: { id: string }) {
     jobHere &&
     (jobHere.busy || jobHere.phase !== "done" || sawJobRun || (openedJobId !== undefined && jobHere.id !== openedJobId));
   const busy = job.data?.busy ?? false;
-  const hasResult = !!analysis.data || (timeline.data?.items.length ?? 0) > 0;
-  const itemCount = timeline.data?.items.length ?? analysis.data?.candidates.length ?? 0;
-  const peak = Math.max(0, ...(analysis.data?.windows ?? []).map((w) => w.n));
+  const hasResult = !!a || items.length > 0;
+  const itemCount = folded.rows.length;
+  const peak = Math.max(0, ...(a?.windows ?? []).map((w) => w.n));
   const tools: Tab<PanelTab>[] = [];
   if (isVOD) {
     tools.push({
@@ -94,19 +128,20 @@ export function SessionView({ id }: { id: string }) {
       label: "AI 검토",
       content: hasResult ? (
         <>
-          <AIPanel s={s} selection={[...aiSelection]} />
+          <AIPanel s={s} selection={[...aiSelection]} previewAsk={previewAsk} onShowCandidates={() => setTab("candidates")} />
           <AIComparePanel s={s} />
         </>
       ) : (
         <p className="empty">편집 후보가 생기면 고른 후보를 AI로 검토할 수 있습니다.</p>
       ),
     });
+    tools.push({ id: "transcript", label: "대본", content: null }); // filled in Review, which owns the playhead
     tools.push({ id: "comments", label: "댓글", content: <CommentsPanel s={s} busy={busy} /> });
   }
   tools.push({
     id: "files",
     label: "파일",
-    content: <Files sessionId={s.id} analysisId={analysisId} timeline={timeline.data} updatedAt={s.updatedAt} />,
+    content: <Files sessionId={s.id} analysisId={analysisId} timeline={tl} updatedAt={s.updatedAt} />,
   });
 
   return (
@@ -143,11 +178,14 @@ export function SessionView({ id }: { id: string }) {
       </header>
       <Review
         s={s}
-        a={analysis.data}
-        tl={timeline.data}
+        a={a}
+        items={items}
+        rows={folded.rows}
+        aiFor={folded.aiFor}
         busy={busy}
         aiSelection={aiSelection}
         onToggleAI={toggleAI}
+        onAskAI={askAI}
         tab={tab}
         onTab={setTab}
         tools={tools}
@@ -193,17 +231,22 @@ type SourceFilter = "all" | TimelineSource;
 interface ReviewProps {
   s: Session;
   a?: Analysis;
-  tl?: UnifiedTimeline;
+  /** Every moment of every source, and the same with AI explanations folded under their candidates. */
+  items: TimelineItem[];
+  rows: TimelineItem[];
+  aiFor: Map<string, TimelineItem[]>;
   busy: boolean;
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
+  /** Open the AI tab and preview a review of the picked candidates. */
+  onAskAI: () => void;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
   /** The panel's other tabs, after the candidates. */
   tools: Tab<PanelTab>[];
 }
 
-function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: ReviewProps) {
+function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAskAI, tab, onTab, tools }: ReviewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<SourceFilter>("all");
   // The playhead: the video's time, or without a video, the moment last chosen on the timeline or in the list.
@@ -212,33 +255,114 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
   const player = useRef<PlayerHandle>(null);
   const durationMs = a?.durationMs ?? s.durationMs;
   const longForm = durationMs >= 3_600_000;
+  // Zoomed in, the drawn window pages along with the playhead (it moves when the playhead leaves it).
+  const [zoom, setZoom] = useState<Zoom>("all");
+  const zoomSpan = zoom === "all" ? durationMs : Math.min(durationMs, Number(zoom));
+  const [viewStart, setViewStart] = useState(0);
+  useEffect(() => {
+    if (zoom === "all") return;
+    setViewStart((start) => {
+      if (nowMs >= start && nowMs <= start + zoomSpan) return start;
+      return Math.max(0, Math.min(durationMs - zoomSpan, nowMs - zoomSpan * 0.1));
+    });
+  }, [zoom, zoomSpan, nowMs, durationMs]);
+  const chooseZoom = (z: Zoom) => {
+    setZoom(z);
+    const span = z === "all" ? durationMs : Math.min(durationMs, Number(z));
+    setViewStart(Math.max(0, Math.min(durationMs - span, nowMs - span / 2)));
+  };
+  // In this order (object keys that look like numbers would come first).
+  const zoomOptions = (["all", "1800000", "600000", "120000"] as Zoom[]).filter((z) => z === "all" || Number(z) < durationMs * 0.75);
   const candidates = useMemo(() => new Map((a?.candidates ?? []).map((c) => [c.id, c])), [a]);
-  const items: TimelineItem[] = useMemo(
-    () =>
-      tl?.items ??
-      (a?.candidates ?? []).map((c) => ({
-        id: "rule:" + c.id, source: "rule" as const, originId: c.id, anchorMs: c.clipStartMs,
-        clipStartMs: c.clipStartMs, clipEndMs: c.clipEndMs, title: c.reasons.join(" · "), watchUrl: c.watchUrl,
-      })),
-    [tl, a],
-  );
-  const sources = [...new Set(items.map((i) => i.source))];
-  const shown = filter === "all" ? items : items.filter((i) => i.source === filter);
+  const sources = [...new Set(rows.map((i) => i.source))];
+  const shown = filter === "all" ? rows : rows.filter((i) => i.source === filter);
+  // Jump to a time: the video plays from there, or without a video the chat shows it.
+  const goTo = (ms: number) => {
+    setNowMs(ms);
+    if (s.canPlay) player.current?.seek(ms);
+  };
+  // Choosing a moment opens its details and jumps to its clip; choosing it again closes it.
   const select = (itemId: string) => {
-    const on = selectedId !== itemId;
-    setSelectedId(on ? itemId : null);
+    if (selectedId === itemId) {
+      setSelectedId(null);
+      return;
+    }
+    setSelectedId(itemId);
     const it = items.find((i) => i.id === itemId);
-    if (on && it && !s.canPlay) setNowMs(it.clipStartMs);
+    if (it) goTo(it.clipStartMs);
   };
   const seek = (ms: number, itemId: string) => {
     setSelectedId(itemId);
-    setNowMs(ms);
-    player.current?.seek(ms);
+    goTo(ms);
   };
+  // The previous or next moment in time order from the playhead (the shown rows).
+  const ordered = [...shown].sort((x, y) => x.clipStartMs - y.clipStartMs);
+  const nextItem = ordered.find((i) => i.clipStartMs > nowMs + 1000);
+  const prevItem = [...ordered].reverse().find((i) => i.clipStartMs < nowMs - 2000);
+  const jump = (it: TimelineItem | undefined) => {
+    if (!it) return;
+    setSelectedId(it.id);
+    goTo(it.clipStartMs);
+  };
+  const jumpRef = useRef({ next: () => {}, prev: () => {} });
+  jumpRef.current = { next: () => jump(nextItem), prev: () => jump(prevItem) };
+  // N and P anywhere on the page (by key position, so a Korean keyboard layout works too).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || keyForControl(e.target)) return;
+      if (e.code === "KeyN") {
+        e.preventDefault();
+        jumpRef.current.next();
+      } else if (e.code === "KeyP") {
+        e.preventDefault();
+        jumpRef.current.prev();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // The chosen moment stays in sight in the list, however it was chosen.
+  useEffect(() => {
+    if (!selectedId) return;
+    const row = document.querySelector<HTMLElement>(`[data-item="${CSS.escape(selectedId)}"]`);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
+  }, [selectedId]);
   const scrub = (ms: number) => {
     setNowMs(ms);
     player.current?.seek(ms, false);
   };
+  // A cut plan's spans played one after another: when the playhead passes a span's end, the next one starts.
+  const [queue, setQueue] = useState<{ spans: TimelineSpan[]; at: number } | null>(null);
+  const playSpans = (spans: TimelineSpan[], itemId: string) => {
+    if (spans.length === 0) return;
+    setSelectedId(itemId);
+    setQueue({ spans, at: 0 });
+    goTo(spans[0]!.startMs);
+  };
+  useEffect(() => {
+    if (!queue) return;
+    const cur = queue.spans[queue.at];
+    if (!cur) {
+      setQueue(null);
+      return;
+    }
+    if (nowMs < cur.startMs - 1000 || nowMs > cur.endMs + 5000) {
+      setQueue(null); // the user went elsewhere
+      return;
+    }
+    if (nowMs >= cur.endMs) {
+      const next = queue.spans[queue.at + 1];
+      if (!next) {
+        setQueue(null);
+        return;
+      }
+      setQueue({ spans: queue.spans, at: queue.at + 1 });
+      goTo(next.startMs);
+    }
+    // goTo only touches refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nowMs, queue]);
 
   // Chat near the playhead, fetched per 10-second step.
   const step = Math.floor(nowMs / 10_000) * 10_000;
@@ -249,7 +373,7 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
     placeholderData: keepPreviousData,
   });
   const counter: Partial<Record<TimelineSource, number>> = {};
-  const extraMarkers = items
+  const extraMarkers = rows
     .filter((i) => i.source !== "rule")
     .map((i) => {
       counter[i.source] = (counter[i.source] ?? 0) + 1;
@@ -284,6 +408,11 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
             />
           )}
         </div>
+        {shown.length > 0 && (
+          <p className="section-hint">
+            {s.canPlay ? "후보를 고르면 영상이 그 구간부터 재생되고 근거 채팅이 펼쳐집니다." : "후보를 고르면 그 구간의 채팅과 근거가 펼쳐집니다."}
+          </p>
+        )}
         {shown.length === 0 ? (
           <p className="empty">
             {a || items.length > 0
@@ -294,15 +423,17 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
           <UnifiedList
             items={shown}
             candidates={candidates}
+            aiFor={aiFor}
             selectedId={selectedId}
             onSelect={select}
             longForm={longForm}
             canPlay={s.canPlay}
             platformName={s.platformName}
             onSeek={seek}
+            onPlaySpans={playSpans}
             aiSelection={aiSelection}
             onToggleAI={onToggleAI}
-            renderRuleDetail={(c) => (a ? <CandidateContext analysisId={a.id} c={c} longForm={longForm} /> : null)}
+            renderRuleDetail={(c) => (a ? <CandidateContext analysisId={a.id} c={c} longForm={longForm} onPick={goTo} /> : null)}
           />
         )}
         {a && <Reanalyze s={s} a={a} busy={busy} />}
@@ -310,7 +441,7 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
       {aiSelection.size > 0 && tools.some((t) => t.id === "ai") && (
         <p className="pick-bar">
           <span>AI 검토에 고른 후보 {aiSelection.size}개</span>
-          <button type="button" className="link-button" onClick={() => onTab("ai")}>
+          <button type="button" className="link-button" onClick={onAskAI}>
             AI 검토로 이동
           </button>
         </p>
@@ -334,6 +465,7 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
                 <VideoPlayer
                   ref={player}
                   sessionId={s.id}
+                  transport
                   onTime={(ms) => setNowMs((prev) => (Math.abs(prev - ms) >= 250 ? ms : prev))}
                 />
               </div>
@@ -358,11 +490,14 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
                 follow={!s.canPlay || follow}
                 longForm={longForm}
                 label={s.canPlay ? "재생 위치 주변 채팅" : "고른 위치 주변 채팅"}
+                onPick={goTo}
               />
             </div>
-            {!s.canPlay && (
-              <p className="card-foot">영상이 없는 작업입니다. 타임라인을 누르거나 후보를 고르면 그 시각 앞뒤 채팅을 보여 줍니다.</p>
-            )}
+            <p className="card-foot">
+              {s.canPlay
+                ? "채팅을 누르면 영상이 그 시각으로 갑니다. 재생 위치 앞뒤 30초의 채팅을 보여 줍니다."
+                : "영상이 없는 작업입니다. 타임라인을 누르거나 후보를 고르면 그 시각 앞뒤 채팅을 보여 줍니다."}
+            </p>
           </div>
         </div>
         {showTimeline && (
@@ -371,9 +506,31 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
               <h2 id="timeline-title" className="stage-title">
                 반응 타임라인
               </h2>
-              <span className="stage-time timecode">
-                {timecode(nowMs, longForm)} / {timecode(durationMs, longForm)}
-              </span>
+              <div className="timeline-tools">
+                {zoomOptions.length > 1 && (
+                  <Segmented
+                    name="timeline-zoom"
+                    legend="타임라인 확대"
+                    hideLegend
+                    value={zoom}
+                    onChange={chooseZoom}
+                    options={zoomOptions.map((z) => ({ value: z, label: zoomText[z] }))}
+                  />
+                )}
+                {rows.length > 0 && (
+                  <span className="timeline-step">
+                    <button type="button" className="transport-button" onClick={() => jump(prevItem)} disabled={!prevItem} title="단축키 P">
+                      이전 후보
+                    </button>
+                    <button type="button" className="transport-button" onClick={() => jump(nextItem)} disabled={!nextItem} title="단축키 N">
+                      다음 후보
+                    </button>
+                  </span>
+                )}
+                <span className="stage-time timecode">
+                  {timecode(nowMs, longForm)} / {timecode(durationMs, longForm)}
+                </span>
+              </div>
             </div>
             <div className="card-body">
               <Timeline
@@ -382,15 +539,12 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
                 candidates={a?.candidates ?? []}
                 extraMarkers={extraMarkers}
                 selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
-                onSelect={(markerId) => {
-                  const itemId = markerId.includes(":") ? markerId : "rule:" + markerId;
-                  const it = items.find((i) => i.id === itemId);
-                  if (s.canPlay && it) seek(it.clipStartMs, itemId);
-                  else select(itemId);
-                }}
+                onSelect={(markerId) => select(markerId.includes(":") ? markerId : "rule:" + markerId)}
                 playheadMs={nowMs}
                 onScrub={scrub}
                 scrubLabel={s.canPlay ? "재생 위치" : "채팅 볼 위치"}
+                viewStartMs={zoom === "all" ? 0 : viewStart}
+                viewEndMs={zoom === "all" ? durationMs : viewStart + zoomSpan}
               />
             </div>
           </div>
@@ -407,12 +561,16 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
               id: "candidates",
               label: (
                 <>
-                  후보 <span className="tab-count">{items.length}</span>
+                  후보 <span className="tab-count">{rows.length}</span>
                 </>
               ),
               content: candidatesPanel,
             },
-            ...tools,
+            ...tools.map((t) =>
+              t.id === "transcript"
+                ? { ...t, content: <TranscriptPanel s={s} busy={busy} nowMs={nowMs} durationMs={durationMs} onPick={goTo} /> }
+                : t,
+            ),
           ]}
         />
       </aside>
@@ -420,7 +578,7 @@ function Review({ s, a, tl, busy, aiSelection, onToggleAI, tab, onTab, tools }: 
   );
 }
 
-function CandidateContext({ analysisId, c, longForm }: { analysisId: string; c: Candidate; longForm: boolean }) {
+function CandidateContext({ analysisId, c, longForm, onPick }: { analysisId: string; c: Candidate; longForm: boolean; onPick: (ms: number) => void }) {
   const chats = useInfiniteQuery({
     queryKey: ["candidateChats", analysisId, c.id],
     queryFn: ({ pageParam }) => api.candidateChats(analysisId, c.id, pageParam),
@@ -434,7 +592,7 @@ function CandidateContext({ analysisId, c, longForm }: { analysisId: string; c: 
       <p className="evidence-title">
         편집 구간 채팅 {total.toLocaleString("ko-KR")}건 (* 판정 근거)
       </p>
-      <ChatList chats={all} longForm={longForm} label="편집 구간 채팅" />
+      <ChatList chats={all} longForm={longForm} label="편집 구간 채팅" onPick={onPick} />
       {chats.hasNextPage && (
         <button type="button" className="link-button" onClick={() => chats.fetchNextPage()} disabled={chats.isFetchingNextPage}>
           채팅 더 보기
@@ -465,9 +623,30 @@ function Reanalyze({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
   );
 }
 
+/** What each export file holds, by its name. */
+export const fileText: Record<string, string> = {
+  "chat.txt": "시간순 채팅 TXT",
+  "chat.jsonl": "채팅 JSONL",
+  "chat.received.txt": "받은 순서대로 채팅 TXT",
+  "timeline.txt": "편집 후보 TXT",
+  "timeline.csv": "편집 후보 CSV",
+  "timeline.json": "편집 후보 JSON",
+  "candidates.txt": "편집 후보 TXT",
+  "candidates.csv": "편집 후보 CSV",
+  "candidates.json": "편집 후보 JSON",
+  "comments.jsonl": "댓글 JSONL",
+  "recommendations.txt": "AI 추천 TXT",
+  "recommendations.json": "AI 추천 JSON",
+  "plan.json": "컷 계획 JSON",
+  "cuts.csv": "컷 구간 CSV",
+  "cuts.edl": "컷 구간 EDL",
+  "manifest.json": "기록 JSON",
+  "analysis-manifest.json": "분석 기록 JSON",
+};
+
 function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: string; analysisId?: string; timeline?: UnifiedTimeline; updatedAt: string }) {
   const files = useQuery({
-    queryKey: ["files", sessionId, analysisId, timeline?.captureId, timeline?.aiRunId, updatedAt],
+    queryKey: ["files", sessionId, analysisId, timeline?.captureId, timeline?.aiRunId, timeline?.items.filter((i) => i.kind === "cut").length, updatedAt],
     queryFn: () => api.files(sessionId),
   });
   const download = useMutation({ mutationFn: (f: ExportFile) => api.download(sessionId, f.path) });
@@ -477,14 +656,20 @@ function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: stri
     [analysisId && analysisId + "/", "분석"],
     [timeline?.captureId && `comments/${timeline.captureId}/`, "댓글"],
     [timeline?.aiRunId && `ai/${timeline.aiRunId}/`, "AI"],
+    ["cuts/", "컷"], // every cut plan folder: each is a result of its own
+    ["transcript/", "대본"],
   ];
   // Chat files first, then each folder in the order above.
   const groupOf = (f: ExportFile) =>
     f.path.includes("/") ? folders.findIndex(([prefix]) => prefix && f.path.startsWith(prefix)) + 1 : 0;
-  const labelOf = (f: ExportFile) => {
-    if (!f.path.includes("/")) return f.path;
+  const name = (f: ExportFile) => f.path.split("/").pop() ?? f.path;
+  const labelOf = (f: ExportFile): string | null => {
+    let text = fileText[name(f)] ?? name(f);
+    if (f.path.startsWith("transcript/")) text = { srt: "대본 SRT", vtt: "대본 VTT", json: "대본 JSON" }[name(f).split(".").pop() ?? ""] ?? text;
+    if (!f.path.includes("/")) return text;
     const hit = folders.find(([prefix]) => prefix && f.path.startsWith(prefix));
-    return hit && !f.path.includes("/markers/") ? `${hit[1]} ${f.path.split("/").pop()}` : null;
+    if (!hit || f.path.includes("/markers/")) return null;
+    return text.startsWith(hit[1]) ? text : `${hit[1]} ${text}`;
   };
   const shown = (files.data ?? [])
     .filter((f) => labelOf(f) !== null)
@@ -501,7 +686,7 @@ function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: stri
           {shown.map((f) => (
             <li key={f.path}>
               <button type="button" className="link-button" onClick={() => download.mutate(f)}>
-                {labelOf(f)}
+                {labelOf(f)} <span className="file-name">{name(f)}</span>
               </button>{" "}
               <span className="file-size">{formatSize(f.size)}</span>
             </li>

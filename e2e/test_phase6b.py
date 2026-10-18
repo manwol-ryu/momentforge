@@ -1,0 +1,84 @@
+"""Phase 6-B: a NAS backup folder (chzzk-automation's files) imported as a
+session. The fixture is synthetic; the E2E binary's fake speech engine
+returns a fixed transcript, so nothing is read from real audio."""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from playwright.sync_api import Page, expect
+
+SHOTS = Path(__file__).resolve().parent / ".data" / "screenshots"
+READY = 'body[data-app-state="ready"]'
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backup" / "26" / "10"
+
+
+def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) -> None:
+    page.goto(base_url)
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="NAS 백업").click()
+    form = page.get_by_role("form", name="NAS 백업 불러오기")
+    form.get_by_label("백업 폴더", exact=False).fill(str(FIXTURE))
+    form.get_by_role("button", name="폴더 읽기").click()
+    row = form.locator(".backup-row", has_text="E2E 가짜 백업 방송")
+    expect(row).to_be_visible()
+    expect(row).to_contain_text("2026-10-01")
+    expect(row).to_contain_text("음성")
+    expect(row).to_contain_text("영상 없음")
+    expect(form.get_by_label("방송 내용 인식(전사)까지", exact=False)).to_be_checked()
+    row.get_by_role("button", name="불러오기").click()
+    # The screen follows the job to the new session; chat, analysis, then the transcript.
+    expect(page).to_have_url(re.compile(r"/sessions/[0-9a-f]{32}$"), timeout=30_000)
+    page.wait_for_selector(READY, timeout=10_000)
+    expect(page.get_by_role("heading", level=1, name="E2E 가짜 백업 방송")).to_be_visible()
+    expect(page.locator(".job")).to_contain_text(re.compile(r"발언 \d+건을 인식했습니다"), timeout=30_000)
+    expect(page.locator("ol.candidates > li").first).to_be_visible(timeout=10_000)
+
+    # Donations and subscriptions show in the chat with their amounts (the playhead moved to 5:05).
+    page.get_by_role("slider", name="채팅 볼 위치").fill("305000")
+    chat = page.get_by_role("list", name="고른 위치 주변 채팅")
+    expect(chat.locator("li[data-kind='donation']")).to_contain_text("💰 5,000원")
+    expect(chat.locator("li[data-kind='donation']")).to_contain_text("벌칙 기대합니다")
+    expect(chat.locator("li[data-kind='subscription']")).to_contain_text("구독 3개월")
+    # Nothing original is kept: author tags are pseudonyms, never the recorder's nicknames.
+    assert "시청자" not in chat.inner_text()
+
+    # The transcript tab lists the fake engine's lines and jumps to them.
+    page.get_by_role("tab", name="대본").click()
+    lines = page.get_by_role("list", name="발언 목록")
+    expect(lines.locator("li").first).to_be_visible()
+    expect(page.locator("section", has=page.get_by_role("heading", name="대본"))).to_contain_text("이 컴퓨터에서 인식")
+    page.get_by_label("대본 찾기").fill("벌칙")
+    expect(lines.locator("li")).to_have_count(1)
+    expect(lines).to_contain_text("벌칙으로 노래")
+    lines.locator("li").first.get_by_role("button").click()
+    expect(page.locator(".stage-timeline .stage-time")).to_contain_text("03:35")
+    page.screenshot(path=str(SHOTS / "backup-transcript.png"))
+
+    # The cut analysis reads the transcript: the promise utterance is in the first candidate's window.
+    page.get_by_role("tab", name=re.compile("^후보")).click()
+    page.locator("ol.candidates > li").first.get_by_label("AI 검토에 포함").check()
+    page.get_by_role("button", name="AI 검토로 이동").click()
+    page.get_by_role("radio", name="컷 분석").check()
+    from test_phase6 import pick_provider
+
+    pick_provider(page, "E2E 가짜 AI")
+    page.get_by_role("button", name="보낼 내용 미리보기").click()
+    preview = page.locator(".ai-preview[data-kind='cut']")
+    expect(preview).to_contain_text(re.compile(r"발언 \d+건과 채팅 \d+건"))
+    preview.get_by_text("보낼 내용 전체").click()
+    expect(preview.locator("pre")).to_contain_text("벌칙으로 노래")
+    expect(preview.locator("pre")).to_contain_text(re.compile(r'"kind":\s*"chat"'))
+
+    # The files tab has the caption files beside the chat.
+    page.get_by_role("tab", name="파일").click()
+    expect(page.get_by_role("button", name=re.compile("대본 SRT"))).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile("대본 VTT"))).to_be_visible()
+
+    # Importing again opens the same session instead of a copy.
+    page.get_by_role("link", name="새 작업").click()
+    page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("tab", name="NAS 백업").click()
+    form = page.get_by_role("form", name="NAS 백업 불러오기")
+    row = form.locator(".backup-row", has_text="E2E 가짜 백업 방송")
+    expect(row.get_by_role("link", name="열기")).to_be_visible(timeout=10_000)

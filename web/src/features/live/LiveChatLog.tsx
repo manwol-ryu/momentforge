@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveChat } from "../../api/types";
+import { authorTag, ChatText } from "../../shared/chat/ChatText";
 import { timecode } from "../../shared/format";
 
 interface Props {
@@ -40,14 +41,23 @@ export function LiveChatLog({ chats, longForm }: Props) {
         <p className="empty">아직 받은 채팅이 없습니다. 연결되면 여기에 바로 보입니다.</p>
       ) : (
         <ol ref={box} className="chatlog chatlog-live" aria-label="실시간 채팅" aria-live="off" tabIndex={0} onScroll={onScroll}>
-          {shown.map((c) => (
-            <li key={c.seq} data-late={c.late || undefined} data-new={c.seq > (firstSeq.current ?? Infinity) || undefined}>
-              <span className="chat-time timecode">{timecode(c.offsetMs, longForm)}</span>
-              <span className="chat-author">{c.author || "알 수 없음"}</span>
-              <span className="chat-text">{c.text}</span>
-              {c.late && <span className="chat-late">늦게 받음</span>}
-            </li>
-          ))}
+          {shown.map((c) => {
+            const tag = authorTag(c.author);
+            return (
+              <li key={c.seq} data-late={c.late || undefined} data-new={c.seq > (firstSeq.current ?? Infinity) || undefined}>
+                <div className="chat-row">
+                  <span className="chat-time timecode">{timecode(c.offsetMs, longForm)}</span>
+                  <span className="chat-author" data-tone={tag.tone} title={c.author || "작성자를 알 수 없음"}>
+                    {tag.short}
+                  </span>
+                  <span className="chat-text">
+                    <ChatText text={c.text} />
+                  </span>
+                  {c.late && <span className="chat-late">늦게 받음</span>}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
       {heldAt !== null && (

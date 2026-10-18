@@ -185,10 +185,13 @@ type chatJSON struct {
 	OffsetMs int64  `json:"offsetMs"`
 	Author   string `json:"author"` // pseudonym, never the original id
 	Text     string `json:"text"`
+	Kind     string `json:"kind,omitempty"`   // donation | subscription | system; absent for a message
+	Amount   int64  `json:"amount,omitempty"` // won, or months subscribed
+	Hidden   bool   `json:"hidden,omitempty"`
 }
 
 func toChatJSON(e domain.ChatEvent) chatJSON {
-	return chatJSON{ID: e.ID, OffsetMs: e.OffsetMs, Author: e.AuthorKey, Text: e.Text}
+	return chatJSON{ID: e.ID, OffsetMs: e.OffsetMs, Author: e.AuthorKey, Text: e.Text, Kind: e.Kind, Amount: e.Amount, Hidden: e.Hidden}
 }
 
 func (h *handler) chatsAt(w http.ResponseWriter, r *http.Request) {

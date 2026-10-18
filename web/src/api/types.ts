@@ -19,11 +19,11 @@ export interface ServerEvent<T = unknown> {
   data?: T;
 }
 
-export type JobPhase = "starting" | "checking" | "collecting" | "analyzing" | "comments" | "done" | "paused" | "error";
+export type JobPhase = "starting" | "checking" | "collecting" | "analyzing" | "comments" | "transcribing" | "done" | "paused" | "error";
 
 export interface JobStatus {
   id: string;
-  kind: "collect" | "analyze" | "comments" | "";
+  kind: "collect" | "analyze" | "comments" | "import" | "transcribe" | "";
   busy: boolean;
   phase: JobPhase | "";
   message: string;
@@ -38,6 +38,8 @@ export interface JobStatus {
   /** Comments read and viewer recommendations found (comments step). */
   comments?: number;
   recommendations?: number;
+  /** Utterances recognised so far (transcribe step). */
+  utterances?: number;
   warning?: string;
   updatedAt: string;
 }
@@ -93,6 +95,51 @@ export interface Chat {
   offsetMs: number;
   author: string;
   text: string;
+  /** donation (amount: won), subscription (amount: months), system; absent for a message. */
+  kind?: "donation" | "subscription" | "system";
+  amount?: number;
+  /** The platform hid it (bot filter). */
+  hidden?: boolean;
+}
+
+/** One line the broadcaster said (local speech recognition or a caption file). */
+export interface Utterance {
+  id: string;
+  startMs: number;
+  endMs: number;
+  speaker: string;
+  text: string;
+}
+
+export interface TranscriptInfo {
+  id: string;
+  source: "asr" | "file" | "demo";
+  engine: string;
+  utterances: number;
+  coverage: { StartMs: number; EndMs: number }[];
+  createdAt: string;
+}
+
+export interface ASREngine {
+  id: string;
+  name: string;
+  ready: boolean;
+  how?: string;
+}
+
+/** One recorded broadcast in a NAS backup folder. */
+export interface BackupBroadcast {
+  name: string;
+  title: string;
+  date?: string;
+  chatPath: string;
+  hasAudio: boolean;
+  hasVideo: boolean;
+  chatBytes: number;
+  audioBytes: number;
+  videoBytes: number;
+  sessionId?: string;
+  importedAt?: string;
 }
 
 export interface EvidenceChat extends Chat {
@@ -159,7 +206,8 @@ export interface ExportFile {
 
 export interface Playback {
   url: string;
-  type: "hls";
+  /** hls: a stream the app plays with hls.js; file: a media file this server streams. */
+  type: "hls" | "file";
 }
 
 // --- LIVE ---
@@ -273,7 +321,22 @@ export interface TimelineItem {
   rationale?: string;
   uncertainty?: string;
   priority?: "high" | "medium" | "low";
+  /** AI items: the rule or viewer items this recommendation explains (empty: a new moment). */
+  sourceCandidateIds?: string[];
   watchUrl?: string;
+  /** Cut plans: the spans to keep, the plan to open, whether both checks passed. */
+  kind?: "cut";
+  spans?: TimelineSpan[];
+  cutPlanId?: string;
+  verified?: boolean;
+  version?: number;
+}
+
+/** One span of a cut plan. */
+export interface TimelineSpan {
+  startMs: number;
+  endMs: number;
+  role: "setup" | "main" | "payoff";
 }
 
 export interface UnifiedTimeline {
@@ -379,6 +442,8 @@ export interface AIPrice {
 
 /** Exactly what an AI run will send (snake_case as sent). */
 export interface AIPlan {
+  /** explain (recommendations) or cut (the cut analysis); absent means explain. */
+  kind?: "explain" | "cut";
   provider: string;
   model: string;
   delivery: AIDelivery;
@@ -405,10 +470,45 @@ export interface AITokenCount {
   hasPrice: boolean;
 }
 
+/** The cut analysis' part of a preview: what each candidate's steps start from. */
+export interface AICutPreview {
+  inputs: {
+    candidates: { id: string; source_type: string; anchor_ms: number; clip_start_ms: number; clip_end_ms: number; title: string }[];
+    window_start_ms: number;
+    window_end_ms: number;
+    duration_ms: number;
+    sources: string[];
+    evidence: { ref: string; kind: string; start_ms: number; end_ms?: number; speaker?: string; author?: string; text: string }[];
+  }[];
+  requestsPerCandidate: number;
+  plannedPerCandidate: number;
+  searchExecuted: boolean;
+  hasTranscript: boolean;
+  utteranceCount: number;
+  chatCount: number;
+  evidenceBytes: number;
+}
+
 export interface AIPreview {
   previewId: string;
   expiresAt: string;
   plan: AIPlan;
+  cut?: AICutPreview;
+}
+
+/** A cut plan in lists. */
+export interface CutPlanSummary {
+  id: string;
+  runId: string;
+  sessionId: string;
+  candidateIds: string[];
+  version: number;
+  supersedes?: string;
+  state: "ok" | "verify_failed" | "failed";
+  startMs: number;
+  endMs: number;
+  confirmed: boolean;
+  createdAt: string;
 }
 
 export type AIRunState = "running" | "completed" | "partial" | "failed" | "cancelled";
@@ -418,6 +518,7 @@ export interface AIRun {
   sessionId: string;
   provider: string;
   model: string;
+  kind: "explain" | "cut";
   delivery: AIDelivery;
   state: AIRunState;
   requestCount: number;

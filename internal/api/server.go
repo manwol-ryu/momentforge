@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/manwol-ryu/momentforge/internal/app"
+	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/events"
 )
 
@@ -54,6 +56,15 @@ type Core interface {
 	AIModels(ctx context.Context, provider string) ([]app.AIModel, error)
 	CountAIPreview(ctx context.Context, previewID, fingerprint string) (app.AITokenCount, error)
 	AIRuns(ctx context.Context, sid string) ([]app.AIRunView, error)
+	CutPlans(ctx context.Context, sid string) ([]app.CutPlanView, error)
+	ScanBackups(ctx context.Context, dir string) ([]app.BackupView, error)
+	StartImportBackup(req app.ImportRequest) (app.JobStatus, error)
+	StartTranscribe(ctx context.Context, sid string) (app.JobStatus, error)
+	ASREngines(ctx context.Context) []app.ASREngineView
+	Transcript(ctx context.Context, sid string) (app.TranscriptView, bool, error)
+	Utterances(ctx context.Context, sid string, from, to int64, limit int) ([]domain.Utterance, error)
+	MediaFile(ctx context.Context, sid, kind string) (string, error)
+	CutPlan(ctx context.Context, id string) (app.CutPlanView, json.RawMessage, error)
 	CompareAI(ctx context.Context, idA, idB string) (*app.AIComparison, error)
 	HideSessions(ctx context.Context) (int, error)
 	RestoreSessions(ctx context.Context) (int, error)
@@ -100,7 +111,27 @@ func NewHandler(cfg Config) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer, securityHeaders(cfg.MediaOrigins), h.guard.localHost)
 	r.Route("/api", func(r chi.Router) {
-		r.Use(h.guard.sameOrigin, h.guard.accessKey)
+		r.Use(h.guard.sameOrigin)
+		// The player's media requests cannot carry the access key header (api.media).
+		r.Get("/sessions/{id}/media/{kind}", h.media)
+		r.Group(func(r chi.Router) {
+			r.Use(h.guard.accessKey)
+			h.apiRoutes(r)
+		})
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "없는 API 경로입니다.")
+		})
+		r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "이 API 경로에서 지원하지 않는 요청 방식입니다.")
+		})
+	})
+	h.pageRoutes(r)
+	return r
+}
+
+// apiRoutes are the JSON endpoints behind the access key.
+func (h *handler) apiRoutes(r chi.Router) {
+	{ // kept as one block so the route list reads as before
 		r.Get("/status", h.status)
 		r.Get("/events", h.events)
 		r.Get("/job", h.job)
@@ -108,6 +139,9 @@ func NewHandler(cfg Config) http.Handler {
 		r.Post("/collect", h.collect)
 		r.Post("/comments", h.startComments)
 		r.Post("/demo", h.demo)
+		r.Post("/import/scan", h.scanBackups)
+		r.Post("/import/backup", h.importBackup)
+		r.Get("/asr", h.asrEngines)
 		r.Get("/sessions", h.sessions)
 		r.Post("/sessions/hide", h.hideSessions)
 		r.Post("/sessions/restore", h.restoreSessions)
@@ -121,6 +155,10 @@ func NewHandler(cfg Config) http.Handler {
 			r.Get("/comments", h.comments)
 			r.Get("/timeline", h.timeline)
 			r.Get("/ai/runs", h.aiRuns)
+			r.Get("/cuts", h.cutPlans)
+			r.Post("/transcribe", h.transcribe)
+			r.Get("/transcript", h.transcript)
+			r.Get("/utterances", h.utterances)
 			r.Get("/files/*", h.download)
 		})
 		r.Post("/live/inspect", h.inspectLive)
@@ -148,18 +186,16 @@ func NewHandler(cfg Config) http.Handler {
 		r.Get("/ai/compare", h.aiCompare)
 		r.Post("/ai/runs", h.aiStart)
 		r.Get("/ai/runs/{id}", h.aiRun)
+		r.Get("/cuts/{id}", h.cutPlan)
 		r.Post("/ai/runs/{id}/cancel", h.aiCancel)
 		r.Get("/analyses/{id}", h.analysis)
 		r.Get("/analyses/{id}/candidates/{cid}/chats", h.candidateChats)
-		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "없는 API 경로입니다.")
-		})
-		r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "이 API 경로에서 지원하지 않는 요청 방식입니다.")
-		})
-	})
+	}
+}
+
+// pageRoutes serve the web app itself.
+func (h *handler) pageRoutes(r chi.Router) {
 	r.Get("/*", h.static)
-	return r
 }
 
 type statusResponse struct {

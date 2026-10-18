@@ -30,13 +30,21 @@ func Escape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, "\r", `\r`, "\n", `\n`, "\t", `\t`).Replace(s)
 }
 
-// ChatLine is "[HH:MM:SS.mmm][author|unknown][event id] text\n".
+// ChatLine is "[HH:MM:SS.mmm][author|unknown][event id] text\n"; a donation
+// or subscription adds its kind and amount after the id ("[donation 1000]").
 func ChatLine(e domain.ChatEvent) string {
 	author := e.AuthorKey
 	if author == "" {
 		author = "unknown"
 	}
-	return "[" + Stamp(e.OffsetMs) + "][" + author + "][" + e.ID + "] " + Escape(e.Text) + "\n"
+	kind := ""
+	switch e.Kind {
+	case domain.ChatKindDonation, domain.ChatKindSubscription:
+		kind = fmt.Sprintf("[%s %d]", e.Kind, e.Amount)
+	case domain.ChatKindSystem:
+		kind = "[system]"
+	}
+	return "[" + Stamp(e.OffsetMs) + "][" + author + "][" + e.ID + "]" + kind + " " + Escape(e.Text) + "\n"
 }
 
 // writeAtomic replaces path with data via a temporary file in the same folder.
@@ -126,6 +134,9 @@ type jsonlChat struct {
 	AuthorKey *string `json:"author_key"`
 	Content   string  `json:"content"`
 	Seq       int64   `json:"seq"`
+	Kind      string  `json:"kind,omitempty"`   // donation | subscription | system (absent for a message)
+	Amount    int64   `json:"amount,omitempty"` // won, or months subscribed
+	Hidden    bool    `json:"hidden,omitempty"`
 }
 
 // WriteChat writes manifest.json, chat.txt (time order) and chat.jsonl.
@@ -149,7 +160,7 @@ func WriteChat(dir string, m ChatManifest, events []domain.ChatEvent) error {
 	enc.SetEscapeHTML(false)
 	for _, e := range events {
 		txt.WriteString(ChatLine(e))
-		row := jsonlChat{EventID: e.ID, TimeMs: e.OffsetMs, Content: e.Text, Seq: e.Seq}
+		row := jsonlChat{EventID: e.ID, TimeMs: e.OffsetMs, Content: e.Text, Seq: e.Seq, Kind: e.Kind, Amount: e.Amount, Hidden: e.Hidden}
 		if e.AuthorKey != "" {
 			row.AuthorKey = &e.AuthorKey
 		}
@@ -653,4 +664,121 @@ func WriteAIRun(dir string, m AIManifest, recs []AIRecommendation) error {
 		}
 	}
 	return writeAtomic(filepath.Join(dir, "recommendations.txt"), []byte(txt.String()))
+}
+
+// CutSpan is one span of a cut plan in the files.
+type CutSpan struct {
+	Order    int    `json:"order"`
+	StartMs  int64  `json:"start_ms"`
+	EndMs    int64  `json:"end_ms"`
+	Role     string `json:"role"`
+	StartRef string `json:"start_ref"`
+	EndRef   string `json:"end_ref"`
+}
+
+// CutPlanFile is what WriteCutPlan writes: the plan as JSON, and its spans
+// as CSV and EDL for an editor (editnest, Premiere, Resolve).
+type CutPlanFile struct {
+	ID        string
+	SessionID string
+	State     string
+	Target    string
+	Reason    string
+	Spans     []CutSpan
+	Plan      []byte // the plan's JSON as is
+}
+
+// edlTimecode is HH:MM:SS:FF at 30 fps (non-drop), which editors accept as
+// a plain time; the video's own frame rate is applied when it is placed.
+func edlTimecode(ms int64) string {
+	frames := (ms % 1000) * 30 / 1000
+	s := ms / 1000
+	return fmt.Sprintf("%02d:%02d:%02d:%02d", s/3600, s%3600/60, s%60, frames)
+}
+
+// WriteCutPlan writes plan.json, cuts.csv and cuts.edl under dir.
+func WriteCutPlan(dir string, f CutPlanFile) error {
+	if f.Spans == nil {
+		f.Spans = []CutSpan{}
+	}
+	var csvb strings.Builder
+	csvb.WriteString("plan_id,order,role,start_ms,end_ms,start,end,start_ref,end_ref,target,state\n")
+	for _, s := range f.Spans {
+		fmt.Fprintf(&csvb, "%s,%d,%s,%d,%d,%s,%s,%s,%s,%s,%s\n", f.ID, s.Order, s.Role, s.StartMs, s.EndMs, Stamp(s.StartMs), Stamp(s.EndMs),
+			s.StartRef, s.EndRef, csvField(f.Target), f.State)
+	}
+	var edl strings.Builder
+	fmt.Fprintf(&edl, "TITLE: MomentForge %s\nFCM: NON-DROP FRAME\n\n", f.ID)
+	var record int64
+	for _, s := range f.Spans {
+		length := s.EndMs - s.StartMs
+		fmt.Fprintf(&edl, "%03d  AX       V     C        %s %s %s %s\n* FROM CLIP NAME: %s\n* %s\n\n", s.Order,
+			edlTimecode(s.StartMs), edlTimecode(s.EndMs), edlTimecode(record), edlTimecode(record+length), f.SessionID, s.Role)
+		record += length
+	}
+	for _, w := range []struct {
+		name string
+		data []byte
+	}{{"plan.json", f.Plan}, {"cuts.csv", []byte(csvb.String())}, {"cuts.edl", []byte(edl.String())}} {
+		if err := writeAtomic(filepath.Join(dir, w.name), w.data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func csvField(s string) string {
+	if strings.ContainsAny(s, ",\"\n") {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
+}
+
+// srtStamp is HH:MM:SS,mmm.
+func srtStamp(ms int64) string {
+	ms = max(0, ms)
+	s := ms / 1000
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", s/3600, s%3600/60, s%60, ms%1000)
+}
+
+// WriteTranscript writes <id>.srt, <id>.vtt and <id>.json under dir (a
+// caption file an editor such as editnest reads, and the utterances with
+// their ids for the cut analysis' refs).
+func WriteTranscript(dir, id string, utts []domain.Utterance) error {
+	var srt, vtt strings.Builder
+	vtt.WriteString("WEBVTT\n\n")
+	type row struct {
+		ID      string `json:"id"`
+		StartMs int64  `json:"start_ms"`
+		EndMs   int64  `json:"end_ms"`
+		Speaker string `json:"speaker"`
+		Text    string `json:"text"`
+	}
+	rows := make([]row, 0, len(utts))
+	for i, u := range utts {
+		end := u.EndMs
+		if end <= u.StartMs {
+			end = u.StartMs + 1000
+		}
+		fmt.Fprintf(&srt, "%d\n%s --> %s\n%s\n\n", i+1, srtStamp(u.StartMs), srtStamp(end), u.Text)
+		fmt.Fprintf(&vtt, "%s --> %s\n%s\n\n", strings.Replace(srtStamp(u.StartMs), ",", ".", 1), strings.Replace(srtStamp(end), ",", ".", 1), u.Text)
+		uid := u.ID
+		if uid == "" {
+			uid = fmt.Sprintf("%s-%d", id, i+1)
+		}
+		rows = append(rows, row{ID: uid, StartMs: u.StartMs, EndMs: end, Speaker: u.Speaker, Text: u.Text})
+	}
+	b, err := jsonBytes(rows)
+	if err != nil {
+		return err
+	}
+	for _, w := range []struct {
+		name string
+		data []byte
+	}{{id + ".srt", []byte(srt.String())}, {id + ".vtt", []byte(vtt.String())}, {id + ".json", b}} {
+		if err := writeAtomic(filepath.Join(dir, w.name), w.data); err != nil {
+			return err
+		}
+	}
+	return nil
 }

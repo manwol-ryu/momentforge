@@ -13,7 +13,7 @@ E2E_PORT := 18765
 E2E_VENV := e2e/.venv
 E2E_PY   := $(E2E_VENV)/bin/python
 
-.PHONY: help dev dev-server dev-web web build check test e2e e2e-deps clean
+.PHONY: help dev dev-server dev-web web build check test e2e e2e-deps clean speech-helper
 
 help:
 	@echo "make dev    Go 서버(8765) + Vite 개발 서버(5173) 동시 실행"
@@ -30,13 +30,26 @@ web/node_modules/.installed: web/package.json web/package-lock.json
 web/dist:
 	@mkdir -p web/dist && touch web/dist/.placeholder
 
+# The macOS speech helper (tools/speech-helper, Swift) is embedded by the
+# darwin build. On macOS it is built with swiftc (Xcode command line tools);
+# elsewhere an empty placeholder keeps go:embed satisfied.
+SPEECH_HELPER := cmd/momentforge/assets/speech-helper
+speech-helper: $(SPEECH_HELPER)
+$(SPEECH_HELPER): tools/speech-helper/Sources/speech-helper/main.swift
+	@mkdir -p cmd/momentforge/assets
+ifeq ($(shell uname -s),Darwin)
+	swiftc -O -o $(SPEECH_HELPER) tools/speech-helper/Sources/speech-helper/main.swift
+else
+	@touch $(SPEECH_HELPER)
+endif
+
 web: web/node_modules/.installed
 	cd web && $(NPM) run build
 
-build: web
+build: web $(SPEECH_HELPER)
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/momentforge
 
-check: web/dist
+check: web/dist $(SPEECH_HELPER)
 	$(PYTHON) -I .claude/skills/momentforge-architecture/scripts/check_layers.py
 	@out="$$($(GOFMT) -l cmd internal web/embed.go)"; \
 		if [ -n "$$out" ]; then echo "gofmt가 필요한 파일:"; echo "$$out"; exit 1; fi
@@ -51,7 +64,7 @@ dev: web/dist web/node_modules/.installed
 	@echo "개발 서버: http://127.0.0.1:5173 (API는 Go 서버 127.0.0.1:8765로 전달)"
 	@$(MAKE) -j2 dev-server dev-web
 
-dev-server:
+dev-server: $(SPEECH_HELPER)
 	$(GO) run ./cmd/momentforge serve --no-browser
 
 dev-web:
@@ -68,7 +81,7 @@ $(E2E_VENV)/.installed: e2e/requirements.txt
 e2e-deps: $(E2E_VENV)/.installed
 
 # The E2E binary adds a synthetic LIVE platform (build tag e2efake); releases never include it.
-e2e: web e2e-deps
+e2e: web e2e-deps $(SPEECH_HELPER)
 	CGO_ENABLED=0 $(GO) build -trimpath -tags e2efake -ldflags "$(LDFLAGS)" -o $(E2E_BIN) ./cmd/momentforge
 	rm -rf e2e/.data
 	# API keys from the environment are dropped: E2E never reaches a real AI service.
@@ -77,4 +90,4 @@ e2e: web e2e-deps
 		-- $(E2E_PY) e2e/run.py --base-url http://127.0.0.1:$(E2E_PORT)
 
 clean:
-	rm -rf bin web/dist e2e/.data
+	rm -rf bin web/dist e2e/.data cmd/momentforge/assets tools/speech-helper/.build

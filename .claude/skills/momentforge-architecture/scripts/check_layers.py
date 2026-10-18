@@ -30,7 +30,8 @@ ALLOWED: dict[str, tuple[str, ...] | None] = {
     "internal/api": ("internal/app", "internal/events", "internal/domain"),
     "internal/mcp": ("internal/app", "internal/domain"),
     "internal/app": (
-        "internal/platform", "internal/detect", "internal/store", "internal/ai",
+        "internal/platform", "internal/detect", "internal/store", "internal/ai", "internal/ai/cut",
+        "internal/asr", "internal/backup",
         "internal/export", "internal/events", "internal/privacy", "internal/domain",
     ),
     "internal/platform": ("internal/domain",),
@@ -40,8 +41,11 @@ ALLOWED: dict[str, tuple[str, ...] | None] = {
     "internal/store": ("internal/domain",),
     "internal/export": ("internal/domain",),
     "internal/events": ("internal/domain",),
+    "internal/asr": ("internal/domain",),
+    "internal/asr/*": ("internal/asr", "internal/domain"),
+    "internal/backup": ("internal/domain",),
     "internal/ai": ("internal/domain",),
-    "internal/ai/*": ("internal/ai", "internal/domain"),
+    "internal/ai/*": ("internal/ai", "internal/ai/cut", "internal/domain"),  # cut은 제공자가 아니라 단계 지시문·검증 라이브러리
     "internal/privacy": (),
     "internal/domain": (),
 }

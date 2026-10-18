@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "/usr/local/go/bin/go run ./cmd/momentforge serve --no-browser --port 8795 --data .momentforge/dev"],
+      "port": 8795
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd web && MF_SERVER=http://127.0.0.1:8795 MF_DATA=../.momentforge/dev npx vite --port 5179"],
+      "port": 5179,
+      "url": "http://127.0.0.1:5179"
+    }
+  ]
+}

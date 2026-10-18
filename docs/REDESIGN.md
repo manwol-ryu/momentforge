@@ -105,30 +105,38 @@ momentforge/
 │  │  └─ rules/                   laugh, surge, repeat, emotion, participants
 │  ├─ store/                      SQLite(modernc, CGO 없음)·마이그레이션
 │  ├─ ai/                         Provider 인터페이스·프롬프트·검증
+│  │  ├─ cut/                     (6단계) 컷 분석의 단계별 지시문·스키마·검증 (ai, domain만 import)
 │  │  ├─ anthropic/               anthropic-sdk-go
 │  │  ├─ openai/                  기존 기능 동등용
 │  │  ├─ opencode/                OpenCode CLI 하네스로 OpenCode Go 모델 사용
 │  │  ├─ codex/                   Codex CLI 하네스(ChatGPT 로그인)
 │  │  ├─ cliproxy/                사용자가 실행하는 CLIProxyAPI(키, 켜고 끄기, 대시보드)
 │  │  └─ opencodex/               사용자가 실행하는 OpenCodex(키 없음, 켜고 끄기, 대시보드)
-│  ├─ export/                     TXT/JSONL/CSV/JSON·checkpoint
+│  ├─ asr/                        (6단계) 로컬 음성 인식 Engine 인터페이스·registry (domain만 import)
+│  │  ├─ applespeech/             macOS 26+ Speech 프레임워크 도우미(embed)를 실행
+│  │  └─ whispercpp/              사용자가 설치한 whisper-cli 실행 (선택)
+│  ├─ export/                     TXT/JSONL/CSV/JSON·checkpoint·cuts(EDL·CSV)·transcript(SRT·VTT)·백업 묶음
 │  ├─ events/                     pub/sub 버스
 │  └─ privacy/                    작성자 가명화(salt+HMAC)
 ├─ web/                           Vite + React + TS (embed.go: 빌드 결과를 Go 패키지로 내장)
 │  ├─ src/features/{home,session,live,settings}/
 │  └─ dist/ → go:embed
+├─ tools/speech-helper/           (6단계) Swift Package: SpeechAnalyzer·SoundAnalysis·Vision을 JSON 줄로 내놓는 작은 실행파일. 빌드 결과를 cmd/momentforge가 embed (macOS 빌드만)
 ├─ e2e/                           Python Playwright 정상 작동 테스트 (개발용)
 ├─ .claude/
 │  ├─ settings.json               구조 검사 훅
 │  └─ skills/                     외부 스킬 4개 + 프로젝트 스킬 (2절, 11절)
 ├─ docs/
 │  ├─ REDESIGN.md                 이 문서
-│  └─ DESIGN-SYSTEM.md            frontend-design 디자인 계획 (9절)
+│  ├─ DESIGN-SYSTEM.md            frontend-design 디자인 계획 (9절)
+│  └─ AI-CUT-ANALYSIS.md          AI 2세대(컷 분석·로컬 인식·백업 묶음) 상세 설계 (6.6절)
 ├─ CLAUDE.md                      Claude Code 개발 지침
 └─ Makefile / .goreleaser.yaml    OS별 단일 바이너리 빌드
 ```
 
 외부 의존성(최소화): `go-chi/chi`(라우팅), `modernc.org/sqlite`(순수 Go SQLite → 크로스 컴파일 용이), `coder/websocket`(LIVE 채팅 WSS), `anthropics/anthropic-sdk-go`(Claude), `modelcontextprotocol/go-sdk`(MCP). 나머지는 표준 라이브러리. `e2e/`의 Python·Playwright는 개발 환경에만 필요하고 배포물에는 포함하지 않음.
+
+6단계(AI 2세대, 2026-10-17 사용자 승인)에서 더해지는 것: `tools/speech-helper/`의 Swift 실행파일(Apple 프레임워크만 사용, Go는 여전히 CGO 없음)과, 사용자가 직접 설치했을 때만 쓰는 선택 도구 `whisper-cli`(whisper.cpp). 영상 자르기·이어 붙이기·편집 프로그램 내보내기는 사용자의 다른 앱 editnest가 맡고, MomentForge는 파일 형식(EDL·CSV·SRT·VTT·백업 묶음)으로만 연결됩니다.
 
 ## 6. 핵심 인터페이스
 
@@ -405,6 +413,23 @@ type JobManager interface {
 
 평가: 데모 데이터에 붙여넣은 시청자 댓글 3개와 결정적인 가짜 AI 검토를 더한 데이터(`cmd/momentforge/mcp_test.go`의 `buildEvalData`)로 질문 10개를 만들고, `TestMCPEvalAnswers`가 도구 호출만으로 답을 다시 구해 확인합니다(`make test`에 포함). 모델로 푸는 평가는 15절 기록 참고.
 
+### 6.6 AI 2세대: 방송 내용과 채팅으로 근거를 추적하는 컷 분석 (6단계)
+
+상세 설계는 [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md)이며 그 문서가 기준입니다. 여기에는 다른 절과 맞물리는 규칙만 둡니다.
+
+| 항목 | 규칙 |
+|---|---|
+| 자리 | 탐지기(6.2)는 반응을 찾고, 1세대 AI 검토(6.3, 장면 설명)는 유지. 컷 분석은 후보 하나를 받아 `원인 후보 비교 → 서버가 실행하는 검색 → 근거 ID로 적는 컷 계획과 경계 후보 3개 → 발언 경계로 시각 보정 → 클립만 보는 검수 → 원본 비교 검수`를 돈다 |
+| 자료 | 방송 음성을 **로컬**에서 글로 바꾼 발언(`utt:`)을 1차 자료로, 채팅(`chat:`)·영상 댓글(`comment:`)을 함께. 소리 이벤트(`sound:`)·화면 글자(`obs:`)는 로컬 모델로 되는지 확인한 뒤. 관측과 AI 가설은 분리해 저장 |
+| 인식 | `internal/asr.Engine` 등록 방식. 기본 `applespeech`(macOS 26+, embed한 Swift 도우미, 모델은 OS가 관리), 선택 `whispercpp`(사용자가 설치한 `whisper-cli`). 6-B의 첫 일은 이 Mac에서 `ko-KR` 지원과 방송 음성 품질 **측정**이며, 안 되면 기본을 바꾼다. 화자 구분은 1차 없음(모두 `방송자`), 자막 파일의 화자 이름은 역할명으로 치환 |
+| 음성 받기 | 치지직 HLS의 가장 낮은 렌디션을 기존 HTTP 클라이언트로 받아 fMP4로 이어 붙여 엔진에 넘김. 외부 받기 도구 없음. 전사가 끝나면 음성은 삭제(백업 묶음의 MP4가 보관본) |
+| 전송 | 외부로 나가는 것은 발언 글·채팅·관측 레이블뿐, 음성·영상은 나가지 않음. 1세대와 같이 미리보기 확인 뒤 전송. 검색 단계가 더 보내는 발언·채팅은 **상한(추가 글 80KB, 후보당 요청 8회, 설정에서 변경)에 한 번 동의**하고, 보낸 것은 `sent_log`에 전부 기록해 "보낸 내용 전체"에서 단계별로 본다. "검색마다 확인"은 옵션. 검색은 그 세션 안에서만 |
+| 제공자 | 선택 인터페이스 `ai.StepProvider`를 **모든 제공자**가 구현(CLI 하네스는 느림 안내). 배치 없음. Claude 네이티브 도구 사용은 뒤의 선택 최적화 |
+| 검증 | 모든 근거 ref는 이 실행에서 서버가 보낸 ID여야 함. `required_context_refs ⊆ analysis_evidence_refs`, 필수 맥락은 모두 `selected_spans` 안. 모델은 밀리초를 쓰지 않고 서버가 발언 경계로 바꿈 |
+| 결과 | `ai_cut_plans`(새 마이그레이션). 분리 구간(여러 원본 구간) 1차 포함. 통합 타임라인 `spans`, 내보내기 `cuts/`(plan.json·CSV·EDL)와 `transcript/`(SRT·VTT). 사용자 메모 → 재분석은 새 버전, 확정본은 덮어쓰지 않음 |
+| 백업 묶음 | `backups/<세션>/`: manifest(시간축 대응 `video_offset_ms` 포함), 재인코딩 없이 받은 `video.mp4`, 채팅, 전사, 타임라인, 분석, 컷 계획, AI 실행 기록(키 없음), 메모. 자르기는 editnest |
+| 보류 | 임베딩 검색, 이야기 색인(6-E), 장면 설명 VLM, 자막으로 앞부분 대신하기, 자동 학습 |
+
 ## 7. 데이터 모델 (SQLite, 새 스키마 v1)
 
 | 테이블 | 주요 컬럼 | 비고 |
@@ -555,7 +580,8 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | **3. LIVE** ✅ | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** (구현 완료, 실제 확인 대기) | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
 | **5. AI 강화 (확장 1순위)** (구현 완료, 실제 확인 대기) | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
-| 6+. 이후 확장 | 탐지 파라미터 UI·규칙 추가 → LIVE 다채널·LIVE→VOD 연결 → 다른 플랫폼(SOOP·유튜브) | `add-detection-rule`, `add-platform` | 단계별 별도 계획 |
+| **6. AI 2세대: 컷 분석** (설계 확정 2026-10-17, [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md) 8절) | 6-A 근거·계획 구조 + 데모 사례 ✅(2026-10-18) → 6-B 방송 내용 인식(한국어 인식 측정, Apple 음성 인식 도우미, whisper 선택, **NAS 백업 불러오기**(m4a+chat.jsonl, 후원·구독 포함), 대본 탭, SRT·VTT, 치지직 음성 받기는 마지막) → 6-C 원인·맥락 검색(서버 실행 도구, 예산, 전송 기록) → 6-D 컷 결정·검수(경계 후보 3개, 발언 경계 보정, 이중 검수, 결과 상자, editnest용 EDL, 백업 묶음) → 6-E 로컬 관측(소리·화면 글자 가능성 확인)·이야기 색인 → 6-F LIVE 잠정 컷 | claude-api, webapp-testing, skill-creator | 각 하위 단계의 완료 기준은 상세 설계 8절. 실제 다시보기 검증은 6-B·6-C·6-D 끝에 사용자와 함께 |
+| 7+. 이후 확장 | 탐지 파라미터 UI·규칙 추가 → LIVE 다채널·LIVE→VOD 연결 → 다른 플랫폼(SOOP·유튜브) | `add-detection-rule`, `add-platform` | 단계별 별도 계획 |
 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
 
@@ -679,5 +705,12 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-17 | CLIProxyAPI 켜고 끄기 (사용자 요청) | 설정 화면 CLIProxyAPI 카드에 실행 상태(실행 중·꺼짐·설치되지 않음, 주소에 키 없는 요청 하나로 확인)와 켜기·끄기. 켜기는 `cli-proxy-api -config ~/.cli-proxy-api/config.yaml`을 새 프로세스 그룹으로 실행해 MomentForge를 꺼도 계속 돌게 하고, 출력은 같은 폴더의 로그, 번호는 사용자가 쓰던 pid 파일에 씀. 끄기는 MomentForge가 켰거나 pid 파일의 프로세스가 실제로 `cli-proxy-api`일 때만 SIGTERM(다른 프로그램을 끄지 않게 `ps`로 확인, Windows는 이번 실행에서 켠 것만). 주소가 이 컴퓨터가 아니면 켜고 끌 수 없음. 상태는 카드를 열 때·켜고 끈 뒤·다시 확인할 때만 묻고 폴링하지 않음. 실제 CLIProxyAPI 8.0.32로 끄기·켜기 확인 |
 | 2026-10-17 | CLIProxyAPI 대시보드 (사용자 요청) | 설정 카드에 **CLIProxyAPI 대시보드 열기**(새 탭, `<주소의 /v1을 뺀 곳>/management.html`). 상태를 물을 때마다 CLIProxyAPI 설정을 새로 읽어(CLIProxyAPI가 관리 키를 해시로 바꾸며 파일을 다시 씀) 관리 키(`management.secret-key`, v7 `remote-management.secret-key`)가 있고 `disable-control-panel`이 아니면 링크를, 실행 중인데 꺼져 있으면 켜는 방법을 보여 줌. 로그인용 원래 관리 키는 CLIProxyAPI가 해시만 남기므로 `~/.cli-proxy-api/management-key.txt`(0600)에 두고 카드에는 그 위치만 표시(MomentForge는 관리 키를 읽거나 보내지 않음). 사용자 컴퓨터의 CLIProxyAPI는 사용자가 "켜기"를 골라 관리 키 생성·`allow-remote: false`·`disable-auto-update-panel: true`(대시보드 파일은 처음 한 번만 공식 GitHub에서 받음)로 설정하고 다시 켬. 실제로 대시보드가 새 탭으로 열리고 관리 키로 관리 API가 200, 키 없이는 401임을 확인 |
 | 2026-10-17 | OpenCodex 제공자 (사용자 요청) | 사용자가 opencodex도 CLIProxyAPI와 같은 기능으로 넣기를 요청. `internal/ai/opencodex`: OpenCodex(`ocx`, npm `@bitkyc08/opencodex`)에 OpenAI 호환 Chat Completions(`/chat/completions`, 글로 JSON 요청 후 `Validate`)와 `/models`. OpenCodex는 `127.0.0.1`에 묶이면 인증이 없으므로 **키 없는** `SelfAuthenticated` 제공자로 둠(`Ready`=`ocx` 설치 여부, 키 헤더를 보내지 않음). 127.0.0.1이 아닌 곳에서 받는 설정(키 필요)은 지원하지 않고 카드에 알림. 주소(`Endpointed`)의 기본값은 살아 있는 프로세스가 기록한 `~/.opencodex/runtime-port.json`의 포트(포트가 바쁘면 OpenCodex가 다른 포트로 옮기므로) → `config.json`의 `port`·`hostname` → `http://127.0.0.1:10100/v1`. 두 파일의 비밀값은 읽어 두지 않고 필요한 필드만 디코드. 실행 여부는 `/healthz`가 `service: "opencodex"`(또는 이전 형식 `status/version/uptime`)를 답할 때만 실행 중. 켜기는 `ocx start`(설정에 주소가 있으면 `--port`)를 자기 프로세스 그룹으로 백그라운드 실행, 출력은 `~/.opencodex/momentforge-start.log`, `ocx`가 Node 스크립트라 그 폴더를 PATH 앞에 둠. 끄기는 `ocx stop`(OpenCodex의 공식 종료, 어떻게 켰든 끄고 Codex 설정을 되돌림)이라 실행 중이고 설치되어 있고 주소가 이 컴퓨터면 끌 수 있음. 대시보드는 `ocx gui`처럼 `http://localhost:<포트>/`(이 컴퓨터는 로그인 없음). 이를 위해 화면의 CLIProxyAPI 전용 문구를 제공자로 옮김: `Endpointed.EndpointHelp()`, `ServiceStatus.DashboardHelp`(관리 키 파일·켜는 방법 포함, `DashboardKey` 대체). 시작 제공자 순서는 CLIProxyAPI 다음. 실제 OpenCodex 2.55.0-preview로 확인: 켜기 → 실행 중, 대시보드 `http://localhost:10100/`이 로그인 없이 열림, 모델 105개, 끄기 → 꺼짐(채팅은 보내지 않음) |
+| 2026-10-17 | 작업대 사용성 개선 (사용자 보고 6건 + 전체 점검) | 사용자가 보고한 문제와 원인: (1) 재생 위치 채팅 카드가 좁아(무대의 34%, 최대 23rem) 24자 가명 키와 이모티콘 코드 `{:…:}`가 자리를 차지해 한 채팅이 서너 줄로 꺾임 → 열을 `clamp(20rem, 42%, 30rem)`으로 넓히고 한 줄 행(시각 · 가명 앞 네 글자 색 태그 · 본문), 이모티콘 코드는 이름 칩으로. (2) 채팅을 눌러도 영상이 움직이지 않음 → 모든 채팅 행을 버튼으로 두고 누르면 그 시각으로 이동(편집 구간 채팅도 같음, 영상이 없으면 재생 위치만). (3) 수집 시작 뒤 홈에 머묾 → 작업 상태에 `sessionId`가 생기는 즉시 작업 화면으로 이동하고 진행 카드를 그 화면에서 보여 줌(댓글만 수집도 같음). (4) 방향키 이동이 일관되지 않음 → 원인은 브라우저 `<video controls>`의 기본 키: 영상에 포커스가 있으면 길이의 1%(3시간 영상은 108초)씩 이동하고, 후보 버튼에 포커스가 있으면 무반응. 화면 전체 keydown(캡처 단계)에서 `←·→` 5초, `Shift` 30초, `Space`·`K` 재생/일시정지로 통일하고 기본 동작을 막음(입력칸·탭·선택 상자 제외). 영상 아래 이동 버튼 줄과 키 안내를 둠. (5)(6) AI 검토가 쓰기 어렵고 "장면이 어떤 내용인지" 파악하는 용도에 맞는지 → 지시문 3판: 입력 후보마다 설명 하나를 반드시 만들고(`source_candidate_ids`에 후보 ID, 약한 후보도 low로 설명), `title`은 짐작한 장면 한 줄, `rationale`은 무엇에 어떤 반응이 얼마나 이어졌는지의 장면 설명. 스키마·검증·저장은 그대로. 통합 타임라인 AI 항목에 `sourceCandidateIds`를 실어 화면이 고른 후보 아래 "AI 설명"으로 접어 넣고(따로 행·마커 없음), 후보 밖 장면만 "AI 추천" 행. AI 탭은 세 단계(무엇을 · 어디로(한 줄, 펼치면 제공자·모델·키·전송·한도) · 확인)로 줄이고, "AI 검토로 이동"이 바로 미리보기를 만듦. (7) 그 밖에: 후보 행은 편집 구간을 먼저 보여 주고 누르면 바로 그 구간부터 재생("영상에서 보기" 링크 제거), 판정 시작 기준 수치는 근거 아래로, 내보내기 파일에 한국어 이름. E2E 가짜 AI(전체 기능)는 첫 후보를 설명하도록 바꿈. 자세한 배치는 `docs/DESIGN-SYSTEM.md` 4절 |
+| 2026-10-17 | 화면 전체 사용성 점검 (사용자 지적: "보고한 것만 고쳤다") | 작업대 외 화면을 실제로 띄워 점검하고 고침. 새 작업: 처음 방문(저장한 작업 없음)에만 세 단계 카드·"처음이라면", 이후에는 오른쪽에 **최근 작업** 4개와 "샘플 다시 보기", 앱 정보는 설정으로 옮기고 띠 높이를 줄임. 수집 옵션은 짧은 이름 + 아래 설명 줄(괄호 속 긴 설명 제거, 설정도 같음). 설정: 앱 정보·저장 위치 두 시트로 정리, 제공자의 주소 설명·파일 위치는 접힌 줄. 타임라인: 3시간 방송에서 가까운 후보 마커가 겹치던 문제에 **확대(전체·30분·10분·2분)**와 전체 위치 막대, 마커 설명 말풍선, **이전·다음 후보** 버튼과 `N`·`P` 키(`KeyboardEvent.code` 기준이라 한글 입력 상태에서도 동작, 같은 이유로 재생 키 `K`도 code로 바꿈), 고른 후보 행 자동 스크롤. 생방송: 멈춘 기록의 꺼진 모니터가 화면 절반을 차지하던 것을 한 줄 띠로 줄이고 채팅에 자리를 줌. 휴대폰: 요약 숫자 네 칸 한 줄, 채팅 240px, 키 안내 숨김. 점검 중 화면 숫자가 깨져 보인 것은 미리보기 창이 숨겨져 애니메이션 프레임이 멈춘 탓(`document.timeline`이 0에 멈춤)이라 고치지 않음. 생방송 타임라인 확대, 사이드바 작업 행의 후보 수(세션 API에 없음), 댓글·AI 비교 탭은 이번에 바꾸지 않음 |
+| 2026-10-17 | AI 2세대 설계 초안 (사용자 요청, 결정 대기) | 사용자가 전달한 제안서("근거를 추적하고 이해 가능한 편집 구간을 확정하는 AI")를 현재 Go 구조와 원칙(채팅만 수집, 영상 미저장, 미리보기 뒤 전송)에 맞춰 `docs/AI-CUT-ANALYSIS.md`로 작성. 기존 탐지기와 1세대 AI 검토는 유지하고, 후보 단위 상태 기계(원인 후보 비교 → 서버가 실행하는 채팅 검색 → 근거 ID로 적는 컷 계획과 경계 후보 3개 → 서버 시각 보정 → 클립만 보는 검수와 원본 비교 검수)를 더하는 안. 1차는 채팅만, 전사는 자막 파일 입력으로 2차, 영상 관측은 보류. 검색 전송은 "예산 동의 + 전송 기록"을 추천. 결정 8가지(문서 11절)를 사용자가 정하면 6.6절·12절로 옮김 |
+| 2026-10-17 | AI 2세대 설계 확정 (사용자 결정 12건) | 제안서를 바탕으로 한 초안을 사용자와 항목별로 정함. 핵심: **분석 자료는 방송 내용(로컬 음성 인식한 발언) + 채팅**, 인식은 로컬·분석은 AI 제공자, 발언 글은 제공자에 보냄(음성·영상은 안 나감), 검색 단계의 추가 전송은 상한에 한 번 동의 + 전송 기록, 기본 엔진은 Apple 음성 인식(embed 도우미)이고 whisper.cpp는 선택, 음성은 전사 뒤 삭제하고 **영상 MP4 + 채팅 + 분석 결과를 세션 백업 묶음**으로 보관, 1세대 장면 설명 유지, 모든 제공자 지원, 분리 구간 1차 포함, 이야기 색인은 6-E, 소리·화면 관측은 로컬로 되는지 확인 뒤, 시작은 6-A + 데모 사례. 사용자의 다른 앱 editnest(`~/Desktop/editnest-main`, 무손실 MP4 자르기·이어 붙이기·자막·EDL/FCPXML/OTIO 내보내기, 음성 인식 없음)가 영상 자르기를 맡고 MomentForge는 파일 형식으로 연결. 이 Mac은 Apple M4·16GB·macOS 27, Homebrew·ffmpeg·whisper 없음, Swift 6.4 있음. 자세한 내용은 `docs/AI-CUT-ANALYSIS.md` |
+| 2026-10-18 | 6-A 구현 (AI 2세대 근거·계획 구조) | `StepProvider`를 선택 인터페이스로 두되 여섯 제공자 모두 `Review`를 `Step`의 특수형으로 바꿔 구현(새 코드 경로 없음). 컷 계획은 `ai_cut_plans`(후보 묶음별 버전, 이전 계획 ID), 실행 기록은 기존 `ai_runs`에 `kind`·`sent_log_json`을 더해 공유. 모델은 밀리초를 쓰지 않고 근거 ID로 경계를 말하며 서버가 발언 시작·끝(채팅은 6초 앞·3초 뒤, 20초 미만 간격은 합침)으로 바꿈. 구조 검사에서 걸린 계획은 이유를 넣어 한 번 다시 계획하고, 그래도 걸리면 `verify_failed`로 저장해 이유를 그대로 보여 줌(통과한 것처럼 꾸미지 않음). 데모 채팅은 CzzEdit 데모 행과 같아야 하는 기존 테스트가 있어 `DemoChat`은 그대로 두고 심은 채팅은 `DemoCallbackChat`으로 따로 두되, MCP 평가 정답(평소보다 바쁜 1분 구간 4개)이 바뀌지 않게 5:00 반응 분 안에만 넣음. `app` → `internal/ai/cut` import를 구조 규칙의 예외로 적음(제공자가 아닌 라이브러리). 검색 실행·사용자 메모·확정·MCP 읽기 도구는 다음 단계 |
+| 2026-10-18 | NAS 백업 불러오기와 후원·구독 저장 (사용자 결정) | 사용자의 NAS `docker/chzzk-automation`이 다시보기를 `YY/MM/YY_MM_DD 제목.{mp4,m4a,chat.jsonl,chat.txt}`로 매일 백업함을 확인(예: 7시간 43분 1080p60 28.5GB + 음성 m4a 673MB + 채팅 8,248줄, 시간축 일치). 6-B의 첫 경로를 "치지직에서 음성 받기"에서 **NAS 백업 불러오기**(SMB 마운트 경로, m4a 전사, chat.jsonl → 가명화 세션)로 바꿈. 사용자가 **후원·구독 정보를 세션에 넣기로 결정**: `chat_events`에 `kind`·`amount` 열 추가(새 마이그레이션), 채팅 카드 표시, 컷 분석 근거(`donation:`·`subscription:`), 내보내기·MCP 포함, 탐지 규칙에는 아직 안 씀. 원본 `uid`·`nick`·이모티콘 URL은 저장하지 않음. 자세한 규칙은 `docs/AI-CUT-ANALYSIS.md` 2.5a절 |
+| 2026-10-18 | 6-B 측정과 1차 구현 (Apple 음성 인식 확정, NAS 백업 불러오기) | 이 Mac에서 macOS 내장 음성 인식의 한국어 지원·설치를 확인하고 NAS 실제 백업 음성으로 쟀더니 실시간의 140~190배(7시간 44분 ≈ 4~5분), 발언 시각이 채팅과 맞아 **Apple 음성 인식을 기본 엔진으로 확정**. Swift 도우미는 Apple 프레임워크만 쓰고 `make speech-helper`로 빌드해 darwin 빌드에 embed(Go는 CGO 없이 유지, 다른 OS는 빈 자리). 백업 채팅은 플랫폼 ID·닉네임을 가명 키로 바꾸고 원본은 복사하지 않으며, 후원·구독은 `kind`·`amount`로 저장(사용자 결정). 영상 파일은 복사하지 않고 경로만 기억해 이 서버가 같은 컴퓨터의 브라우저에 스트리밍: `<video>`가 접근 키 헤더를 못 보내므로 그 경로만 Host·동일 출처 검사(`Sec-Fetch-Site`·Origin)로 지킴(세션 ID 32자리 난수, 경로는 DB에서만). 구조 규칙에 `internal/asr`·`internal/backup`(domain만)과 `app` → `asr`·`backup`을 추가. 자세한 것은 `docs/AI-CUT-ANALYSIS.md` 8절 6-B 기록 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

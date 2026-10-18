@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Session } from "../../api/types";
@@ -6,16 +6,17 @@ import { queryState, useAppState } from "../../shared/appState";
 import { JobPanel } from "../../shared/job/JobPanel";
 import { RevealWords } from "../../shared/motion/RevealWords";
 import { Tabs } from "../../shared/motion/Tabs";
-import { navigate, useDocumentTitle } from "../../shared/navigation";
-import { isRunningLive } from "../../shared/sessionText";
+import { Link, navigate, useDocumentTitle } from "../../shared/navigation";
+import { isRunningLive, sessionHref, sessionSummary } from "../../shared/sessionText";
 import { builtInSettings, useSettings } from "../../shared/settings";
 import { useJob } from "../../shared/useJob";
+import { BackupForm } from "./BackupForm";
 import { CollectForm } from "./CollectForm";
 import { LiveForm } from "./LiveForm";
 
-type Mode = "vod" | "live";
+type Mode = "vod" | "live" | "backup";
 
-const modeName: Record<Mode, string> = { vod: "다시보기", live: "생방송" };
+const modeName: Record<Mode, string> = { vod: "다시보기", live: "생방송", backup: "NAS 백업" };
 
 /** What the address field of either tab shares: one address, carried between the tabs. */
 export interface UrlFieldProps {
@@ -56,6 +57,14 @@ export function Home() {
   const [url, setUrl] = useState("");
   const [moved, setMoved] = useState(false);
   const runningLive = sessions.data?.find(isRunningLive);
+  // The job this screen started: as soon as it has saved work, the screen moves there and shows its progress.
+  const [startedJob, setStartedJob] = useState<string | null>(null);
+  const started = startedJob && job.data?.id === startedJob ? job.data : undefined;
+  useEffect(() => {
+    if (!started?.sessionId) return;
+    setStartedJob(null);
+    navigate(`/sessions/${started.sessionId}`);
+  }, [started?.sessionId]);
   useDocumentTitle("새 작업");
   // Unreadable settings are not fatal: the forms then start from the built-in defaults.
   useAppState(
@@ -93,6 +102,11 @@ export function Home() {
     ),
   });
 
+  const saved = sessions.data ?? [];
+  // The first visit explains the steps; afterwards the side shows the work to go back to.
+  const firstVisit = sessions.isSuccess && saved.length === 0;
+  const recent = saved.slice(0, 4);
+
   return (
     <div className="page-start">
       <header className="start-hero">
@@ -116,68 +130,85 @@ export function Home() {
                 {
                   id: "vod",
                   label: "다시보기",
-                  content: <CollectForm key={formKey} {...field("vod")} busy={job.data?.busy ?? false} defaults={defaults} />,
+                  content: (
+                    <CollectForm key={formKey} {...field("vod")} busy={job.data?.busy ?? false} defaults={defaults} onStarted={setStartedJob} />
+                  ),
                 },
                 {
                   id: "live",
                   label: "생방송",
                   content: <LiveForm key={formKey} {...field("live")} running={runningLive} defaults={defaults} />,
                 },
+                {
+                  id: "backup",
+                  label: "NAS 백업",
+                  content: <BackupForm key={formKey} busy={job.data?.busy ?? false} defaults={defaults} onStarted={setStartedJob} />,
+                },
               ]}
             />
           </div>
-          {job.data?.id && <JobPanel job={job.data} />}
+          {/* A running or stopped job; a finished one is in 최근 작업 like any other work. */}
+          {job.data?.id && (job.data.busy || job.data.phase !== "done") && <JobPanel job={job.data} />}
 
-          <section className="steps" aria-labelledby="steps-title">
-            <h2 id="steps-title" className="section-title">
-              이렇게 진행됩니다
-            </h2>
-            <ol className="step-list">
-              <li className="step" data-tint="blue">
-                <h3 className="step-title">주소 넣기</h3>
-                <p>치지직 다시보기나 생방송 주소를 붙여넣으면 맞는 탭으로 옮겨 갑니다.</p>
-              </li>
-              <li className="step" data-tint="lilac">
-                <h3 className="step-title">채팅 수집과 분석</h3>
-                <p>채팅을 받아 평소 채팅량과 비교해 반응이 몰린 구간을 찾습니다. 작성자는 가명으로만 저장합니다.</p>
-              </li>
-              <li className="step" data-tint="mint">
-                <h3 className="step-title">후보 확인과 내보내기</h3>
-                <p>타임라인과 후보 목록에서 장면을 확인하고 TXT·CSV 파일로 받습니다.</p>
-              </li>
-            </ol>
-          </section>
+          {firstVisit && (
+            <section className="steps" aria-labelledby="steps-title">
+              <h2 id="steps-title" className="section-title">
+                이렇게 진행됩니다
+              </h2>
+              <ol className="step-list">
+                <li className="step" data-tint="blue">
+                  <h3 className="step-title">주소 넣기</h3>
+                  <p>치지직 다시보기나 생방송 주소를 붙여넣으면 맞는 탭으로 옮겨 갑니다.</p>
+                </li>
+                <li className="step" data-tint="lilac">
+                  <h3 className="step-title">채팅 수집과 분석</h3>
+                  <p>채팅을 받아 평소 채팅량과 비교해 반응이 몰린 구간을 찾습니다. 작성자는 가명으로만 저장합니다.</p>
+                </li>
+                <li className="step" data-tint="mint">
+                  <h3 className="step-title">후보 확인과 내보내기</h3>
+                  <p>후보를 누르면 영상이 그 구간부터 재생됩니다. 필요하면 AI로 장면 설명을 받고 TXT·CSV로 내보냅니다.</p>
+                </li>
+              </ol>
+            </section>
+          )}
         </div>
 
-        <aside className="start-side" aria-label="도움말과 앱 정보">
-          <section className="sheet" data-tint="peach" aria-labelledby="sample-title">
+        <aside className="start-side" aria-label={firstVisit ? "처음 쓰는 방법" : "최근 작업"}>
+          {recent.length > 0 && (
+            <section className="sheet" aria-labelledby="recent-title">
+              <h2 id="recent-title" className="sheet-title">
+                최근 작업
+              </h2>
+              <ul className="recent">
+                {recent.map((r) => (
+                  <li key={r.id}>
+                    <Link href={sessionHref(r)} className="recent-link">
+                      <span className="recent-title">
+                        {isRunningLive(r) && <span className="session-dot" data-state={r.state} aria-hidden="true" />}
+                        {r.title}
+                      </span>
+                      <span className="recent-meta">{sessionSummary(r)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {saved.length > recent.length && <p className="field-help">나머지 {saved.length - recent.length}개는 왼쪽 작업 목록에 있습니다.</p>}
+            </section>
+          )}
+          <section className="sheet" data-tint={firstVisit ? "peach" : undefined} aria-labelledby="sample-title">
             <h2 id="sample-title" className="sheet-title">
-              처음이라면
+              {firstVisit ? "처음이라면" : "샘플 다시 보기"}
             </h2>
-            <p className="field-help">실제 방송 없이 예시 채팅으로 반응 타임라인, 편집 후보, 내보내기를 먼저 살펴봅니다.</p>
+            <p className="field-help">실제 방송 없이 예시 채팅으로 반응 타임라인, 편집 후보, 내보내기를 살펴봅니다.</p>
             <p className="actions">
-              <DemoButton existing={sessions.data?.find((s) => s.isDemo)} />
+              <DemoButton existing={saved.find((x) => x.isDemo)} />
             </p>
           </section>
-          <section className="sheet" aria-labelledby="app-title">
-            <h2 id="app-title" className="sheet-title">
-              앱 정보
-            </h2>
-            {status.isError ? (
-              <p className="error" role="alert">
-                {status.error.message}
-              </p>
-            ) : (
-              <dl className="facts facts-stacked">
-                <dt>지원 플랫폼</dt>
-                <dd>{status.data?.platforms.join(", ") || "확인하는 중"}</dd>
-                <dt>데이터 폴더</dt>
-                <dd>{status.data?.dataDir ?? "확인하는 중"}</dd>
-                <dt>저장소 형식</dt>
-                <dd className="timecode">{status.data ? `스키마 ${status.data.schemaVersion}` : "확인하는 중"}</dd>
-              </dl>
-            )}
-          </section>
+          {status.isError && (
+            <p className="error" role="alert">
+              {status.error.message}
+            </p>
+          )}
         </aside>
       </div>
     </div>

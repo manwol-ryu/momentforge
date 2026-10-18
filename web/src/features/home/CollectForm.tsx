@@ -5,13 +5,26 @@ import type { Settings } from "../../api/types";
 import type { UrlFieldProps } from "./Home";
 
 /** Collects a VOD's chat (and its comments) and finds the moments to edit. */
-export function CollectForm({ url, onUrl, onPaste, focus, moved, hint, busy, defaults }: UrlFieldProps & { busy: boolean; defaults: Settings }) {
+interface Props extends UrlFieldProps {
+  busy: boolean;
+  defaults: Settings;
+  /** A job was started: the screen follows it to its saved work. */
+  onStarted: (jobId: string) => void;
+}
+
+export function CollectForm({ url, onUrl, onPaste, focus, moved, hint, busy, defaults, onStarted }: Props) {
   // The options start from the settings screen's defaults; a change here is for this job only.
   const [sensitive, setSensitive] = useState(defaults.sensitive);
   const [withComments, setWithComments] = useState(defaults.includeComments);
   const input = useRef<HTMLInputElement>(null);
-  const collect = useMutation({ mutationFn: () => api.collect(url.trim(), sensitive, withComments) });
-  const commentsOnly = useMutation({ mutationFn: () => api.startComments({ url: url.trim() }) });
+  const collect = useMutation({
+    mutationFn: () => api.collect(url.trim(), sensitive, withComments),
+    onSuccess: (job) => onStarted(job.id),
+  });
+  const commentsOnly = useMutation({
+    mutationFn: () => api.startComments({ url: url.trim() }),
+    onSuccess: (job) => onStarted(job.id),
+  });
   useEffect(() => {
     if (focus) input.current?.focus();
   }, [focus]);
@@ -42,17 +55,23 @@ export function CollectForm({ url, onUrl, onPaste, focus, moved, hint, busy, def
         />
       </label>
       {hint}
-      <label className="check">
+      <label className="check check-option">
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
-        항상 가장 민감하게 (10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다)
+        <span>
+          항상 가장 민감하게
+          <span className="check-help">10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다.</span>
+        </span>
       </label>
-      <label className="check">
+      <label className="check check-option">
         <input type="checkbox" checked={withComments} onChange={(e) => setWithComments(e.target.checked)} />
-        영상 댓글의 시청자 추천도 수집 (댓글에 적힌 시각을 자동 후보와 따로 표시합니다)
+        <span>
+          영상 댓글의 시청자 추천도 수집
+          <span className="check-help">댓글에 적힌 시각을 자동 후보와 따로 표시합니다.</span>
+        </span>
       </label>
       <p id="collect-help" className="field-help">
-        채팅을 모두 받은 뒤 편집 후보를 찾습니다. 판정 기준은 채널 규모와 시간대에 맞춰 최근 2시간·15분의 평소 채팅량으로 자동으로
-        정합니다. 긴 방송은 몇 분 걸릴 수 있고, 중단해도 받은 데까지 저장됩니다.
+        채팅을 모두 받은 뒤 편집 후보를 찾습니다. 시작하면 작업 화면으로 옮겨 가 진행 상황을 보여 줍니다. 긴 방송은 몇 분 걸릴 수
+        있고, 중단해도 받은 데까지 저장됩니다.
       </p>
       <p className="actions">
         <button type="submit" className="button" disabled={busy || collect.isPending}>

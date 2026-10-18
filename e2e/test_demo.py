@@ -78,6 +78,10 @@ def test_sample_is_saved_once_and_reopened(page: Page, base_url: str) -> None:
     page.wait_for_selector(READY, timeout=10_000)
     expect(row).to_have_count(1)
     expect(row).not_to_have_attribute("aria-current", "page")
+    # Saved work is offered again on the start screen, and the first-visit steps are gone.
+    recent = page.locator("section", has=page.get_by_role("heading", name="최근 작업"))
+    expect(recent.get_by_role("link", name=re.compile("샘플 채팅"))).to_be_visible()
+    expect(page.get_by_role("heading", name="이렇게 진행됩니다")).to_have_count(0)
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     expect(page).to_have_url(first)
 

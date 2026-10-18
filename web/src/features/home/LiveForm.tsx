@@ -70,13 +70,19 @@ export function LiveForm({
         />
       </label>
       {hint}
-      <label className="check">
+      <label className="check check-option">
         <input type="checkbox" checked={sensitive} onChange={(e) => setSensitive(e.target.checked)} />
-        항상 가장 민감하게 (10초에 채팅 6건부터 판정)
+        <span>
+          항상 가장 민감하게
+          <span className="check-help">10초에 채팅 6건부터 판정합니다.</span>
+        </span>
       </label>
-      <label className="check">
+      <label className="check check-option">
         <input type="checkbox" checked={viewerAdaptive} onChange={(e) => setViewerAdaptive(e.target.checked)} />
-        시청자 수 변화 보정 (시청자가 기준보다 10% 넘게 줄면 평소 채팅량 기준을 다시 학습합니다)
+        <span>
+          시청자 수 변화 보정
+          <span className="check-help">시청자가 기준보다 10% 넘게 줄면 평소 채팅량 기준을 다시 학습합니다.</span>
+        </span>
       </label>
       <p id="live-help" className="field-help">
         공개 채팅을 받는 동안 편집 후보를 바로 찾습니다. 처음 3분 동안 채널을 지켜본 뒤, 판정 기준을 최근 2시간과 최근 15분의

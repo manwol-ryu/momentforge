@@ -13,6 +13,13 @@ SHOTS = Path(__file__).resolve().parent / ".data" / "screenshots"
 READY = 'body[data-app-state="ready"]'
 
 
+def open_destination(page: Page) -> None:
+    """The AI tab folds the provider block once it can send; open it to reach its fields."""
+    dest = page.locator(".ai-dest")
+    if dest.count() and not dest.evaluate("d => d.open"):
+        dest.locator("summary").click()
+
+
 def open_sample(page: Page, base_url: str) -> None:
     page.goto(base_url)
     page.wait_for_selector(READY, timeout=10_000)
@@ -62,11 +69,44 @@ def test_playhead_moves_the_chat_without_a_video(page: Page, base_url: str) -> N
     # Choosing a candidate moves the playhead to its clip.
     page.locator("ol.candidates > li").nth(2).get_by_role("button").first.click()
     expect(page.locator(".stage-timeline .stage-time")).to_contain_text("06:55")
+    # A chat line is a button: pressing it moves the playhead to that message.
+    expect(chat.locator("li[data-current] .chat-time")).to_have_text(re.compile(r"^06:5\d$"))  # the chat followed the clip
+    row = chat.locator("li").first
+    at = row.locator(".chat-time").inner_text()
+    row.get_by_role("button").click()
+    expect(page.locator(".stage-timeline .stage-time")).to_have_text(f"{at} / 10:00")
+
+
+def test_next_candidate_keys_and_timeline_zoom(page: Page, base_url: str) -> None:
+    open_sample(page, base_url)
+    stage = page.locator(".stage-timeline .stage-time")
+    rows = page.locator("ol.candidates > li")
+    # N and P go through the candidates in time order from the playhead, by key position.
+    page.locator("body").press("n")
+    expect(rows.nth(0)).to_have_attribute("data-selected", "true")
+    expect(stage).to_contain_text("04:25")
+    page.keyboard.press("n")
+    expect(rows.nth(1)).to_have_attribute("data-selected", "true")
+    page.get_by_role("button", name="이전 후보").click()
+    expect(rows.nth(0)).to_have_attribute("data-selected", "true")
+    page.get_by_role("button", name="다음 후보").click()
+    page.get_by_role("button", name="다음 후보").click()
+    expect(rows.nth(2)).to_have_attribute("data-selected", "true")
+    expect(page.get_by_role("button", name="다음 후보")).to_be_disabled()  # the last one
+    # Zoomed to 2 minutes around the playhead: fewer markers, and the overview shows where.
+    page.get_by_role("radio", name="2분").check()
+    expect(page.locator(".timeline-overview")).to_be_visible()
+    assert page.locator(".timeline-marker").count() < 3
+    page.locator(".stage-timeline").screenshot(path=str(SHOTS / "timeline-zoom.png"))
+    page.get_by_role("radio", name="전체").check()
+    expect(page.locator(".timeline-overview")).to_have_count(0)
+    expect(page.locator(".timeline-marker")).to_have_count(3)
 
 
 def test_tabs_keep_their_state(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
     page.get_by_role("tab", name="AI 검토").click()
+    open_destination(page)
     page.get_by_label("모델 ID").fill("my-model")
     page.get_by_role("tab", name=re.compile("^후보")).click()
     page.get_by_role("tab", name="AI 검토").click()

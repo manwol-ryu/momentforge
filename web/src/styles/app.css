@@ -315,6 +315,34 @@ textarea {
   font-size: var(--text-xs);
 }
 
+/* An option with a short name and its explanation on the line below. */
+.check-option {
+  font-weight: 500;
+}
+
+.check-help {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+/* Details a user rarely needs, folded under a quiet line. */
+.field-more {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.field-more > summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.field-more > .field-help,
+.field-more > dl {
+  margin-top: var(--space-1);
+}
+
 .check[data-disabled] {
   color: var(--muted);
 }
@@ -1056,7 +1084,7 @@ textarea {
 }
 
 .start-hero {
-  padding: var(--space-8) var(--space-7) calc(var(--space-8) * 2);
+  padding: var(--space-7) var(--space-7) calc(var(--space-8) * 1.5);
   border-bottom: 1px solid var(--rule);
   background:
     radial-gradient(60% 140% at 90% 0%, var(--tint-blue), transparent 70%),
@@ -1067,7 +1095,7 @@ textarea {
 .start-grid {
   display: grid;
   gap: var(--space-6);
-  margin-top: calc(var(--space-8) * -1.5);
+  margin-top: calc(var(--space-8) * -1.1);
   padding: 0 var(--space-7);
 }
 
@@ -1171,6 +1199,106 @@ textarea {
 
 .start-side .actions {
   margin-top: var(--space-3);
+}
+
+/* The transcript tab: a search box, a ten-minute pager, and lines like the chat log. */
+.transcript-tools {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.transcript-tools input[type="search"] {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.transcript-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-xs);
+}
+
+.transcript-lines {
+  max-height: 60vh;
+}
+
+/* Backed-up broadcasts found in the folder: a title, its files, and the way in. */
+.backup-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backup-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+}
+
+.backup-main {
+  display: grid;
+  min-width: 0;
+}
+
+.backup-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.backup-meta {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* The newest saved work, to go back to without the list. */
+.recent {
+  display: grid;
+  gap: 2px;
+  margin: 0 calc(var(--space-2) * -1);
+  padding: 0;
+  list-style: none;
+}
+
+.recent-link {
+  display: grid;
+  gap: 1px;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background-color var(--dur-1) var(--ease-control);
+}
+
+.recent-link:hover {
+  background: var(--sunken);
+}
+
+.recent-title {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.recent-meta {
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 .facts {
@@ -1464,6 +1592,31 @@ textarea {
   max-height: none;
 }
 
+/* A stopped LIVE capture: the switched-off video card is one line above the chat. */
+.stage-media[data-video-off] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.stage-media[data-video-off] .card-screen {
+  flex: none;
+  background: var(--panel);
+}
+
+.stage-media[data-video-off] .player-off {
+  place-items: start;
+  min-height: 0;
+  aspect-ratio: auto;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+}
+
+.stage-media[data-video-off] .player-off .player-note {
+  position: static;
+  margin: 0;
+  color: var(--muted);
+  text-align: left;
+}
+
 .stage-chat .live-log {
   display: flex;
   flex: 1;
@@ -1479,9 +1632,10 @@ textarea {
   padding: var(--space-3) var(--space-3) var(--space-1);
 }
 
+/* The chat gets a readable column (two fifths, at least 20rem); the picture letterboxes in the rest. */
 @container stage (min-width: 44rem) {
   .stage-media[data-video] {
-    grid-template-columns: minmax(0, 1fr) clamp(15rem, 34%, 23rem);
+    grid-template-columns: minmax(0, 1fr) clamp(20rem, 42%, 30rem);
   }
 }
 
@@ -1631,12 +1785,47 @@ textarea {
 
 @media (max-width: 760px) {
   .ws-head {
-    padding: var(--space-4);
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+    gap: 4px;
   }
 
   .stat {
-    flex: 1 1 40%;
     min-width: 0;
+    padding: 2px;
+    border-radius: 11px;
+  }
+
+  .stat dt {
+    overflow: hidden;
+    padding: 0 6px 1px;
+    font-size: 11px;
+    text-overflow: ellipsis;
+  }
+
+  .stat dd {
+    padding: 2px 6px 3px;
+    border-radius: 9px;
+    font-size: var(--text-sm);
+  }
+
+  .ws-head .ws-action {
+    min-height: 2rem;
+    font-size: var(--text-xs);
+  }
+
+  .stage-chat .chatlog {
+    height: 240px;
+  }
+
+  .transport-keys {
+    display: none;
   }
 
   .ws-stage {
@@ -1648,7 +1837,7 @@ textarea {
   }
 
   /* Every other time label, so they do not overlap on phones. */
-  .timeline-axis span:nth-child(even):not(:last-child) {
+  .timeline-axis span:nth-child(even):not([data-edge]) {
     display: none;
   }
 }
@@ -1693,6 +1882,72 @@ textarea {
   place-items: center;
   min-height: 7rem;
   padding: var(--space-4);
+  text-align: center;
+}
+
+/* The transport under the picture: skip buttons, play, and the keys that do the same. */
+.transport {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px var(--space-2);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.transport-button {
+  min-height: 2rem;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--secondary);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-control);
+}
+
+.transport-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--secondary), var(--ink) 6%);
+}
+
+.transport-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.transport-play {
+  min-width: 5em;
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.transport-play:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 90%, var(--paper));
+}
+
+.transport-keys {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--sunken);
+  box-shadow: inset 0 -1px 0 var(--rule);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
   text-align: center;
 }
 
@@ -1805,12 +2060,72 @@ textarea {
   transform: translateX(-50%);
 }
 
-.timeline-axis span:first-child {
+.timeline-axis span[data-edge="start"] {
   transform: none;
 }
 
-.timeline-axis span:last-child {
+.timeline-axis span[data-edge="end"] {
   transform: translateX(-100%);
+}
+
+/* Zoomed in: where the drawn part lies in the whole length, with the candidates as ticks. */
+.timeline-overview {
+  position: relative;
+  height: 8px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+}
+
+.overview-mark {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--marker);
+}
+
+.overview-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--density) 30%, transparent);
+  box-shadow: inset 0 0 0 1px var(--density);
+}
+
+.overview-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+
+/* The timeline card's own controls: zoom and the way to the previous or next candidate. */
+.timeline-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.timeline-tools .seg {
+  margin: 0;
+}
+
+.timeline-tools .seg-opt {
+  min-height: 1.75rem;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.timeline-step {
+  display: inline-flex;
+  gap: 4px;
 }
 
 /* Playhead: a line across the track and a see-through slider over it. */
@@ -1880,14 +2195,37 @@ textarea {
 }
 
 .chatlog li {
+  border-radius: 6px;
+}
+
+/* One message: the time and a short author tag, then the text with the rest of the line. */
+.chat-row {
   display: flex;
   gap: var(--space-2);
+  align-items: baseline;
+  width: 100%;
   padding: 3px var(--space-2);
+  border: 0;
   border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.45;
+  text-align: left;
+}
+
+button.chat-row {
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-control);
+}
+
+button.chat-row:hover {
+  background: var(--sunken);
 }
 
 .chatlog li[data-current] {
   background: var(--density-soft);
+  box-shadow: inset 2px 0 0 var(--density);
 }
 
 .chatlog li[data-evidence] .chat-text {
@@ -1898,27 +2236,108 @@ textarea {
   color: var(--muted);
 }
 
-.chat-time,
-.chat-author {
+.chat-time {
   flex: none;
   color: var(--muted);
+  font-size: 12px;
 }
 
 .chat-mark {
-  flex: none;
+  margin-right: 2px;
   color: var(--marker);
   font-weight: 600;
 }
 
+/* The pseudonym's first characters as a small tag; its tone tells one chatter from another. */
 .chat-author {
-  max-width: 7em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: none;
+  min-width: 2.6em;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-author[data-tone="1"] {
+  background: var(--tint-blue);
+  color: var(--link);
+}
+
+.chat-author[data-tone="2"] {
+  background: var(--tint-lilac);
+  color: var(--ai-text);
+}
+
+.chat-author[data-tone="3"] {
+  background: var(--tint-mint);
+  color: var(--viewer-text);
+}
+
+.chat-author[data-tone="4"] {
+  background: var(--tint-peach);
+  color: var(--marker-text);
+}
+
+.chat-author[data-tone="5"] {
+  background: var(--tint-rose);
+  color: var(--marker-text);
 }
 
 .chat-text {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* Donations and subscriptions carry their amount as a tag; hidden (bot-filtered) lines are dimmed. */
+.chat-kind {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--tint-peach);
+  color: var(--marker-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.chat-kind[data-kind="subscription"] {
+  background: var(--tint-lilac);
+  color: var(--ai-text);
+}
+
+.chatlog li[data-kind="donation"] .chat-text,
+.chatlog li[data-kind="subscription"] .chat-text {
+  font-weight: 600;
+}
+
+.chatlog li[data-kind="system"] .chat-text,
+.chatlog li[data-hidden] .chat-text {
+  color: var(--muted);
+}
+
+/* An emote code as a chip, so a run of emotes stays on one line. */
+.chat-emote {
+  display: inline-block;
+  max-width: 9em;
+  margin: 0 1px;
+  padding: 0 5px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+  white-space: nowrap;
 }
 
 .chat-late {
@@ -2155,6 +2574,122 @@ textarea {
   background: var(--panel);
 }
 
+.section-hint {
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.candidate-text {
+  color: var(--ink);
+}
+
+/* What the AI made of a candidate, under that candidate: a block in the AI color. */
+.ai-notes {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ai-note {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--ai);
+  border-radius: var(--radius);
+  background: var(--ai-soft);
+  font-size: var(--text-xs);
+}
+
+.ai-note-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  margin: 0;
+}
+
+.ai-note-title {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ai-note-priority {
+  color: var(--ai-text);
+  font-weight: 600;
+}
+
+.ai-note-text {
+  margin: var(--space-1) 0 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.ai-note-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  justify-content: space-between;
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+}
+
+.ai-note-more {
+  margin-top: var(--space-1);
+}
+
+.ai-note-more summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ai-note-more .candidate-note {
+  margin-top: 2px;
+}
+
+/* A cut plan under its candidate: the spans as a short list, the check as a word. */
+.cut-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--marker-soft);
+  color: var(--marker-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cut-state[data-ok] {
+  background: var(--positive-soft);
+  color: var(--positive-text);
+}
+
+.cut-spans {
+  display: grid;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cut-role {
+  display: inline-block;
+  min-width: 4.5em;
+  color: var(--muted);
+}
+
+.cut-issues {
+  margin: var(--space-2) 0 0;
+  color: var(--alert);
+  font-size: var(--text-xs);
+}
+
+.file-name {
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
 .reanalyze {
   display: flex;
   flex-wrap: wrap;
@@ -2326,6 +2861,107 @@ textarea {
 /* ==========================================================================
    AI review and comparison
    ========================================================================== */
+
+/* The AI tab in three steps: what to send, where (one line that folds out), confirm. */
+.ai-step {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+}
+
+.ai-step-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.ai-step .ai-mode {
+  margin-top: 0;
+}
+
+.ai-step > .actions {
+  margin-top: 0;
+}
+
+.ai-dest {
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+}
+
+.ai-dest > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ai-dest > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-dest-state {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ai-dest-state::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.ai-dest-state[data-ready]::before {
+  background: var(--positive);
+}
+
+.ai-dest-ready {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.ai-dest-toggle {
+  margin-left: auto;
+  color: var(--link);
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ai-dest-body {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.ai-dest-body .ai-grid {
+  margin-top: var(--space-2);
+}
+
+.ai-dest-body .key-field {
+  margin-top: var(--space-3);
+}
+
+.ai-preview-sum {
+  margin: 0;
+}
+
+.ai-done {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--ai-soft);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
 
 .ai-grid {
   display: grid;

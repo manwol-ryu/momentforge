@@ -15,6 +15,7 @@ export function useJob() {
   const job = useQuery({ queryKey: ["job"], queryFn: api.job });
   const wasBusy = useRef(false);
   const lastSession = useRef<string | undefined>(undefined);
+  const lastPhase = useRef<string | undefined>(undefined);
 
   useEffect(
     () =>
@@ -25,11 +26,23 @@ export function useJob() {
           void queryClient.invalidateQueries({ queryKey: ["sessions"] });
         }
         lastSession.current = status.sessionId || undefined;
+        // A job that moves on to a later phase (chat saved → candidates found →
+        // transcribing) has finished writing what the earlier phase produced,
+        // so the open session shows it without waiting for the whole job.
+        if (status.busy && status.sessionId && lastPhase.current && status.phase !== lastPhase.current) {
+          void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+          void queryClient.invalidateQueries({ queryKey: ["session", status.sessionId] });
+          void queryClient.invalidateQueries({ queryKey: ["timeline", status.sessionId] });
+        }
+        lastPhase.current = status.busy ? status.phase : undefined;
         if (wasBusy.current && !status.busy) {
           void queryClient.invalidateQueries({ queryKey: ["sessions"] });
           void queryClient.invalidateQueries({ queryKey: ["session"] });
           void queryClient.invalidateQueries({ queryKey: ["comments"] });
           void queryClient.invalidateQueries({ queryKey: ["timeline"] });
+          void queryClient.invalidateQueries({ queryKey: ["transcript"] });
+          void queryClient.invalidateQueries({ queryKey: ["utterances"] });
+          void queryClient.invalidateQueries({ queryKey: ["files"] });
         }
         wasBusy.current = status.busy;
       }),

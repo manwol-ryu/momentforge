@@ -29,7 +29,15 @@ def test_claude_is_the_default_provider(page: Page, base_url: str) -> None:
     expect(page.get_by_label("모든 후보 자동 선택", exact=False)).to_be_visible()
 
 
+def open_destination(page: Page) -> None:
+    """The AI tab folds the provider block once it can send; open it to change the provider."""
+    dest = page.locator(".ai-dest")
+    if dest.count() and not dest.evaluate("d => d.open"):
+        dest.locator("summary").click()
+
+
 def save_key(page: Page, provider: str) -> None:
+    open_destination(page)
     page.get_by_label("AI 제공자").select_option(label=provider)
     page.get_by_label(re.compile(f"^{re.escape(provider)} API 키")).fill("test-key")
     page.get_by_role("button", name="키 저장").click()
@@ -55,7 +63,7 @@ def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> N
     expect(preview.locator(".ai-cost").first).to_contain_text("배치 50% 할인 적용")
     page.get_by_role("button", name="정확한 토큰 수 계산").click()
     expect(preview.locator(".ai-cost").nth(1)).to_contain_text(re.compile(r"정확한 입력 토큰 [\d,]+개, 예상 비용 최대 \$"))
-    page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "ai-panel.png"))
+    page.locator("section", has=page.get_by_role("heading", name="AI 검토", exact=True)).screenshot(path=str(SHOTS / "ai-panel.png"))
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     status = page.locator(".ai-status")
     expect(status).to_contain_text("AI 완료", timeout=15_000)
@@ -95,6 +103,7 @@ def test_opencode_uses_its_own_login(page: Page, base_url: str) -> None:
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    open_destination(page)
     page.get_by_label("AI 제공자").select_option(label="OpenCode")
     expect(page.get_by_label("모델 ID")).to_have_value(re.compile(r"^opencode-go/"))
     expect(page.locator(".ai-auth")).to_contain_text("OpenCode CLI(opencode)를 찾지 못했습니다")
@@ -102,7 +111,7 @@ def test_opencode_uses_its_own_login(page: Page, base_url: str) -> None:
     expect(page.get_by_text("무료 모델(opencode/…-free)은 OpenCode 기본 에이전트로 보내고 도구는 모두 자동 거부", exact=False)).to_be_visible()
     expect(page.get_by_role("button", name="키 저장")).to_have_count(0)
     expect(page.locator("input[type=password]")).to_have_count(0)
-    page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "ai-opencode.png"))
+    page.locator("section", has=page.get_by_role("heading", name="AI 검토", exact=True)).screenshot(path=str(SHOTS / "ai-opencode.png"))
 
     # A free model is previewed like any other; without the CLI it cannot be sent yet.
     page.get_by_label("모델 ID").fill("opencode/deepseek-v4.1-flash-free")
@@ -140,6 +149,7 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    open_destination(page)
     page.get_by_label("AI 제공자").select_option(label="CLIProxyAPI")
     expect(page.locator(".ai-endpoint")).to_contain_text("http://127.0.0.1:9/v1")
     page.get_by_label("모델 ID").fill("test-model")
@@ -186,6 +196,7 @@ def test_opencodex_needs_no_key_and_is_switched_in_settings(page: Page, base_url
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    open_destination(page)
     page.get_by_label("AI 제공자").select_option(label="OpenCodex")
     expect(page.locator(".ai-endpoint")).to_contain_text("http://127.0.0.1:1/v1")
     expect(page.get_by_text("MomentForge에 키를 넣지 않습니다", exact=False)).to_be_visible()
@@ -199,6 +210,7 @@ def test_codex_uses_its_own_login(page: Page, base_url: str) -> None:
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    open_destination(page)
     page.get_by_label("AI 제공자").select_option(label="Codex")
     expect(page.get_by_label("모델 ID")).to_have_value("default")
     expect(page.locator(".ai-auth")).to_contain_text("Codex CLI(codex)를 찾지 못했습니다")

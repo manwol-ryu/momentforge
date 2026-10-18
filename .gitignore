@@ -42,3 +42,5 @@ e2e/.data/
 bin/
 node_modules/
 .claude/settings.local.json
+cmd/momentforge/assets/
+tools/speech-helper/.build/

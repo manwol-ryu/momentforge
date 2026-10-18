@@ -134,23 +134,21 @@ func (p *CLIProxy) SetEndpoint(raw string) error {
 	return nil
 }
 
-// message is the user turn: the answer format and the input. The proxy may
-// translate to services without structured output, so the JSON is asked
-// for in words and Validate checks it.
-func message(chunk ai.Chunk) string {
-	return "아래 입력 JSON을 지시대로 검토하세요. 답은 다음 JSON 스키마를 따르는 JSON 객체 하나로만 쓰고, " +
-		"코드 블록이나 설명을 붙이지 마세요.\n\n스키마:\n" + string(ai.Encode(ai.Schema())) +
-		"\n\n입력:\n" + string(ai.Encode(chunk)) + "\n"
-}
-
 // Review sends one chunk as a Chat Completion.
 func (p *CLIProxy) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
+	return p.Step(ctx, key, model, chunk.Step())
+}
+
+// Step sends one step as a Chat Completion. The proxy may translate to
+// services without structured output, so the JSON is asked for in words
+// and the caller validates it.
+func (p *CLIProxy) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":  model,
 		"stream": false,
 		"messages": []map[string]string{
-			{"role": "system", "content": ai.Prompt},
-			{"role": "user", "content": message(chunk)},
+			{"role": "system", "content": step.Prompt},
+			{"role": "user", "content": step.TextMessage()},
 		},
 	})
 	raw, err := p.do(ctx, http.MethodPost, "/chat/completions", key, body)

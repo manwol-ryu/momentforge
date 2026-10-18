@@ -29,6 +29,7 @@ type JobStatus struct {
 	Candidates      int       `json:"candidates"`
 	Comments        int       `json:"comments,omitempty"`        // comments read (comments job)
 	Recommendations int       `json:"recommendations,omitempty"` // viewer recommendations found
+	Utterances      int       `json:"utterances,omitempty"`      // utterances recognised (transcribe step)
 	Warning         string    `json:"warning,omitempty"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }

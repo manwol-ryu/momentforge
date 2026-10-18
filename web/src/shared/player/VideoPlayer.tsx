@@ -14,9 +14,20 @@ interface Props {
   /** Where else to watch, added when the stream stops loading (live only). */
   fallback?: string;
   onTime?: (ms: number) => void;
+  /**
+   * A VOD's transport under the picture (skip back and forward, play and
+   * pause) and the matching keys for the whole page: ← → 5 s, Shift 30 s,
+   * Space play/pause. The browser's own keys would otherwise skip by a
+   * share of the length (minutes on a long broadcast) or do nothing,
+   * depending on what had the focus.
+   */
+  transport?: boolean;
 }
 
 type State = { kind: "loading" } | { kind: "ready" } | { kind: "playing" } | { kind: "error"; message: string };
+
+export const SKIP_MS = 5000;
+export const SKIP_LONG_MS = 30000;
 
 /**
  * Timed metadata (ID3, the EXT-X-DATERANGE tags of CHZZK live playlists) is unused,
@@ -46,6 +57,15 @@ const liveConfig: Partial<HlsConfig> = {
   backBufferLength: 30,
 };
 
+/** Keys typed into a field, a tab list or a choice belong to that control, not the player. */
+function keyBelongsToControl(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target.closest('[role="tab"], [role="tablist"], [role="menu"], [role="listbox"]')) return true;
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  if (target instanceof HTMLInputElement) return !["range", "checkbox", "button", "submit"].includes(target.type);
+  return false;
+}
+
 /**
  * Plays the platform's public HLS stream. The signed URL is fetched when the
  * player mounts and never stored. hls.js plays it wherever Media Source
@@ -53,10 +73,27 @@ const liveConfig: Partial<HlsConfig> = {
  * by downloading from the start, so a candidate hours in never plays. The
  * browser's own player is only the fallback (iPhone Safari).
  */
-export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer({ sessionId, live = false, fallback, onTime }, ref) {
+export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
+  { sessionId, live = false, fallback, onTime, transport = false },
+  ref,
+) {
   const video = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [paused, setPaused] = useState(true);
+
+  const skip = (deltaMs: number) => {
+    const v = video.current;
+    if (!v) return;
+    const end = Number.isFinite(v.duration) ? v.duration : Infinity;
+    v.currentTime = Math.min(end, Math.max(0, v.currentTime + deltaMs / 1000));
+  };
+  const toggle = () => {
+    const v = video.current;
+    if (!v) return;
+    if (v.paused) void v.play().catch(() => undefined);
+    else v.pause();
+  };
 
   useImperativeHandle(ref, () => ({
     seek(ms: number, play = true) {
@@ -74,17 +111,44 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
     },
   }));
 
+  // The page's transport keys, taken before the browser's own player handles them.
+  useEffect(() => {
+    if (!transport) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || keyBelongsToControl(e.target)) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        skip((e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? SKIP_LONG_MS : SKIP_MS));
+      } else if (e.key === " " || e.code === "KeyK") {
+        // Space on a button or link presses it; elsewhere it plays and pauses.
+        const t = e.target;
+        if (e.key === " " && t instanceof HTMLElement && t !== video.current && t.closest("button, a, input, summary")) return;
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [transport]);
+
   useEffect(() => {
     let destroyed = false;
     let cleanup = () => {};
     setState({ kind: "loading" });
     (async () => {
       try {
-        const { url } = await api.playback(sessionId);
-        // The light build drops DRM, subtitles and alternate audio, which public streams do not use.
-        const { default: Hls } = await import("hls.js/light");
+        const { url, type } = await api.playback(sessionId);
         const v = video.current;
         if (destroyed || !v) return;
+        if (type === "file") {
+          // A media file streamed by this server (an imported backup): the browser's player seeks with range requests.
+          v.src = url;
+          setState({ kind: "ready" });
+          return;
+        }
+        // The light build drops DRM, subtitles and alternate audio, which public streams do not use.
+        const { default: Hls } = await import("hls.js/light");
+        if (destroyed) return;
         if (Hls.isSupported()) {
           const hls = new Hls(live ? liveConfig : baseConfig);
           hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -143,6 +207,7 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
       )}
     </p>
   );
+  const canPlay = state.kind === "ready" || state.kind === "playing";
   return (
     <div className="player">
       <video
@@ -154,6 +219,8 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
         preload={live ? "none" : "metadata"}
         aria-label={live ? "생방송 영상" : "다시보기 영상"}
         onPlaying={() => setState((s) => (s.kind === "ready" ? { kind: "playing" } : s))}
+        onPlay={() => setPaused(false)}
+        onPause={() => setPaused(true)}
         onTimeUpdate={onTime && ((e) => onTime(e.currentTarget.currentTime * 1000))}
         onSeeked={onTime && ((e) => onTime(e.currentTarget.currentTime * 1000))}
       />
@@ -162,6 +229,30 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
         <p className="player-note">재생하면 영상을 받기 시작합니다. 영상은 채팅보다 10초 넘게 늦을 수 있습니다.</p>
       )}
       {dark ? <div className="player-off">{error}</div> : error}
+      {transport && (
+        <div className="transport" role="group" aria-label="재생 조작">
+          <button type="button" className="transport-button" onClick={() => skip(-SKIP_LONG_MS)} disabled={!canPlay}>
+            −{SKIP_LONG_MS / 1000}초
+          </button>
+          <button type="button" className="transport-button" onClick={() => skip(-SKIP_MS)} disabled={!canPlay}>
+            −{SKIP_MS / 1000}초
+          </button>
+          <button type="button" className="transport-button transport-play" onClick={toggle} disabled={!canPlay} aria-pressed={!paused}>
+            {paused ? "재생" : "일시정지"}
+          </button>
+          <button type="button" className="transport-button" onClick={() => skip(SKIP_MS)} disabled={!canPlay}>
+            +{SKIP_MS / 1000}초
+          </button>
+          <button type="button" className="transport-button" onClick={() => skip(SKIP_LONG_MS)} disabled={!canPlay}>
+            +{SKIP_LONG_MS / 1000}초
+          </button>
+          <span className="transport-keys">
+            <kbd>←</kbd>
+            <kbd>→</kbd> {SKIP_MS / 1000}초 · <kbd>Shift</kbd>+방향키 {SKIP_LONG_MS / 1000}초 · <kbd>Space</kbd> 재생 · <kbd>N</kbd>
+            <kbd>P</kbd> 다음·이전 후보
+          </span>
+        </div>
+      )}
     </div>
   );
 });

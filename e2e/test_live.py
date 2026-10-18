@@ -78,6 +78,8 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     expect(page.get_by_text("수집을 중단했습니다.")).to_be_visible()
     expect(screen.get_by_label("생방송 영상")).to_have_count(0)
     expect(screen).to_contain_text("생방송 영상은 수집하는 동안에만 보여 줍니다. 이어 기록하면 다시 불러옵니다.")
+    # Switched off, the video card is one line and the chat takes the room.
+    assert screen.bounding_box()["height"] < 120, screen.bounding_box()
     page.get_by_role("button", name="이어 기록").click()
     expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
     page.get_by_role("tab", name="수집 상태").click()
@@ -157,22 +159,21 @@ def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
     preview.get_by_text("보낼 내용 전체").click()
     expect(preview.locator("pre")).to_contain_text('"source_type": "rule"')
     expect(preview.locator("pre")).to_contain_text("ㅋㅋㅋㅋㅋ")
-    page.locator("section", has=page.get_by_role("heading", name="선택형 AI 검토")).screenshot(path=str(SHOTS / "live-ai-panel.png"))
+    page.locator("section", has=page.get_by_role("heading", name="AI 검토", exact=True)).screenshot(path=str(SHOTS / "live-ai-panel.png"))
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=15_000)
 
     page.get_by_role("tab", name=re.compile("^후보")).click()
-    ai_items = page.locator("ol.candidates > li[data-source='ai']")
-    expect(ai_items.first).to_contain_text("가짜 AI 추천")
-    expect(ai_items.first.locator(".candidate-source")).to_have_text("AI 추천")
-    expect(page.locator(".timeline-marker[data-kind='ai']").first).to_be_attached()
-    # The summary counts every source, as the list does.
+    # The synthetic provider explains the candidate it was sent: the answer sits under that candidate.
+    note = confirmed.first.locator(".ai-note")
+    expect(note).to_contain_text("AI 설명")
+    expect(note).to_contain_text("가짜 AI 추천")
+    expect(page.locator("ol.candidates > li[data-source='ai']")).to_have_count(0)
+    # The summary counts the rows, as the list does.
     shown = page.locator("ol.candidates > li").count()
     expect(page.locator(".stat", has_text="편집 후보").locator("dd")).to_have_text(f"{shown}개")
     page.wait_for_timeout(100)  # a shown tab replays its rows' entrance; let the frame settle for the picture
     page.screenshot(path=str(SHOTS / "live-ai.png"), full_page=True)
-    page.get_by_label("AI 추천", exact=True).check()  # the source filter
-    expect(page.locator("ol.candidates > li:not([data-source='ai'])")).to_have_count(0)
     page.get_by_role("tab", name="파일").click()
     expect(page.get_by_role("button", name="AI 추천 TXT")).to_be_visible()
 

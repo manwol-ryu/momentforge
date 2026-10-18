@@ -92,29 +92,32 @@ func (c *Claude) client(key string) *sdk.Client {
 	return &cl
 }
 
-// system is the cached prefix: the fixed instruction, identical in every request.
-func system() []sdk.TextBlockParam {
-	return []sdk.TextBlockParam{{Text: ai.Prompt, CacheControl: sdk.NewCacheControlEphemeralParam()}}
+// system is the cached prefix: the step's fixed instruction, identical in
+// every request of that step.
+func system(prompt string) []sdk.TextBlockParam {
+	return []sdk.TextBlockParam{{Text: prompt, CacheControl: sdk.NewCacheControlEphemeralParam()}}
 }
 
-// outputConfig asks for the answer schema at high effort (candidate review).
-// Thinking is left at the model's default, adaptive on current models.
-func outputConfig() sdk.OutputConfigParam {
-	return sdk.OutputConfigParam{Effort: sdk.OutputConfigEffortHigh, Format: sdk.JSONOutputFormatParam{Schema: ai.Schema()}}
+// outputConfig asks for the answer schema at high effort. Thinking is left
+// at the model's default, adaptive on current models.
+func outputConfig(schema map[string]any) sdk.OutputConfigParam {
+	return sdk.OutputConfigParam{Effort: sdk.OutputConfigEffortHigh, Format: sdk.JSONOutputFormatParam{Schema: schema}}
 }
 
-func messages(chunk ai.Chunk) []sdk.MessageParam {
-	return []sdk.MessageParam{sdk.NewUserMessage(sdk.NewTextBlock(string(ai.Encode(chunk))))}
-}
-
-func params(model string, chunk ai.Chunk) sdk.MessageNewParams {
-	return sdk.MessageNewParams{Model: model, MaxTokens: maxOutput, System: system(), Messages: messages(chunk),
-		OutputConfig: outputConfig()}
+func params(model string, step ai.StepRequest) sdk.MessageNewParams {
+	return sdk.MessageNewParams{Model: model, MaxTokens: int64(max(maxOutput, step.OutputLimit())), System: system(step.Prompt),
+		Messages:     []sdk.MessageParam{sdk.NewUserMessage(sdk.NewTextBlock(string(step.InputJSON())))},
+		OutputConfig: outputConfig(step.Schema)}
 }
 
 // Review sends one chunk and returns Claude's JSON answer.
 func (c *Claude) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
-	msg, err := c.client(key).Messages.New(ctx, params(model, chunk))
+	return c.Step(ctx, key, model, chunk.Step())
+}
+
+// Step sends one step of a multi-step analysis.
+func (c *Claude) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
+	msg, err := c.client(key).Messages.New(ctx, params(model, step))
 	if err != nil {
 		return nil, ai.Usage{}, mapError(ctx, err)
 	}
@@ -153,8 +156,9 @@ func parse(m *sdk.Message) (json.RawMessage, ai.Usage, error) {
 // CountTokens counts a chunk's input tokens exactly, as Review would send it.
 func (c *Claude) CountTokens(ctx context.Context, key, model string, chunk ai.Chunk) (int, error) {
 	res, err := c.client(key).Messages.CountTokens(ctx, sdk.MessageCountTokensParams{Model: model,
-		System: sdk.MessageCountTokensParamsSystemUnion{OfTextBlockArray: system()}, Messages: messages(chunk),
-		OutputConfig: outputConfig()})
+		System:       sdk.MessageCountTokensParamsSystemUnion{OfTextBlockArray: system(ai.Prompt)},
+		Messages:     []sdk.MessageParam{sdk.NewUserMessage(sdk.NewTextBlock(string(ai.Encode(chunk))))},
+		OutputConfig: outputConfig(ai.Schema())})
 	if err != nil {
 		return 0, mapError(ctx, err)
 	}
@@ -179,7 +183,7 @@ func (c *Claude) Models(ctx context.Context, key string) ([]ai.Model, error) {
 func (c *Claude) SubmitBatch(ctx context.Context, key, model string, reqs []ai.BatchRequest) (string, error) {
 	items := make([]sdk.MessageBatchNewParamsRequest, 0, len(reqs))
 	for _, r := range reqs {
-		p := params(model, r.Chunk)
+		p := params(model, r.Chunk.Step())
 		items = append(items, sdk.MessageBatchNewParamsRequest{CustomID: r.ID, Params: sdk.MessageBatchNewParamsRequestParams{
 			Model: p.Model, MaxTokens: p.MaxTokens, System: p.System, Messages: p.Messages, OutputConfig: p.OutputConfig}})
 	}

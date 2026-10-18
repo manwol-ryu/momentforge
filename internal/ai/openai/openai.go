@@ -58,11 +58,20 @@ const maxResponse = 4 << 20
 
 // Review sends one chunk. store=false asks OpenAI not to keep the request.
 func (o *OpenAI) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
+	return o.Step(ctx, key, model, chunk.Step())
+}
+
+// Step sends one step of a multi-step analysis as a Response.
+func (o *OpenAI) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
+	name := step.SchemaName
+	if name == "" {
+		name = "answer"
+	}
 	payload := map[string]any{
-		"model": model, "store": false, "instructions": ai.Prompt, "input": string(ai.Encode(chunk)),
-		"max_output_tokens": ai.MaxOutputTokens,
-		"text": map[string]any{"format": map[string]any{"type": "json_schema", "name": "edit_recommendations",
-			"strict": true, "schema": ai.Schema()}},
+		"model": model, "store": false, "instructions": step.Prompt, "input": string(step.InputJSON()),
+		"max_output_tokens": step.OutputLimit(),
+		"text": map[string]any{"format": map[string]any{"type": "json_schema", "name": name,
+			"strict": true, "schema": step.Schema}},
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(body))

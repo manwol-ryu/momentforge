@@ -43,6 +43,7 @@ function valuesOf(s: Settings): Settings {
 export function SettingsView() {
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
   const settings = useSettings();
+  const status = useQuery({ queryKey: ["status"], queryFn: api.status });
   useDocumentTitle("설정");
   useAppState(
     queryState({ isSuccess: providers.isSuccess && settings.isSuccess, isError: providers.isError || settings.isError }),
@@ -77,7 +78,28 @@ export function SettingsView() {
           </div>
         </div>
 
-        <aside className="start-side" aria-label="저장 위치와 키 안내">
+        <aside className="start-side" aria-label="앱 정보와 저장 위치">
+          <section className="sheet" aria-labelledby="app-title">
+            <h2 id="app-title" className="sheet-title">
+              앱 정보
+            </h2>
+            {status.isError ? (
+              <p className="error" role="alert">
+                {status.error.message}
+              </p>
+            ) : (
+              <dl className="facts facts-stacked">
+                <dt>버전</dt>
+                <dd>{status.data?.version ?? "확인하는 중"}</dd>
+                <dt>지원 플랫폼</dt>
+                <dd>{status.data?.platforms.join(", ") || "확인하는 중"}</dd>
+                <dt>데이터 폴더</dt>
+                <dd>{status.data?.dataDir ?? "확인하는 중"}</dd>
+                <dt>저장소 형식</dt>
+                <dd className="timecode">{status.data ? `스키마 ${status.data.schemaVersion}` : "확인하는 중"}</dd>
+              </dl>
+            )}
+          </section>
           <section className="sheet" aria-labelledby="files-title">
             <h2 id="files-title" className="sheet-title">
               저장 위치
@@ -89,17 +111,9 @@ export function SettingsView() {
               <dd>{settings.data?.keyFile ?? "확인하는 중"}</dd>
             </dl>
             <p className="field-help">
-              두 파일 모두 데이터 폴더 안에 있어 Git에 올라가지 않고, 나만 읽을 수 있는 권한으로 씁니다. 데이터 폴더를 바꾸면(--data)
-              그 폴더의 설정을 씁니다.
-            </p>
-          </section>
-          <section className="sheet" data-tint="peach" aria-labelledby="keys-title">
-            <h2 id="keys-title" className="sheet-title">
-              API 키
-            </h2>
-            <p className="field-help">
-              키는 앱이 실행되는 동안 메모리에 둡니다. ‘이 컴퓨터에도 저장’을 고른 키만 .env 파일에 평문으로 남고, 지우면 파일에서도
-              지웁니다. 키를 넣어도 AI로 보내기 전에는 늘 보낼 내용과 비용을 먼저 보여 드립니다.
+              두 파일 모두 데이터 폴더 안에 있어 Git에 올라가지 않고, 나만 읽을 수 있는 권한으로 씁니다. API 키는 앱이 실행되는 동안
+              메모리에 두고, ‘이 컴퓨터에도 저장’을 고른 키만 .env 파일에 평문으로 남습니다. 키를 넣어도 AI로 보내기 전에는 늘 보낼
+              내용과 비용을 먼저 보여 드립니다.
             </p>
           </section>
         </aside>
@@ -184,31 +198,40 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
               <div className="settings-collect">
                 <fieldset className="settings-group">
                   <legend className="field-label">다시보기와 생방송</legend>
-                  <label className="check">
+                  <label className="check check-option">
                     <input type="checkbox" checked={draft.sensitive} onChange={(e) => change({ sensitive: e.target.checked })} />
-                    항상 가장 민감하게 (10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다)
+                    <span>
+                      항상 가장 민감하게
+                      <span className="check-help">10초에 채팅 6건부터 판정합니다. 작은 반응도 찾지만 잘못 잡는 후보가 늘 수 있습니다.</span>
+                    </span>
                   </label>
                 </fieldset>
                 <fieldset className="settings-group">
                   <legend className="field-label">다시보기</legend>
-                  <label className="check">
+                  <label className="check check-option">
                     <input
                       type="checkbox"
                       checked={draft.includeComments}
                       onChange={(e) => change({ includeComments: e.target.checked })}
                     />
-                    영상 댓글의 시청자 추천도 수집 (댓글에 적힌 시각을 자동 후보와 따로 표시합니다)
+                    <span>
+                      영상 댓글의 시청자 추천도 수집
+                      <span className="check-help">댓글에 적힌 시각을 자동 후보와 따로 표시합니다.</span>
+                    </span>
                   </label>
                 </fieldset>
                 <fieldset className="settings-group">
                   <legend className="field-label">생방송</legend>
-                  <label className="check">
+                  <label className="check check-option">
                     <input
                       type="checkbox"
                       checked={draft.viewerAdaptive}
                       onChange={(e) => change({ viewerAdaptive: e.target.checked })}
                     />
-                    시청자 수 변화 보정 (시청자가 기준보다 10% 넘게 줄면 평소 채팅량 기준을 다시 학습합니다)
+                    <span>
+                      시청자 수 변화 보정
+                      <span className="check-help">시청자가 기준보다 10% 넘게 줄면 평소 채팅량 기준을 다시 학습합니다.</span>
+                    </span>
                   </label>
                 </fieldset>
                 <p className="field-help">새 작업의 수집 양식이 이 값으로 시작합니다. 양식에서 바꾼 값은 그 작업에만 씁니다.</p>
@@ -290,7 +313,12 @@ function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderP
                 placeholder={p.defaultEndpoint}
               />
             </label>
-            {p.endpointHelp && <p className="field-help">{p.endpointHelp}</p>}
+            {p.endpointHelp && (
+              <details className="field-more">
+                <summary>주소 설명</summary>
+                <p className="field-help">{p.endpointHelp}</p>
+              </details>
+            )}
           </>
         )}
         <label className="field">
@@ -391,6 +419,8 @@ function ServiceRow({ p }: { p: AIProvider }) {
         <p className="field-help">MomentForge가 켜지 않은 {p.name}입니다. 끄려면 실행한 터미널에서 끄세요.</p>
       )}
       {s && (
+        <details className="field-more" open={!s.installed || undefined}>
+          <summary>프로그램과 설정 파일 위치</summary>
         <dl className="service-paths">
           <dt>프로그램</dt>
           <dd>{s.installed ? s.program : `찾지 못함. README의 ${p.name} 준비 방법대로 설치하세요.`}</dd>
@@ -407,6 +437,7 @@ function ServiceRow({ p }: { p: AIProvider }) {
             </>
           )}
         </dl>
+        </details>
       )}
       {s?.note && <p className="field-help service-note">{s.note}</p>}
       {(control.error ?? status.error) && (

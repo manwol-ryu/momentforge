@@ -102,7 +102,15 @@ type timelineItemJSON struct {
 	Rationale   string `json:"rationale,omitempty"`
 	Uncertainty string `json:"uncertainty,omitempty"`
 	Priority    string `json:"priority,omitempty"`
-	WatchURL    string `json:"watchUrl,omitempty"`
+	// AI recommendations: the items the recommendation explains (empty: a new moment).
+	SourceCandidateIDs []string `json:"sourceCandidateIds,omitempty"`
+	WatchURL           string   `json:"watchUrl,omitempty"`
+	// Cut plans: the spans to keep, the plan to open, whether both checks passed.
+	Kind      string             `json:"kind,omitempty"`
+	Spans     []app.TimelineSpan `json:"spans,omitempty"`
+	CutPlanID string             `json:"cutPlanId,omitempty"`
+	Verified  bool               `json:"verified,omitempty"`
+	Version   int                `json:"version,omitempty"`
 }
 
 // timeline is the unified timeline: rule candidates, viewer and AI recommendations.
@@ -116,7 +124,8 @@ func (h *handler) timeline(w http.ResponseWriter, r *http.Request) {
 	for i, it := range t.Items {
 		items[i] = timelineItemJSON{ID: it.ID, Source: it.Source, OriginID: it.OriginID, AnchorMs: it.AnchorMs,
 			ClipStartMs: it.ClipStartMs, ClipEndMs: it.ClipEndMs, Title: it.Title, CommentText: it.CommentText,
-			Rationale: it.Rationale, Uncertainty: it.Uncertainty, Priority: it.Priority, WatchURL: it.WatchURL}
+			Rationale: it.Rationale, Uncertainty: it.Uncertainty, Priority: it.Priority, SourceCandidateIDs: it.SourceCandidateIDs,
+			WatchURL: it.WatchURL, Kind: it.Kind, Spans: it.Spans, CutPlanID: it.CutPlanID, Verified: it.Verified, Version: it.Version}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessionId": t.SessionID, "title": t.Title, "durationMs": t.DurationMs,
 		"analysisId": t.AnalysisID, "captureId": t.CaptureID, "aiRunId": t.AIRunID, "items": items})

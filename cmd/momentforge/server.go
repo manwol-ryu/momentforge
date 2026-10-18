@@ -23,6 +23,8 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/ai/opencodex"
 	"github.com/manwol-ryu/momentforge/internal/api"
 	"github.com/manwol-ryu/momentforge/internal/app"
+	"github.com/manwol-ryu/momentforge/internal/asr"
+	"github.com/manwol-ryu/momentforge/internal/asr/applespeech"
 	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/detect/rules"
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -110,6 +112,7 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
 		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
 		AI: registerAI(opt.AI), AIBatchPoll: extraBatchPoll,
+		ASR: registerASR(dataDir, opt.Version),
 	})
 	if err := core.RecoverLive(ctx); err != nil {
 		return nil, err
@@ -162,6 +165,7 @@ func (s *server) Shutdown(ctx context.Context) error {
 var (
 	extraPlatforms []platform.Platform
 	extraAI        []ai.Provider
+	extraASR       []asr.Engine
 	extraBatchPoll time.Duration // 0: the app's default
 	// opencodeOptions, codexOptions, cliproxyOptions and opencodexOptions
 	// configure the providers that use programs on this computer (the E2E
@@ -184,6 +188,18 @@ func registerAI(override []ai.Provider) *ai.Registry {
 	r.Register(anthropic.New(), codex.New(codexOptions...), opencode.New(opencodeOptions...),
 		cliproxy.New(cliproxyOptions...), opencodex.New(opencodexOptions...), openai.New())
 	r.Register(extraAI...)
+	return r
+}
+
+// registerASR registers the speech recognition engines: macOS's own first
+// (through the embedded helper), then whatever a build-tagged file adds.
+func registerASR(dataDir, version string) *asr.Registry {
+	r := &asr.Registry{}
+	// Build-tagged engines first: the E2E binary's fake must win over the real one, which is ready on any Mac.
+	r.Register(extraASR...)
+	if len(speechHelper) > 0 {
+		r.Register(applespeech.New(speechHelper, filepath.Join(dataDir, "runtime"), version))
+	}
 	return r
 }
 

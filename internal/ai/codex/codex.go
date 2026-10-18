@@ -136,14 +136,6 @@ func (c *Codex) executable() (string, error) {
 	return "", errNotInstalled
 }
 
-// message is what Codex receives: the instruction, the answer format and
-// the input. Codex has its own system prompt, so the instruction comes first.
-func message(chunk ai.Chunk) string {
-	return "이 작업에는 도구를 쓰지 않습니다. 파일·명령·웹 도구를 부르지 말고 바로 답하세요.\n\n지시:\n" + ai.Prompt +
-		"\n\n아래 입력 JSON을 지시대로 검토하고, 정해진 JSON 스키마를 따르는 JSON 객체 하나로만 답하세요.\n\n입력:\n" +
-		string(ai.Encode(chunk)) + "\n"
-}
-
 // args are the `codex exec` arguments for one request.
 func args(dir, model string) []string {
 	a := []string{"exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
@@ -163,6 +155,13 @@ func args(dir, model string) []string {
 
 // Review runs one chunk through `codex exec` and returns the JSON answer.
 func (c *Codex) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
+	return c.Step(ctx, key, model, chunk.Step())
+}
+
+// Step runs one step through `codex exec`. Codex has its own system
+// prompt, so the instruction comes first in the message, with tools ruled
+// out; the answer schema goes to --output-schema.
+func (c *Codex) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
 	if strings.ContainsAny(model, " \t\r\n") {
 		return nil, ai.Usage{}, domain.NewUserError("INPUT", "Codex 모델 ID를 확인해 주세요. 비우거나 default로 두면 Codex의 기본 모델을 씁니다.")
 	}
@@ -178,14 +177,14 @@ func (c *Codex) Review(ctx context.Context, key, model string, chunk ai.Chunk) (
 	if err := os.Mkdir(filepath.Join(dir, "work"), 0o700); err != nil {
 		return nil, ai.Usage{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "schema.json"), ai.Encode(ai.Schema()), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "schema.json"), ai.Encode(step.Schema), 0o600); err != nil {
 		return nil, ai.Usage{}, err
 	}
 	runCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, bin, args(dir, model)...)
 	cmd.Dir = filepath.Join(dir, "work")
-	cmd.Stdin = strings.NewReader(message(chunk))
+	cmd.Stdin = strings.NewReader(step.HarnessMessage())
 	var stdout limited
 	stdout.max = maxStdout
 	cmd.Stdout = &stdout

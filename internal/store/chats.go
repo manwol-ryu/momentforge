@@ -11,7 +11,7 @@ import (
 // AllSeq means "no snapshot limit" for chat queries.
 const AllSeq = math.MaxInt64
 
-const chatColumns = "event_id, seq, offset_ms, COALESCE(author_key,''), text"
+const chatColumns = "event_id, seq, offset_ms, COALESCE(author_key,''), text, kind, COALESCE(amount,0), hidden"
 
 func (s *Store) queryChats(ctx context.Context, q string, args ...any) ([]domain.ChatEvent, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -22,8 +22,13 @@ func (s *Store) queryChats(ctx context.Context, q string, args ...any) ([]domain
 	var out []domain.ChatEvent
 	for rows.Next() {
 		var e domain.ChatEvent
-		if err := rows.Scan(&e.ID, &e.Seq, &e.OffsetMs, &e.AuthorKey, &e.Text); err != nil {
+		var hidden int
+		if err := rows.Scan(&e.ID, &e.Seq, &e.OffsetMs, &e.AuthorKey, &e.Text, &e.Kind, &e.Amount, &hidden); err != nil {
 			return nil, fmt.Errorf("read chat: %w", err)
+		}
+		e.Hidden = hidden != 0
+		if e.Kind == domain.ChatKindChat {
+			e.Kind = ""
 		}
 		out = append(out, e)
 	}

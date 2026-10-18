@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -38,7 +39,8 @@ func (a *App) CreateDemo(ctx context.Context, sensitive bool) (SessionInfo, erro
 	if err != nil {
 		return SessionInfo{}, err
 	}
-	events := domain.DemoChat()
+	events := append(domain.DemoChat(), domain.DemoCallbackChat()...)
+	sort.SliceStable(events, func(i, j int) bool { return events[i].OffsetMs < events[j].OffsetMs })
 	for i := range events {
 		events[i].Seq = 0 // assigned by the store
 	}
@@ -51,6 +53,11 @@ func (a *App) CreateDemo(ctx context.Context, sensitive bool) (SessionInfo, erro
 	}
 	if err := a.writeChat(ctx, s.ID); err != nil {
 		a.logError("write demo chat", err)
+	}
+	// The sample has a synthetic transcript too, so the cut analysis can be tried without speech recognition.
+	if _, err := st.SaveTranscript(ctx, store.Transcript{SessionID: s.ID, Source: "demo", Engine: "", Model: "",
+		Coverage: []domain.Gap{{StartMs: 0, EndMs: domain.DemoDurationMs}}}, domain.DemoUtterances()); err != nil {
+		return SessionInfo{}, err
 	}
 	if _, err := a.analyzeSession(ctx, s.ID, a.params(sensitive), job{}); err != nil {
 		return SessionInfo{}, err

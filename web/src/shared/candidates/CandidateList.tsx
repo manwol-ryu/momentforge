@@ -7,7 +7,7 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   longForm?: boolean;
-  /** Extra controls under a candidate (seek, open on the platform). */
+  /** Extra controls under a candidate (open on the platform, pick for AI). */
   renderActions?: (c: Candidate) => ReactNode;
   /** Shown under the selected candidate (e.g. its context chat). */
   renderDetail?: (c: Candidate) => ReactNode;
@@ -55,18 +55,33 @@ interface ItemProps {
   longForm?: boolean;
   /** Label before the reasons, e.g. the source in a mixed list. */
   badge?: ReactNode;
+  /** What the head does besides selecting: "영상에서 보기" when a video plays from it. */
+  headHint?: string;
+  /** Shown under the summary line whether or not the row is selected (an AI explanation). */
+  extra?: ReactNode;
+  /** The row's timeline item ID, so the page can bring the chosen row into view. */
+  itemId?: string;
   renderActions?: (c: Candidate) => ReactNode;
   renderDetail?: (c: Candidate) => ReactNode;
 }
 
-/** One detected candidate: time, reasons, peak numbers and, when selected, its evidence. */
-export function CandidateItem({ c, index, order, selected, onSelect, longForm = false, badge, renderActions, renderDetail }: ItemProps) {
+/**
+ * One detected candidate: its clip range first (what an editor cuts), the
+ * reasons, the peak numbers and, when selected, its evidence.
+ */
+export function CandidateItem({ c, index, order, selected, onSelect, longForm = false, badge, headHint, extra, itemId, renderActions, renderDetail }: ItemProps) {
   const topCount = Math.max(1, ...c.evidence.map((e) => e.count));
   return (
-    <li className="candidate" data-selected={selected || undefined} data-source="rule" style={{ "--i": order ?? index } as CSSProperties}>
-      <button type="button" className="candidate-head" aria-pressed={selected} onClick={() => onSelect(c.id)}>
+    <li
+      className="candidate"
+      data-selected={selected || undefined}
+      data-source="rule"
+      data-item={itemId}
+      style={{ "--i": order ?? index } as CSSProperties}
+    >
+      <button type="button" className="candidate-head" aria-pressed={selected} title={headHint} onClick={() => onSelect(c.id)}>
         <span className="candidate-time timecode">
-          {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}
+          {timecode(c.clipStartMs, longForm)}–{timecode(c.clipEndMs, longForm)}
         </span>
         {badge}
         <span className="candidate-reasons">{c.reasons.join(", ")}</span>
@@ -78,14 +93,15 @@ export function CandidateItem({ c, index, order, selected, onSelect, longForm = 
         <span className="visually-hidden">후보 {index + 1}</span>
       </button>
       <p className="candidate-meta">
-        가장 활발한 10초에 채팅 {c.peak.n}건, 참여 {c.peak.u}명
-        {c.peak.gate ? ` (그때 판정 시작 기준: 채팅 ${c.peak.gate}건 또는 ${c.peak.spikeGate ?? "-"}명)` : ""}. 편집 구간{" "}
+        반응{" "}
         <span className="timecode">
-          {timecode(c.clipStartMs, longForm)}–{timecode(c.clipEndMs, longForm)}
+          {timecode(c.reactionStartMs, longForm)}–{timecode(c.reactionEndMs, longForm)}
         </span>
+        , 가장 활발한 10초에 채팅 {c.peak.n}건·참여 {c.peak.u}명
       </p>
       {!c.baselineReady && <p className="candidate-note">평소 채팅량을 학습하기 전이라 임시 후보입니다.</p>}
       {c.partialContext && <p className="candidate-note">앞뒤 채팅 일부가 없어 문맥이 짧습니다.</p>}
+      {extra}
       {renderActions && <div className="candidate-actions">{renderActions(c)}</div>}
       {selected && (
         <div className="evidence">
@@ -102,6 +118,11 @@ export function CandidateItem({ c, index, order, selected, onSelect, longForm = 
               </li>
             ))}
           </ul>
+          {c.peak.gate ? (
+            <p className="candidate-note">
+              그때 판정 시작 기준: 10초에 채팅 {c.peak.gate}건 또는 채팅한 사람 {c.peak.spikeGate ?? "-"}명.
+            </p>
+          ) : null}
           {renderDetail?.(c)}
         </div>
       )}

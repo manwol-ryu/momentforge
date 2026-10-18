@@ -7,6 +7,27 @@ type ChatEvent struct {
 	OffsetMs  int64  // position on the timeline (VOD play position or LIVE elapsed)
 	AuthorKey string // per-session pseudonym; empty means the author is unknown
 	Text      string
+	// Kind is "" or ChatKindChat for a message; donations and subscriptions
+	// (from NAS backups) carry their amount: won, or months subscribed.
+	Kind   string
+	Amount int64
+	Hidden bool // the platform hid it (bot filter); kept, shown dimmed
+}
+
+// Chat event kinds.
+const (
+	ChatKindChat         = "chat"
+	ChatKindDonation     = "donation"
+	ChatKindSubscription = "subscription"
+	ChatKindSystem       = "system"
+)
+
+// KindOrChat is the event's kind with the default spelled out.
+func (e ChatEvent) KindOrChat() string {
+	if e.Kind == "" {
+		return ChatKindChat
+	}
+	return e.Kind
 }
 
 // Gap is a span with no reliable chat (disconnects, before capture). Analysis
@@ -84,3 +105,15 @@ const (
 	CandidateConfirmed      = "confirmed"
 	CandidatePartial        = "partial"
 )
+
+// Utterance is one thing the broadcaster (or a guest) said, from local
+// speech recognition or a caption file. Speaker is a role such as 방송자,
+// never a name.
+type Utterance struct {
+	ID         string
+	StartMs    int64
+	EndMs      int64
+	Speaker    string
+	Text       string
+	Confidence float64 // 0 when the source gives none
+}

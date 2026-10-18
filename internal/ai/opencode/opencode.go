@@ -145,7 +145,7 @@ func (o *OpenCode) executable() (string, error) {
 // Go models: the review agent has the fixed instruction, one step, and no
 // tools. Free models: OpenCode's default agent, every tool set to "ask",
 // which `opencode run` rejects (nobody is there to approve).
-func config(free bool) []byte {
+func config(free bool, prompt string) []byte {
 	if free {
 		b, _ := json.MarshalIndent(map[string]any{
 			"$schema":     "https://opencode.ai/config.json",
@@ -160,7 +160,7 @@ func config(free bool) []byte {
 		"agents": map[string]any{agentName: map[string]any{
 			"description": "MomentForge 채팅 검토 (도구 없음)",
 			"mode":        "primary",
-			"system":      ai.Prompt,
+			"system":      prompt,
 			"steps":       1,
 			"permissions": deny,
 		}},
@@ -168,22 +168,16 @@ func config(free bool) []byte {
 	return b
 }
 
-// message is what the agent receives: the answer format and the input.
-// The CLI cannot enforce a JSON schema, so Validate checks the answer. The
-// default agent (free models) has its own system prompt, so the
-// instruction comes first in the message, with tools ruled out.
-func message(chunk ai.Chunk, free bool) string {
-	m := "아래 입력 JSON을 지시대로 검토하세요. 답은 다음 JSON 스키마를 따르는 JSON 객체 하나로만 쓰고, " +
-		"코드 블록이나 설명을 붙이지 마세요.\n\n스키마:\n" + string(ai.Encode(ai.Schema())) +
-		"\n\n입력:\n" + string(ai.Encode(chunk)) + "\n"
-	if free {
-		m = "이 작업에는 도구를 쓰지 않습니다. 파일·명령·웹 도구를 부르지 말고 바로 답하세요.\n\n지시:\n" + ai.Prompt + "\n\n" + m
-	}
-	return m
-}
-
 // Review runs one chunk through `opencode run` and returns the JSON answer.
 func (o *OpenCode) Review(ctx context.Context, key, model string, chunk ai.Chunk) (json.RawMessage, ai.Usage, error) {
+	return o.Step(ctx, key, model, chunk.Step())
+}
+
+// Step runs one step through `opencode run`. Go models get the step's
+// instruction as the review agent's system prompt; free models get it in
+// the message (the default agent has its own system prompt), with tools
+// ruled out. The CLI cannot enforce a JSON schema, so the caller validates.
+func (o *OpenCode) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
 	if err := o.CheckModel(model); err != nil {
 		return nil, ai.Usage{}, err
 	}
@@ -197,7 +191,7 @@ func (o *OpenCode) Review(ctx context.Context, key, model string, chunk ai.Chunk
 	}
 	defer os.RemoveAll(dir)
 	free := isFree(model)
-	if err := os.WriteFile(filepath.Join(dir, "opencode.json"), config(free), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "opencode.json"), config(free, step.Prompt), 0o600); err != nil {
 		return nil, ai.Usage{}, err
 	}
 	runCtx, cancel := context.WithTimeout(ctx, requestTimeout)
@@ -209,7 +203,11 @@ func (o *OpenCode) Review(ctx context.Context, key, model string, chunk ai.Chunk
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "OPENCODE_DISABLE_AUTOUPDATE=1")
-	cmd.Stdin = strings.NewReader(message(chunk, free))
+	message := step.TextMessage()
+	if free {
+		message = step.HarnessMessage()
+	}
+	cmd.Stdin = strings.NewReader(message)
 	var stdout limited
 	stdout.max = maxStdout
 	cmd.Stdout = &stdout

@@ -22,10 +22,22 @@ def test_home_shows_status_and_live_connection(page: Page, base_url: str) -> Non
     expect(page.get_by_role("heading", name="저장한 작업")).to_be_visible()  # the sidebar
     expect(page.get_by_role("link", name="새 작업")).to_have_attribute("aria-current", "page")
     expect(page.locator(".connection")).to_have_text("연결됨", timeout=10_000)
-    expect(page.get_by_text(re.compile(r"^스키마 \d+$"))).to_be_visible()
-    expect(page.locator(".facts")).to_contain_text("치지직")  # supported platforms
-    expect(page.get_by_text(".data", exact=False).first).to_be_visible()  # data folder is e2e/.data
+    # The first visit explains the steps and offers the sample; with saved work the side lists it instead.
+    # Either way the app's facts live in 설정.
+    if page.locator(".session-row").count() == 0:
+        expect(page.get_by_role("heading", name="이렇게 진행됩니다")).to_be_visible()
+        expect(page.get_by_role("heading", name="처음이라면")).to_be_visible()
+    else:
+        expect(page.get_by_role("heading", name="최근 작업")).to_be_visible()
+        expect(page.get_by_role("heading", name="이렇게 진행됩니다")).to_have_count(0)
+    expect(page.get_by_role("heading", name="앱 정보")).to_have_count(0)
     page.screenshot(path=str(SHOTS / "home-light.png"), full_page=True)
+    page.get_by_role("link", name="설정").first.click()
+    page.wait_for_selector('body[data-app-state="ready"]', timeout=10_000)
+    facts = page.locator("section", has=page.get_by_role("heading", name="앱 정보"))
+    expect(facts.get_by_text(re.compile(r"^스키마 \d+$"))).to_be_visible()
+    expect(facts).to_contain_text("치지직")  # supported platforms
+    expect(facts).to_contain_text(".data")  # data folder is e2e/.data
 
 
 def test_api_requires_access_key(page: Page, base_url: str) -> None:

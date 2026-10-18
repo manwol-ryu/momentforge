@@ -22,16 +22,21 @@ interface Props {
   onScrub?: (ms: number) => void;
   /** Accessible name of that slider. */
   scrubLabel?: string;
+  /** The part of the timeline drawn (zoomed in); the whole length when absent. */
+  viewStartMs?: number;
+  viewEndMs?: number;
 }
 
 const BAR_AREA = 64; // px, matches .timeline-bars height
 
 /**
- * Reaction density over the whole timeline: one bar per evaluation step
+ * Reaction density over the timeline: one bar per evaluation step
  * (messages in the 10 s window), candidate ranges as bands, and a marker
  * per candidate at its peak. Markers are buttons, so the timeline is usable
  * with a keyboard as well as a pointer. With a playhead, a line shows it and
  * a see-through slider over the track moves it, like an editor's timeline.
+ * Zoomed in (a view range), it draws only that part, and a thin overview
+ * under it shows where the part lies in the whole length.
  */
 export function Timeline({
   durationMs,
@@ -46,27 +51,40 @@ export function Timeline({
   playheadMs,
   onScrub,
   scrubLabel = "재생 위치",
+  viewStartMs = 0,
+  viewEndMs = durationMs,
 }: Props) {
-  const maxN = Math.max(1, ...windows.map((w) => w.n));
-  const pct = (ms: number) => `${(Math.min(Math.max(ms, 0), durationMs) / durationMs) * 100}%`;
-  const ticks: number[] = [];
-  for (let t = 0; t <= durationMs; t += tickStep(durationMs)) ticks.push(t);
+  const from = Math.max(0, Math.min(viewStartMs, durationMs));
+  const to = Math.max(from + 1, Math.min(viewEndMs, durationMs));
+  const span = to - from;
+  const zoomed = from > 0 || to < durationMs;
+  const inView = (ms: number) => ms >= from && ms <= to;
+  const overlaps = (a: number, b: number) => b >= from && a <= to;
+  const shown = windows.filter((w) => overlaps(w.t - stepMs, w.t));
+  const maxN = Math.max(1, ...shown.map((w) => w.n));
+  const pct = (ms: number) => `${((Math.min(Math.max(ms, from), to) - from) / span) * 100}%`;
+  const width = (a: number, b: number) => `${((Math.min(b, to) - Math.max(a, from)) / span) * 100}%`;
   const longForm = durationMs >= 3_600_000;
+  const tick = tickStep(span);
+  const ticks: number[] = [];
+  for (let t = Math.ceil(from / tick) * tick; t <= to; t += tick) ticks.push(t);
   const peakWindow = windows.reduce<DetectWindow | null>((a, w) => (!a || w.n > a.n ? w : a), null);
 
   return (
-    <figure className="timeline">
+    <figure className="timeline" data-zoomed={zoomed || undefined}>
       <div className="timeline-track">
         <svg
           className="timeline-bars"
-          viewBox={`0 0 ${durationMs} ${BAR_AREA}`}
+          viewBox={`${from} 0 ${span} ${BAR_AREA}`}
           preserveAspectRatio="none"
           role="img"
           aria-label={`반응 밀도 그래프. ${timecode(durationMs, longForm)} 길이, 가장 많은 채팅은 ${
             peakWindow ? `${timecode(peakWindow.t - windowMs, longForm)}부터 ${windowMs / 1000}초 동안 ${peakWindow.n}건` : "없음"
-          }.${gaps.length > 0 ? ` 채팅을 받지 못한 구간 ${gaps.length}개.` : ""}`}
+          }.${gaps.length > 0 ? ` 채팅을 받지 못한 구간 ${gaps.length}개.` : ""}${
+            zoomed ? ` 지금 ${timecode(from, longForm)}부터 ${timecode(to, longForm)}까지 확대해 보는 중.` : ""
+          }`}
         >
-          {windows.map((w) => {
+          {shown.map((w) => {
             const h = w.valid ? Math.max(1, (w.n / maxN) * BAR_AREA) : 3;
             return (
               <rect
@@ -80,30 +98,32 @@ export function Timeline({
             );
           })}
         </svg>
-        {gaps.map((g) => (
-          <div
-            key={g.startMs}
-            className="timeline-gap"
-            style={{ left: pct(g.startMs), width: pct(g.endMs - g.startMs) }}
-          />
-        ))}
-        {candidates.map((c) => (
-          <div
-            key={c.id}
-            className="timeline-band"
-            data-selected={c.id === selectedId || undefined}
-            style={{ left: pct(c.reactionStartMs), width: pct(c.reactionEndMs - c.reactionStartMs) }}
-          />
-        ))}
-        {playheadMs !== undefined && <div className="timeline-playhead" style={{ left: pct(playheadMs) }} aria-hidden="true" />}
+        {gaps
+          .filter((g) => overlaps(g.startMs, g.endMs))
+          .map((g) => (
+            <div key={g.startMs} className="timeline-gap" style={{ left: pct(g.startMs), width: width(g.startMs, g.endMs) }} />
+          ))}
+        {candidates
+          .filter((c) => overlaps(c.reactionStartMs, c.reactionEndMs))
+          .map((c) => (
+            <div
+              key={c.id}
+              className="timeline-band"
+              data-selected={c.id === selectedId || undefined}
+              style={{ left: pct(c.reactionStartMs), width: width(c.reactionStartMs, c.reactionEndMs) }}
+            />
+          ))}
+        {playheadMs !== undefined && inView(playheadMs) && (
+          <div className="timeline-playhead" style={{ left: pct(playheadMs) }} aria-hidden="true" />
+        )}
         {onScrub && (
           <input
             type="range"
             className="timeline-scrub"
-            min={0}
-            max={durationMs}
+            min={from}
+            max={to}
             step={5000}
-            value={Math.min(Math.max(playheadMs ?? 0, 0), durationMs)}
+            value={Math.min(Math.max(playheadMs ?? from, from), to)}
             onChange={(e) => onScrub(Number(e.target.value))}
             aria-label={scrubLabel}
             aria-valuetext={timecode(playheadMs ?? 0, longForm)}
@@ -111,37 +131,58 @@ export function Timeline({
         )}
       </div>
       <div className="timeline-markers">
-        {candidates.map((c, i) => (
-          <button
-            key={c.id}
-            type="button"
-            className="timeline-marker"
-            style={{ left: pct(c.peakMs), "--at": c.peakMs / durationMs } as CSSProperties}
-            aria-pressed={c.id === selectedId}
-            aria-label={`후보 ${i + 1}, ${timecode(c.reactionStartMs, longForm)}`}
-            onClick={() => onSelect(c.id)}
-          />
-        ))}
-        {extraMarkers.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            className="timeline-marker"
-            data-kind={m.kind}
-            style={{ left: pct(m.ms), "--at": m.ms / durationMs } as CSSProperties}
-            aria-pressed={m.id === selectedId}
-            aria-label={m.label}
-            onClick={() => onSelect(m.id)}
-          />
-        ))}
+        {candidates.map((c, i) =>
+          inView(c.peakMs) ? (
+            <button
+              key={c.id}
+              type="button"
+              className="timeline-marker"
+              style={{ left: pct(c.peakMs), "--at": (c.peakMs - from) / span } as CSSProperties}
+              aria-pressed={c.id === selectedId}
+              aria-label={`후보 ${i + 1}, ${timecode(c.reactionStartMs, longForm)}`}
+              title={`후보 ${i + 1} · ${timecode(c.reactionStartMs, longForm)} · ${c.reasons.join(", ")}`}
+              onClick={() => onSelect(c.id)}
+            />
+          ) : null,
+        )}
+        {extraMarkers
+          .filter((m) => inView(m.ms))
+          .map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className="timeline-marker"
+              data-kind={m.kind}
+              style={{ left: pct(m.ms), "--at": (m.ms - from) / span } as CSSProperties}
+              aria-pressed={m.id === selectedId}
+              aria-label={m.label}
+              title={m.label}
+              onClick={() => onSelect(m.id)}
+            />
+          ))}
       </div>
       <div className="timeline-axis" aria-hidden="true">
-        {ticks.map((t) => (
-          <span key={t} className="timecode" style={{ left: pct(t) }}>
-            {timecode(t, longForm)}
-          </span>
-        ))}
+        {ticks.map((t) => {
+          const at = (t - from) / span;
+          return (
+            <span key={t} className="timecode" data-edge={at < 0.04 ? "start" : at > 0.96 ? "end" : undefined} style={{ left: pct(t) }}>
+              {timecode(t, longForm)}
+            </span>
+          );
+        })}
       </div>
+      {zoomed && (
+        <div className="timeline-overview" aria-hidden="true">
+          {candidates.map((c) => (
+            <span key={c.id} className="overview-mark" style={{ left: `${(c.peakMs / durationMs) * 100}%` }} />
+          ))}
+          <span
+            className="overview-window"
+            style={{ left: `${(from / durationMs) * 100}%`, width: `${(span / durationMs) * 100}%` }}
+          />
+          {playheadMs !== undefined && <span className="overview-playhead" style={{ left: `${(playheadMs / durationMs) * 100}%` }} />}
+        </div>
+      )}
     </figure>
   );
 }

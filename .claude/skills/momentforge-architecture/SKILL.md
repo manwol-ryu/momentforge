@@ -23,7 +23,7 @@ metadata:
 
 | 영역 | 경로 | 먼저 읽을 스킬 | 상세 규칙 |
 |---|---|---|---|
-| 서버·도메인·저장소·탐지·플랫폼 | `cmd/`, `internal/` | — | [references/go.md](references/go.md) |
+| 서버·도메인·저장소·탐지·플랫폼·음성 인식 | `cmd/`, `internal/` | — | [references/go.md](references/go.md) |
 | AI 제공자 | `internal/ai/` | **claude-api** (Claude Code 내장) | [references/ai.md](references/ai.md) |
 | MCP 서버 | `internal/mcp/` | **mcp-builder** | [references/go.md](references/go.md) 의 MCP 절 |
 | 화면 | `web/` | **frontend-design** | [references/web.md](references/web.md) |
@@ -43,14 +43,17 @@ Go 모듈 경로는 `github.com/manwol-ryu/momentforge`입니다. 패키지는 �
 | `cmd/momentforge` | 모두 (구현체 등록·조립만 담당) |
 | `internal/api` | `app`, `events`, `domain` |
 | `internal/mcp` | `app`, `domain` |
-| `internal/app` | `platform`, `detect`, `store`, `ai`, `export`, `events`, `privacy`, `domain` (각 패키지의 루트만) |
+| `internal/app` | `platform`, `detect`, `store`, `ai`, `ai/cut`, `asr`, `backup`, `export`, `events`, `privacy`, `domain` (각 패키지의 루트만; `ai/cut`은 제공자가 아니라 컷 분석의 지시문·검증 라이브러리라 예외) |
 | `internal/platform` | `domain` |
 | `internal/platform/<플랫폼>` | `platform`, `domain` |
 | `internal/detect` | `domain` |
 | `internal/detect/rules` | `detect`, `domain` |
 | `internal/store`, `internal/export`, `internal/events` | `domain` |
 | `internal/ai` | `domain` |
-| `internal/ai/<제공자>` | `ai`, `domain` |
+| `internal/ai/cut` | `ai`, `domain` |
+| `internal/asr` (음성 인식 Engine·registry), `internal/backup` (NAS 백업 읽기) | `domain` |
+| `internal/asr/<엔진>` | `asr`, `domain` |
+| `internal/ai/<제공자>` | `ai`, `ai/cut`, `domain` (E2E 가짜 제공자가 컷 분석 입력 형식을 읽음) |
 | `internal/privacy`, `internal/domain` | 없음 |
 
 - `app`은 `platform/chzzk`, `ai/anthropic`, `detect/rules` 같은 **구현 패키지를 import하지 않습니다**. 인터페이스와 registry만 사용합니다.
@@ -66,6 +69,7 @@ func registerAll(r *app.Registry) {
     r.Platforms.Register(chzzk.New())
     r.Rules.Register(rules.Laugh{}, rules.Surge{}, rules.Repeat{}, rules.Emotion{}, rules.Participants{})
     r.AI.Register(anthropic.New(), openai.New())
+    r.ASR.Register(applespeech.New(helper, runtimeDir, version)) // 음성 인식 엔진도 같은 방식
 }
 ```
 

@@ -5,6 +5,7 @@ import type { Candidate, ExportFile, LiveState, LiveStatus, TimelineItem, Timeli
 import { AIComparePanel } from "../../shared/ai/AIComparePanel";
 import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
+import { foldAI } from "../../shared/candidates/foldAI";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
@@ -40,7 +41,15 @@ export function LiveView({ id }: { id: string }) {
   const [tab, setTab] = useState<PanelTab>("candidates");
   // The summary counts every source, like the 후보 tab (the same cached timeline query the workspace reads).
   const timeline = useQuery({ queryKey: ["timeline", id], queryFn: () => api.timeline(id) });
-  const itemCount = feed.candidates.length + (timeline.data?.items ?? []).filter((i) => i.source === "ai").length;
+  // AI explanations of listed candidates sit under them, so only AI items of their own count as rows.
+  const aiRows = (timeline.data?.items ?? []).filter((i) => i.source === "ai" && !(i.sourceCandidateIds ?? []).length).length;
+  const itemCount = feed.candidates.length + aiRows;
+  // Counts the times the candidate list asked for an AI review; the AI tab previews the picked candidates each time.
+  const [previewAsk, setPreviewAsk] = useState(0);
+  const askAI = () => {
+    setTab("ai");
+    setPreviewAsk((n) => n + 1);
+  };
   useAppState(status.isSuccess && feed.loaded ? "ready" : status.isError ? "error" : "loading");
   const v = status.data;
   useDocumentTitle(v?.session.title);
@@ -80,7 +89,7 @@ export function LiveView({ id }: { id: string }) {
         />
         <Controls v={v} />
       </header>
-      <Workspace v={v} feed={feed} tab={tab} onTab={setTab} />
+      <Workspace v={v} feed={feed} tab={tab} onTab={setTab} previewAsk={previewAsk} onAskAI={askAI} />
     </div>
   );
 }
@@ -150,9 +159,11 @@ interface WorkspaceProps {
   feed: ReturnType<typeof useLiveFeed>;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
+  previewAsk: number;
+  onAskAI: () => void;
 }
 
-function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
+function Workspace({ v, feed, tab, onTab, previewAsk, onAskAI }: WorkspaceProps) {
   const sid = v.session.id;
   // Timeline item IDs: "rule:<candidate>" or "ai:<recommendation>".
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -187,8 +198,9 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
       ].sort((x, y) => x.anchorMs - y.anchorMs),
     [feed.candidates, aiItems],
   );
-  const sources = [...new Set(items.map((i) => i.source))];
-  const shown = filter === "all" ? items : items.filter((i) => i.source === filter);
+  const folded = useMemo(() => foldAI(items), [items]);
+  const sources = [...new Set(folded.rows.map((i) => i.source))];
+  const shown = filter === "all" ? folded.rows : folded.rows.filter((i) => i.source === filter);
   const durationMs = Math.max(
     density.data?.endMs ?? 0,
     v.watermarkMs,
@@ -198,14 +210,15 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
   );
   const longForm = durationMs >= 3_600_000;
   const basis = v.timeBasis === "broadcast_elapsed" ? "방송 시작 후" : "수집 시작 후";
-  const aiMarkers = aiItems.map((i, n) => ({
+  const aiMarkers = folded.rows.filter((i) => i.source === "ai").map((i, n) => ({
     id: i.id, ms: i.anchorMs, kind: "ai" as const, label: `${sourceLabel.ai} ${n + 1}, ${timecode(i.anchorMs, longForm)}`,
   }));
 
   return (
     <>
       <section className="ws-stage" aria-label={v.session.canPlay ? "영상, 실시간 채팅, 타임라인" : "실시간 채팅과 타임라인"}>
-        <div className="stage-media" data-video={v.session.canPlay || undefined}>
+        {/* A stopped capture has nothing to play: the video card shrinks to one line and the chat takes the room. */}
+        <div className="stage-media" data-video={(v.session.canPlay && v.running) || undefined} data-video-off={(v.session.canPlay && !v.running) || undefined}>
           {v.session.canPlay && <LiveVideo v={v} />}
           <div className="stage-chat card">
             <div className="card-head">
@@ -258,7 +271,7 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
               id: "candidates",
               label: (
                 <>
-                  후보 <span className="tab-count">{items.length}</span>
+                  후보 <span className="tab-count">{folded.rows.length}</span>
                 </>
               ),
               content: (
@@ -292,6 +305,7 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
                       <UnifiedList
                         items={shown}
                         candidates={candidates}
+                        aiFor={folded.aiFor}
                         selectedId={selectedId}
                         onSelect={select}
                         longForm={longForm}
@@ -315,7 +329,7 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
                   {aiSelection.size > 0 && (
                     <p className="pick-bar">
                       <span>AI 검토에 고른 후보 {aiSelection.size}개</span>
-                      <button type="button" className="link-button" onClick={() => onTab("ai")}>
+                      <button type="button" className="link-button" onClick={onAskAI}>
                         AI 검토로 이동
                       </button>
                     </p>
@@ -329,7 +343,13 @@ function Workspace({ v, feed, tab, onTab }: WorkspaceProps) {
               content:
                 v.session.chatCount > 0 ? (
                   <>
-                    <AIPanel s={v.session} selection={[...aiSelection]} liveEndMs={v.watermarkMs} />
+                    <AIPanel
+                      s={v.session}
+                      selection={[...aiSelection]}
+                      liveEndMs={v.watermarkMs}
+                      previewAsk={previewAsk}
+                      onShowCandidates={() => onTab("candidates")}
+                    />
                     <AIComparePanel s={v.session} />
                   </>
                 ) : (

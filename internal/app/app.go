@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/asr"
 	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/events"
 	"github.com/manwol-ryu/momentforge/internal/platform"
@@ -26,6 +27,7 @@ type Config struct {
 	Rules     []detect.Rule      // registered detection rules
 	Platforms *platform.Registry // registered platform adapters
 	AI        *ai.Registry       // registered AI providers
+	ASR       *asr.Registry      // registered speech recognition engines (the first ready one is the default)
 	// AIBatchPoll is the first wait before checking a submitted batch
 	// (30 s when 0; the E2E binary shortens it).
 	AIBatchPoll time.Duration
@@ -49,6 +51,9 @@ type App struct {
 func New(cfg Config) *App {
 	if cfg.Platforms == nil {
 		cfg.Platforms = &platform.Registry{}
+	}
+	if cfg.ASR == nil {
+		cfg.ASR = &asr.Registry{}
 	}
 	if cfg.AI == nil {
 		cfg.AI = &ai.Registry{}

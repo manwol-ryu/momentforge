@@ -79,6 +79,7 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		SessionID  string   `json:"sessionId"`
 		Provider   string   `json:"provider"`
 		Model      string   `json:"model"`
+		Kind       string   `json:"kind"` // explain (default) | cut
 		Mode       string   `json:"mode"` // candidates | all | range
 		ItemIDs    []string `json:"itemIds"`
 		StartMs    int64    `json:"startMs"`
@@ -90,7 +91,7 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &body) {
 		return
 	}
-	req := app.AIPreviewRequest{SessionID: body.SessionID, Provider: body.Provider, Model: body.Model,
+	req := app.AIPreviewRequest{SessionID: body.SessionID, Provider: body.Provider, Model: body.Model, Kind: body.Kind,
 		StartMs: body.StartMs, EndMs: body.EndMs, ToEnd: body.ToEnd, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD}
 	switch body.Mode {
 	case "all":
@@ -105,7 +106,11 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The plan is shown as is: it is exactly what will be sent.
-	writeJSON(w, http.StatusOK, map[string]any{"previewId": pv.ID, "expiresAt": pv.ExpiresAt.UTC().Format(time.RFC3339), "plan": pv.Plan})
+	out := map[string]any{"previewId": pv.ID, "expiresAt": pv.ExpiresAt.UTC().Format(time.RFC3339), "plan": pv.Plan}
+	if pv.Cut != nil {
+		out["cut"] = pv.Cut
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // aiCount counts a preview's input tokens with the provider (sends the previewed chats).
@@ -159,6 +164,26 @@ func (h *handler) aiRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
+// cutPlans lists a session's cut plans, newest first.
+func (h *handler) cutPlans(w http.ResponseWriter, r *http.Request) {
+	plans, err := h.cfg.Core.CutPlans(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
+}
+
+// cutPlan returns one cut plan in full.
+func (h *handler) cutPlan(w http.ResponseWriter, r *http.Request) {
+	v, plan, err := h.cfg.Core.CutPlan(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": v, "plan": plan})
 }
 
 func (h *handler) aiCancel(w http.ResponseWriter, r *http.Request) {

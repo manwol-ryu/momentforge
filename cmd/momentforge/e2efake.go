@@ -10,6 +10,7 @@ import (
 	aifake "github.com/manwol-ryu/momentforge/internal/ai/e2efake"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencode"
 	"github.com/manwol-ryu/momentforge/internal/ai/opencodex"
+	asrfake "github.com/manwol-ryu/momentforge/internal/asr/e2efake"
 	"github.com/manwol-ryu/momentforge/internal/platform/e2efake"
 )
 
@@ -17,6 +18,7 @@ import (
 func init() {
 	extraPlatforms = append(extraPlatforms, e2efake.New())
 	extraAI = append(extraAI, aifake.New(), aifake.NewSecond())
+	extraASR = append(extraASR, asrfake.New())
 	extraBatchPoll = 200 * time.Millisecond // the fake batch ends at once
 	opencodeOptions = append(opencodeOptions, opencode.WithCommand("/nonexistent/momentforge-e2e/opencode"))
 	codexOptions = append(codexOptions, codex.WithCommand("/nonexistent/momentforge-e2e/codex"))

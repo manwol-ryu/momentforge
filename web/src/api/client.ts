@@ -1,4 +1,8 @@
 import type {
+  ASREngine,
+  BackupBroadcast,
+  TranscriptInfo,
+  Utterance,
   AIComparison,
   AIDelivery,
   AIKeySource,
@@ -14,6 +18,7 @@ import type {
   CandidateChats,
   Checkpoint,
   CommentsView,
+  CutPlanSummary,
   ExportFile,
   JobStatus,
   LiveChat,
@@ -107,6 +112,8 @@ export const api = {
     sessionId: string;
     provider: string;
     model: string;
+    /** explain (default) or cut: the cut analysis of the picked candidates. */
+    kind?: "explain" | "cut";
     mode: "candidates" | "all" | "range";
     itemIds?: string[];
     startMs?: number;
@@ -123,8 +130,17 @@ export const api = {
   aiStart: (previewId: string, fingerprint: string, regenerate = false) =>
     postJSON<{ id: string }>("/api/ai/runs", { previewId, fingerprint, regenerate }),
   aiRun: (id: string) => getJSON<AIRun>(`/api/ai/runs/${enc(id)}`),
+  cutPlans: (sessionId: string) => getJSON<{ plans: CutPlanSummary[] }>(`/api/sessions/${enc(sessionId)}/cuts`),
+  cutPlan: (id: string) => getJSON<{ summary: CutPlanSummary; plan: unknown }>(`/api/cuts/${enc(id)}`),
   aiCancel: (id: string) => postJSON<{ cancelling: boolean }>(`/api/ai/runs/${enc(id)}/cancel`),
   demo: (sensitive = false) => postJSON<Session>("/api/demo", { sensitive }),
+  scanBackups: (dir: string) => postJSON<{ broadcasts: BackupBroadcast[] }>("/api/import/scan", { dir }),
+  importBackup: (req: { path: string; transcribe: boolean; sensitive: boolean }) => postJSON<JobStatus>("/api/import/backup", req),
+  asrEngines: () => getJSON<{ engines: ASREngine[] }>("/api/asr"),
+  transcribe: (sessionId: string) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/transcribe`),
+  transcript: (sessionId: string) => getJSON<TranscriptInfo | null>(`/api/sessions/${enc(sessionId)}/transcript`),
+  utterances: (sessionId: string, fromMs: number, toMs: number, limit = 500) =>
+    getJSON<{ utterances: Utterance[] }>(`/api/sessions/${enc(sessionId)}/utterances?from=${Math.floor(fromMs)}&to=${Math.floor(toMs)}&limit=${limit}`),
   sessions: () => getJSON<Session[]>("/api/sessions"),
   hideSessions: () => postJSON<{ changed: number }>("/api/sessions/hide"),
   restoreSessions: () => postJSON<{ changed: number }>("/api/sessions/restore"),

@@ -85,6 +85,30 @@ func TestPrepareAddsSelectedCandidatesAndComments(t *testing.T) {
 	}
 }
 
+// A window cut into pieces by size lists a candidate in one piece only (the
+// one whose chat holds its anchor), so the model explains it once.
+func TestPrepareListsACandidateOnce(t *testing.T) {
+	cands := []Candidate{{ID: "rule:m0001", SourceType: "rule", AnchorMs: 150000, Title: "웃음 증가"},
+		{ID: "rule:m0002", SourceType: "rule", AnchorMs: 5000, Title: "채팅 급증"}}
+	p, err := Prepare(PlanInput{Model: "m", Ranges: []Range{{0, 240000}}, Candidates: cands, Chats: chats(strings.Repeat("가", 200))})
+	if err != nil || len(p.Chunks) < 3 {
+		t.Fatalf("chunks %d, err %v", len(p.Chunks), err)
+	}
+	seen := map[string]int{}
+	for _, c := range p.Chunks {
+		for _, cand := range c.Candidates {
+			seen[cand.ID]++
+			first, last := c.Evidence[0].TimeMs, c.Evidence[len(c.Evidence)-1].TimeMs
+			if cand.AnchorMs < first || cand.AnchorMs > last {
+				t.Fatalf("%s (anchor %d) listed in a piece spanning %d–%d", cand.ID, cand.AnchorMs, first, last)
+			}
+		}
+	}
+	if seen["rule:m0001"] != 1 || seen["rule:m0002"] != 1 {
+		t.Fatalf("candidates listed %v times", seen)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	chunk := Chunk{StartMs: 0, EndMs: 60000, Candidates: []Candidate{{ID: "rule:m1"}},
 		Evidence: []Evidence{{Ref: "chat:e1", TimeMs: 10000}, {Ref: "chat:e2", TimeMs: 50000}}}

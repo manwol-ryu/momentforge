@@ -11,6 +11,7 @@ const phaseText: Record<string, string> = {
   collecting: "채팅 수집",
   analyzing: "편집 후보 찾기",
   comments: "영상 댓글 읽기",
+  transcribing: "방송 내용 인식",
   done: "완료",
   paused: "중단됨",
   error: "중단됨",
@@ -20,7 +21,7 @@ const phaseText: Record<string, string> = {
 export function JobPanel({ job, showResultLink = true }: { job: JobStatus; showResultLink?: boolean }) {
   const cancel = useMutation({ mutationFn: api.cancelJob });
   if (!job.id) return null;
-  const collecting = job.phase === "collecting" && job.durationMs > 0;
+  const collecting = (job.phase === "collecting" || job.phase === "transcribing") && job.durationMs > 0;
   const failed = job.phase === "error" || job.phase === "paused";
   const longForm = job.durationMs >= 3_600_000;
 
@@ -47,7 +48,7 @@ export function JobPanel({ job, showResultLink = true }: { job: JobStatus; showR
             <span className="timecode">
               {timecode(job.positionMs, longForm)} / {timecode(job.durationMs, longForm)}
             </span>
-            까지 받음, 페이지 {job.pages}개
+            {job.phase === "transcribing" ? `까지 인식, 발언 ${(job.utterances ?? 0).toLocaleString("ko-KR")}건` : `까지 받음, 페이지 ${job.pages}개`}
           </p>
         </>
       )}

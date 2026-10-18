@@ -31,7 +31,23 @@ type TimelineItem struct {
 	Rationale   string // AI recommendations
 	Uncertainty string // AI recommendations
 	Priority    string // AI recommendations: high | medium | low
-	WatchURL    string
+	// AI recommendations: the timeline items (rule or viewer) the AI explained;
+	// the screen shows such a recommendation under those items.
+	SourceCandidateIDs []string
+	WatchURL           string
+	// Cut plans (Kind "cut"): the spans to keep, the plan to open, whether both checks passed.
+	Kind      string
+	Spans     []TimelineSpan
+	CutPlanID string
+	Verified  bool
+	Version   int
+}
+
+// TimelineSpan is one span of a cut plan.
+type TimelineSpan struct {
+	StartMs int64  `json:"startMs"`
+	EndMs   int64  `json:"endMs"`
+	Role    string `json:"role"`
 }
 
 // UnifiedTimeline merges a video's latest rule analysis, comment capture and
@@ -116,6 +132,11 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 	}
 	t.AIRunID = ai.runID
 	t.Items = append(t.Items, ai.items...)
+	cuts, err := a.cutTimelineItems(ctx, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	t.Items = append(t.Items, cuts...)
 	sort.SliceStable(t.Items, func(i, j int) bool {
 		x, y := t.Items[i], t.Items[j]
 		if x.AnchorMs != y.AnchorMs {

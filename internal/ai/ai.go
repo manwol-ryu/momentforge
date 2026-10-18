@@ -258,6 +258,7 @@ var requestOverhead = len(Prompt) + len(Encode(Schema())) + framingTokens
 // Plan is everything a run will send. The user sees it before anything is sent.
 type Plan struct {
 	SessionID            string    `json:"session_id"`
+	Kind                 string    `json:"kind,omitempty"` // "" or explain: chunk review; cut: the cut analysis (internal/ai/cut)
 	Provider             string    `json:"provider"`
 	Model                string    `json:"model"`
 	Delivery             string    `json:"delivery"` // single | batch
@@ -342,15 +343,29 @@ func Prepare(in PlanInput) (Plan, error) {
 	for _, r := range p.Ranges {
 		for t := r.StartMs; t < r.EndMs; t += stepMs {
 			lo, hi := max(r.StartMs, t-overlapMs), min(r.EndMs, t+stepMs+overlapMs)
+			// A candidate belongs to the one window whose own step (not the
+			// overlap) holds its anchor, so each candidate is explained once.
+			coreLo, coreHi := t, t+stepMs
+			if t == r.StartMs {
+				coreLo = lo
+			}
+			if t+stepMs >= r.EndMs {
+				coreHi = hi
+			}
+			var cands []Candidate
+			comments := map[string]Evidence{}
 			base := Chunk{StartMs: lo, EndMs: hi, Candidates: []Candidate{}, Evidence: []Evidence{}}
 			for _, c := range in.Candidates {
-				if lo <= c.AnchorMs && c.AnchorMs < hi {
+				if coreLo <= c.AnchorMs && c.AnchorMs < coreHi {
+					cands = append(cands, c)
 					base.Candidates = append(base.Candidates, c)
 					if ev, ok := in.Comments[c.ID]; ok {
+						comments[c.ID] = ev
 						base.Evidence = append(base.Evidence, ev)
 					}
 				}
 			}
+			// The size of every candidate is counted in each piece, so a piece never grows past the limit.
 			baseBytes := len(Encode(base))
 			if baseBytes > maxBaseBytes {
 				p.Omitted = append(p.Omitted, Omitted{lo, hi, "comment_input_too_large"})
@@ -360,7 +375,10 @@ func Prepare(in PlanInput) (Plan, error) {
 			if err != nil {
 				return p, err
 			}
-			chunk, size := cloneChunk(base), baseBytes
+			// The window's chat, cut into pieces of at most maxChunkBytes.
+			empty := Chunk{StartMs: lo, EndMs: hi, Candidates: []Candidate{}, Evidence: []Evidence{}}
+			pieces := []Chunk{cloneChunk(empty)}
+			size := baseBytes
 			for _, c := range chats {
 				author := c.AuthorKey
 				ev := Evidence{Ref: "chat:" + c.ID, TimeMs: c.OffsetMs, Content: c.Text}
@@ -373,20 +391,37 @@ func Prepare(in PlanInput) (Plan, error) {
 					continue
 				}
 				if size+evBytes+1 > maxChunkBytes {
-					if len(chunk.Evidence) > len(base.Evidence) {
-						chunks = append(chunks, chunk)
+					if len(pieces[len(pieces)-1].Evidence) > 0 {
+						pieces = append(pieces, cloneChunk(empty))
 					}
-					chunk, size = cloneChunk(base), baseBytes
+					size = baseBytes
 					if size+evBytes+1 > maxChunkBytes {
 						p.Omitted = append(p.Omitted, Omitted{c.OffsetMs, c.OffsetMs + 1, "input_budget"})
 						continue
 					}
 				}
-				chunk.Evidence = append(chunk.Evidence, ev)
+				last := &pieces[len(pieces)-1]
+				last.Evidence = append(last.Evidence, ev)
 				size += evBytes + 1
 			}
-			if len(chunk.Evidence) > 0 {
-				chunks = append(chunks, chunk)
+			// Each candidate goes into the piece whose chat holds its anchor
+			// (the last piece that starts at or before it), with its comment.
+			for _, c := range cands {
+				at := 0
+				for i, pc := range pieces {
+					if len(pc.Evidence) > 0 && pc.Evidence[0].TimeMs <= c.AnchorMs {
+						at = i
+					}
+				}
+				pieces[at].Candidates = append(pieces[at].Candidates, c)
+				if ev, ok := comments[c.ID]; ok {
+					pieces[at].Evidence = append([]Evidence{ev}, pieces[at].Evidence...)
+				}
+			}
+			for _, pc := range pieces {
+				if len(pc.Evidence) > 0 {
+					chunks = append(chunks, pc)
+				}
 			}
 		}
 	}
@@ -430,6 +465,9 @@ func digest(v any) string {
 	sum := sha256.Sum256(Encode(v))
 	return hex.EncodeToString(sum[:])
 }
+
+// Digest is the fingerprint of any plan-like value (what the user confirmed).
+func Digest(v any) string { return digest(v) }
 
 // Recommendation is an accepted AI recommendation.
 type Recommendation struct {

@@ -247,7 +247,7 @@ func TestDemoSessionAndReviewQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !s.IsDemo || s.CanPlay || s.CanResume || s.ChatCount != len(domain.DemoChat()) || s.LatestAnalysisID == "" {
+	if !s.IsDemo || s.CanPlay || s.CanResume || s.ChatCount != len(domain.DemoChat())+len(domain.DemoCallbackChat()) || s.LatestAnalysisID == "" {
 		t.Fatalf("demo session = %+v", s)
 	}
 	an, err := a.Analysis(ctx, s.LatestAnalysisID)

@@ -66,6 +66,9 @@ func (a *App) info(s store.Session) SessionInfo {
 		}
 	} else if out.IsDemo {
 		out.PlatformName = "샘플"
+	} else if s.Platform == backupPlatform {
+		out.PlatformName = "NAS 백업"
+		out.CanPlay = a.hasVideoFile(s.ID)
 	}
 	return out
 }
@@ -218,6 +221,10 @@ func (a *App) Playback(ctx context.Context, sid string) (PlaybackInfo, error) {
 		if IsDemo(s) {
 			return PlaybackInfo{}, domain.NewUserError("DEMO", "샘플 채팅에는 연결된 영상이 없습니다.")
 		}
+		// An imported backup plays its own video file, streamed by this server.
+		if s.Platform == backupPlatform && a.hasVideoFile(s.ID) {
+			return PlaybackInfo{URL: "/api/sessions/" + s.ID + "/media/video", Type: "file"}, nil
+		}
 		return PlaybackInfo{}, domain.NewUserError("PLAYBACK_UNAVAILABLE", "이 작업은 앱 안에서 재생할 수 없습니다.")
 	}
 	pb, err := resolve(ctx, t)
@@ -247,7 +254,7 @@ type ExportFile struct {
 	Size int64
 }
 
-var exportExt = map[string]bool{".txt": true, ".json": true, ".jsonl": true, ".csv": true}
+var exportExt = map[string]bool{".txt": true, ".json": true, ".jsonl": true, ".csv": true, ".edl": true, ".srt": true, ".vtt": true}
 
 // Files lists a session's export files.
 func (a *App) Files(ctx context.Context, sid string) ([]ExportFile, error) {

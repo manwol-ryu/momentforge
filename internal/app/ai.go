@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/ai/cut"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/events"
 	"github.com/manwol-ryu/momentforge/internal/export"
@@ -77,6 +78,7 @@ type aiActive struct {
 
 type aiPreview struct {
 	plan    ai.Plan
+	cut     *CutPreview // cut analysis: the inputs the steps start from
 	expires time.Time
 	runID   string
 	counted []int // exact input tokens per chunk, once the user asked for them
@@ -311,6 +313,7 @@ type AIPreviewRequest struct {
 	SessionID  string
 	Provider   string
 	Model      string
+	Kind       string   // "" or explain: chunk review; cut: the cut analysis (candidates only)
 	ItemIDs    []string // unified timeline item IDs (not AI ones); nil for All or a range
 	All        bool     // every candidate offered: rule and viewer ones, a LIVE capture's settled ones (needs a cost cap)
 	StartMs    int64    // range mode
@@ -325,6 +328,7 @@ type AIPreview struct {
 	ID        string
 	ExpiresAt time.Time
 	Plan      ai.Plan
+	Cut       *CutPreview // when the plan is a cut analysis
 }
 
 // PreviewAI prepares (but does not send) a review of a VOD or a LIVE capture,
@@ -368,6 +372,13 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	}
 	if req.CostCapUSD > 0 && in.Price == nil {
 		return AIPreview{}, domain.NewUserError("INPUT", "가격을 알 수 없는 모델에는 비용 한도를 적용할 수 없습니다.")
+	}
+	if req.Kind == store.AIKindCut {
+		plan, cp, err := a.previewCut(ctx, req, provider, in.Price)
+		if err != nil {
+			return AIPreview{}, err
+		}
+		return a.keepPreview(plan, cp)
 	}
 	src, err := a.aiSource(ctx, req.SessionID)
 	if err != nil {
@@ -430,6 +441,11 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	if err != nil {
 		return AIPreview{}, err
 	}
+	return a.keepPreview(plan, nil)
+}
+
+// keepPreview stores a plan the user is about to see, for a while.
+func (a *App) keepPreview(plan ai.Plan, cp *CutPreview) (AIPreview, error) {
 	a.ai.mu.Lock()
 	defer a.ai.mu.Unlock()
 	now := time.Now()
@@ -442,8 +458,8 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 		return AIPreview{}, domain.NewUserError("BUSY", "미리보기가 너무 많습니다. 잠시 후 다시 시도해 주세요.")
 	}
 	id := randomHex()
-	a.ai.previews[id] = &aiPreview{plan: plan, expires: now.Add(aiPreviewTTL)}
-	return AIPreview{ID: id, ExpiresAt: now.Add(aiPreviewTTL), Plan: plan}, nil
+	a.ai.previews[id] = &aiPreview{plan: plan, cut: cp, expires: now.Add(aiPreviewTTL)}
+	return AIPreview{ID: id, ExpiresAt: now.Add(aiPreviewTTL), Plan: plan, Cut: cp}, nil
 }
 
 func randomHex() string {
@@ -575,17 +591,37 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 	if plan.CostCapUSD > 0 {
 		run.CostCapUSD = &plan.CostCapUSD
 	}
+	var stepper ai.StepProvider
+	if plan.Kind == store.AIKindCut {
+		sp, ok := provider.(ai.StepProvider)
+		if !ok || pv.cut == nil {
+			return "", domain.NewUserError("INPUT", "이 제공자는 컷 분석을 지원하지 않습니다.")
+		}
+		stepper, run.Kind = sp, store.AIKindCut
+		// The run keeps what the user confirmed: the plan and the inputs the steps start from.
+		run.PlanJSON = ai.Encode(struct {
+			Plan   ai.Plan     `json:"plan"`
+			Inputs []cut.Input `json:"inputs"`
+		}{plan, pv.cut.Inputs})
+	}
 	run, err = a.cfg.Store.CreateAIRun(ctx, run)
 	if err != nil {
 		return "", err
 	}
 	pv.runID = run.ID
 	act := a.startActive(run.ID, batch)
+	inputs := []cut.Input(nil)
+	if pv.cut != nil {
+		inputs = pv.cut.Inputs
+	}
 	go func() {
 		defer a.endActive(run.ID, act)
-		if batch {
+		switch {
+		case stepper != nil:
+			a.runCut(act, run, plan, inputs, stepper, key)
+		case batch:
 			a.runBatch(act, run, plan, provider.(ai.BatchProvider), key)
-		} else {
+		default:
 			a.runAI(act, run, plan, provider, key)
 		}
 	}()
@@ -819,6 +855,7 @@ type AIRunView struct {
 	SessionID         string    `json:"sessionId"`
 	Provider          string    `json:"provider"`
 	Model             string    `json:"model"`
+	Kind              string    `json:"kind"`     // explain | cut
 	Delivery          string    `json:"delivery"` // single | batch
 	State             string    `json:"state"`
 	RequestCount      int       `json:"requestCount"`
@@ -842,11 +879,19 @@ func (a *App) publishAI(run store.AIRun, recs []ai.Recommendation) {
 	if a.cfg.Bus == nil {
 		return
 	}
-	a.cfg.Bus.Publish(events.Event{Type: "ai", Data: a.aiRunView(run, len(dedupeRecs(recs)))})
+	n := len(dedupeRecs(recs))
+	if run.Kind == store.AIKindCut {
+		n = runResults(run)
+	}
+	a.cfg.Bus.Publish(events.Event{Type: "ai", Data: a.aiRunView(run, n)})
 }
 
 func (a *App) aiRunView(run store.AIRun, recs int) AIRunView {
-	v := AIRunView{ID: run.ID, SessionID: run.SessionID, Provider: run.Provider, Model: run.Model, Delivery: run.Delivery,
+	kind := run.Kind
+	if kind == "" {
+		kind = store.AIKindExplain
+	}
+	v := AIRunView{ID: run.ID, SessionID: run.SessionID, Provider: run.Provider, Model: run.Model, Kind: kind, Delivery: run.Delivery,
 		State: run.State, RequestCount: run.RequestCount, CompletedRequests: run.CompletedRequests, Attempts: run.Attempts,
 		Rejected: run.Rejected, Recommendations: recs, InputTokens: run.InputTokens + run.CacheReadTokens + run.CacheWriteTokens,
 		CacheReadTokens: run.CacheReadTokens, CacheWriteTokens: run.CacheWriteTokens, OutputTokens: run.OutputTokens,
@@ -866,13 +911,23 @@ func runRecs(run store.AIRun) []ai.Recommendation {
 	return recs
 }
 
+// runResults counts a run's results: recommendations, or a cut run's plans.
+func runResults(run store.AIRun) int {
+	if run.Kind == store.AIKindCut {
+		var ids []string
+		json.Unmarshal(run.RecommendationsJSON, &ids)
+		return len(ids)
+	}
+	return len(runRecs(run))
+}
+
 // AIRun returns a review's progress and result.
 func (a *App) AIRun(ctx context.Context, id string) (AIRunView, error) {
 	run, err := a.cfg.Store.AIRun(ctx, id)
 	if err != nil {
 		return AIRunView{}, err
 	}
-	return a.aiRunView(run, len(runRecs(run))), nil
+	return a.aiRunView(run, runResults(run)), nil
 }
 
 // AIRuns lists a session's reviews, newest first.
@@ -886,7 +941,7 @@ func (a *App) AIRuns(ctx context.Context, sid string) ([]AIRunView, error) {
 	}
 	out := []AIRunView{}
 	for _, r := range runs {
-		out = append(out, a.aiRunView(r, len(runRecs(r))))
+		out = append(out, a.aiRunView(r, runResults(r)))
 	}
 	return out, nil
 }
@@ -901,7 +956,7 @@ func (a *App) aiTimelineItems(ctx context.Context, sid string, watch func(int64)
 	for _, r := range runRecs(run) {
 		out.items = append(out.items, TimelineItem{ID: SourceAI + ":" + r.ID, Source: SourceAI, OriginID: r.ID,
 			AnchorMs: r.StartMs, ClipStartMs: r.StartMs, ClipEndMs: r.EndMs, Title: r.Title, Rationale: r.Rationale,
-			Uncertainty: r.Uncertainty, Priority: r.Priority, WatchURL: watch(r.StartMs)})
+			Uncertainty: r.Uncertainty, Priority: r.Priority, SourceCandidateIDs: r.SourceCandidateIDs, WatchURL: watch(r.StartMs)})
 	}
 	return out, nil
 }

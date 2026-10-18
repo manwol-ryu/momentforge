@@ -12,6 +12,13 @@ from playwright.sync_api import Page, expect
 DATA = Path(__file__).resolve().parent / ".data"
 SHOTS = DATA / "screenshots"
 READY = 'body[data-app-state="ready"]'
+
+
+def open_destination(page: Page) -> None:
+    """The AI tab folds the provider block once it can send; open it to reach its fields."""
+    dest = page.locator(".ai-dest")
+    if dest.count() and not dest.evaluate("d => d.open"):
+        dest.locator("summary").click()
 FAKE = "E2E 가짜 AI"
 FAKE_KEY = "fake-key-e2e-123"
 
@@ -104,6 +111,9 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    expect(page.locator(".ai-dest-state")).to_contain_text(f"{FAKE} · e2e-model-b")
+    expect(page.locator(".ai-dest-ready")).to_have_text("키 있음")
+    open_destination(page)
     expect(page.get_by_label("AI 제공자").locator("option:checked")).to_have_text(FAKE)
     expect(page.get_by_label("모델 ID", exact=True)).to_have_value("e2e-model-b")
     expect(page.get_by_label(re.compile(f"^{FAKE} API 키 \\(메모리에 있음\\)"))).to_be_visible()
