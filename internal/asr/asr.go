@@ -103,3 +103,29 @@ func Coverage(utts []domain.Utterance, gapMs int64) []domain.Gap {
 	}
 	return out
 }
+
+// Setting is one value a Configurable engine takes from the settings
+// screen: a path to a program or a model file the user installed.
+type Setting struct {
+	Key         string `json:"key"`                   // stable id, e.g. "bin", "model"
+	Label       string `json:"label"`                 // shown to users
+	Help        string `json:"help,omitempty"`        // what to put there and where to get it
+	Placeholder string `json:"placeholder,omitempty"` //
+	Value       string `json:"value"`                 // the current value ("" when unset)
+}
+
+// Configurable is an engine that needs paths the user sets (whisper.cpp:
+// the whisper-cli program and a model file). The app keeps the values in
+// settings.env and applies them with Configure at start and after each save.
+type Configurable interface {
+	Settings() []Setting
+	// Configure applies values by Setting.Key; an unknown key or a bad value
+	// is a UserError. Missing keys are cleared.
+	Configure(values map[string]string) error
+}
+
+// ModelNamer is an engine that can say which model it transcribes with
+// (stored in the transcript; engines without one are stored as "system").
+type ModelNamer interface {
+	Model() string
+}

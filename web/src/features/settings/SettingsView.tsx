@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { AIModel, AIProvider, AIService, Settings, SettingsInfo } from "../../api/types";
+import type { AIModel, AIProvider, AIService, ASREngine, Settings, SettingsInfo } from "../../api/types";
 import { AIKeyField } from "../../shared/ai/AIKeyField";
 import { queryState, useAppState } from "../../shared/appState";
 import { RevealWords } from "../../shared/motion/RevealWords";
@@ -10,7 +10,7 @@ import { Tabs } from "../../shared/motion/Tabs";
 import { useDocumentTitle } from "../../shared/navigation";
 import { useSettings } from "../../shared/settings";
 
-type Section = "ai" | "collect";
+type Section = "ai" | "asr" | "collect";
 
 /** Only the non-empty values of a map, in a stable order (empty means "the provider's own"). */
 function filled(m: Record<string, string> | undefined): Record<string, string> {
@@ -22,7 +22,17 @@ function filled(m: Record<string, string> | undefined): Record<string, string> {
   return out;
 }
 
-/** Only the values, with empty models and addresses left out. */
+/** Only the non-empty paths of each engine, engines without any left out. */
+function filledPaths(m: Record<string, Record<string, string>> | undefined): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const id of Object.keys(m ?? {}).sort()) {
+    const paths = filled(m![id]);
+    if (Object.keys(paths).length > 0) out[id] = paths;
+  }
+  return out;
+}
+
+/** Only the values, with empty models, addresses and paths left out. */
 function valuesOf(s: Settings): Settings {
   return {
     aiProvider: s.aiProvider,
@@ -31,6 +41,8 @@ function valuesOf(s: Settings): Settings {
     sensitive: s.sensitive,
     includeComments: s.includeComments,
     viewerAdaptive: s.viewerAdaptive,
+    asrEngine: s.asrEngine ?? "",
+    asrPaths: filledPaths(s.asrPaths),
   };
 }
 
@@ -131,8 +143,9 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
     onSuccess: (s) => {
       queryClient.setQueryData(["settings"], s);
       setDraft(valuesOf(s));
-      // A saved address changes where a provider sends.
+      // A saved address changes where a provider sends; saved paths change whether an engine is ready.
       void queryClient.invalidateQueries({ queryKey: ["aiProviders"] });
+      void queryClient.invalidateQueries({ queryKey: ["asrEngines"] });
     },
   });
   const changed = JSON.stringify(valuesOf(draft)) !== JSON.stringify(valuesOf(saved));
@@ -189,6 +202,20 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                   )}
                 </div>
               </div>
+            ),
+          },
+          {
+            id: "asr",
+            label: "방송 내용 인식",
+            content: (
+              <ASRSettings
+                engine={draft.asrEngine}
+                onEngine={(id) => change({ asrEngine: id })}
+                paths={draft.asrPaths}
+                onPath={(id, key, value) =>
+                  change({ asrPaths: { ...draft.asrPaths, [id]: { ...(draft.asrPaths[id] ?? {}), [key]: value } } })
+                }
+              />
             ),
           },
           {
@@ -262,6 +289,121 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
         )}
       </div>
     </div>
+  );
+}
+
+interface ASRProps {
+  engine: string;
+  onEngine: (id: string) => void;
+  paths: Record<string, Record<string, string>>;
+  onPath: (engine: string, key: string, value: string) => void;
+}
+
+/**
+ * Speech recognition (docs/AI-CUT-ANALYSIS.md 2.2): every registered
+ * engine with whether it can run now and what to do when it cannot, the
+ * engine a transcription starts with, and the paths an installed program
+ * (whisper.cpp) needs. Recognition runs on this computer only; nothing here
+ * downloads a program or a model.
+ */
+function ASRSettings({ engine, onEngine, paths, onPath }: ASRProps) {
+  const engines = useQuery({ queryKey: ["asrEngines"], queryFn: api.asrEngines });
+  const list = engines.data?.engines ?? [];
+  const chosen = list.some((e) => e.id === engine) ? engine : "";
+  const auto = list.find((e) => e.default);
+
+  if (engines.isError) {
+    return (
+      <p className="error" role="alert">
+        {engines.error.message}
+      </p>
+    );
+  }
+  if (!engines.data) {
+    return (
+      <p className="field-help" aria-busy="true">
+        음성 인식 엔진을 확인하는 중
+      </p>
+    );
+  }
+  return (
+    <div className="settings-asr">
+      <p className="field-help">
+        방송자가 한 말을 글로 바꾸는 일은 이 컴퓨터에서만 합니다. 음성은 어디로도 보내지 않고, 모델도 MomentForge가 내려받지 않습니다.
+      </p>
+      {list.length === 0 ? (
+        <p className="empty">이 실행파일에는 음성 인식 엔진이 없습니다.</p>
+      ) : (
+        <>
+          <Segmented
+            name="default-asr"
+            legend="기본 음성 인식 엔진"
+            value={chosen}
+            onChange={onEngine}
+            options={[{ value: "", label: "자동" }, ...list.map((e) => ({ value: e.id, label: e.name }))]}
+          />
+          <p className="field-help">
+            {chosen === ""
+              ? auto
+                ? `자동: 지금은 준비된 첫 엔진인 ${auto.name}을(를) 씁니다.`
+                : "자동: 준비된 엔진이 생기면 그것을 씁니다. 지금은 쓸 수 있는 엔진이 없습니다."
+              : "고른 엔진이 준비되지 않았으면 준비된 다른 엔진을 씁니다."}
+          </p>
+          <ul className="engines" aria-label="음성 인식 엔진">
+            {list.map((e) => (
+              <li key={e.id}>
+                <EngineCard e={e} paths={paths[e.id] ?? {}} onPath={(key, value) => onPath(e.id, key, value)} />
+              </li>
+            ))}
+          </ul>
+          <p className="actions">
+            <button type="button" className="link-button" onClick={() => void engines.refetch()} disabled={engines.isFetching}>
+              준비 상태 다시 확인
+            </button>
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One engine: its state, the way to get it ready, and its paths when it takes any. */
+function EngineCard({ e, paths, onPath }: { e: ASREngine; paths: Record<string, string>; onPath: (key: string, value: string) => void }) {
+  const titleId = `engine-${e.id}`;
+  return (
+    <section className="sheet engine" aria-labelledby={titleId} data-engine={e.id}>
+      <header className="provider-head">
+        <h3 id={titleId} className="provider-name">
+          {e.name}
+          {e.default && <span className="engine-default"> · 지금 쓰는 엔진</span>}
+        </h3>
+        <span className="provider-state" data-ready={e.ready || undefined}>
+          {e.ready ? "준비됨" : "준비 안 됨"}
+        </span>
+      </header>
+      <div className="provider-body">
+        {e.how && <p className={e.ready ? "field-help" : "ai-auth engine-how"}>{e.how}</p>}
+        {e.settings?.map((st) => (
+          <div key={st.key} className="engine-setting">
+            <label className="field">
+              <span className="field-label">{st.label}</span>
+              <input
+                type="text"
+                value={paths[st.key] ?? ""}
+                onChange={(ev) => onPath(st.key, ev.target.value)}
+                placeholder={st.placeholder}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </label>
+            {st.help && <p className="field-help">{st.help}</p>}
+          </div>
+        ))}
+        {e.settings && e.settings.length > 0 && (
+          <p className="field-help">경로를 적고 아래 ‘기본값 저장’을 누르면 준비 상태를 다시 확인합니다.</p>
+        )}
+      </div>
+    </section>
   );
 }
 

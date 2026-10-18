@@ -64,6 +64,8 @@ func New(cfg Config) *App {
 	a.initSettings()
 	a.initAI()
 	a.applyEndpoints()
+	a.applyASRSettings()
+	a.cleanRuntimeAudio()
 	a.chooseStartProvider()
 	return a
 }

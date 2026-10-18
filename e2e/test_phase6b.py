@@ -82,3 +82,63 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     form = page.get_by_role("form", name="NAS 백업 불러오기")
     row = form.locator(".backup-row", has_text="E2E 가짜 백업 방송")
     expect(row.get_by_role("link", name="열기")).to_be_visible(timeout=10_000)
+
+
+CAPTION = Path(__file__).resolve().parent / "fixtures" / "caption" / "e2e.srt"
+RUNTIME_AUDIO = Path(__file__).resolve().parent / ".data" / "runtime" / "audio"
+
+
+def test_caption_file_then_stream_audio_on_a_vod(page: Page, base_url: str) -> None:
+    """A VOD without a backup (6-B ⑤⑥): a caption file becomes the transcript
+    with its offset applied, and the fake platform's stream is downloaded,
+    transcribed by the fake engine and deleted."""
+    from test_phase4 import open_video
+
+    open_video(page, base_url, "E2E 가짜 다시보기 61", "https://live.e2e.test/video/61")
+    page.get_by_role("tab", name="대본").click()
+    panel = page.locator("section", has=page.get_by_role("heading", name="대본"))
+    expect(panel).to_contain_text("다시보기의 음성을 받아")
+    expect(panel.get_by_role("button", name="방송 내용 인식")).to_be_enabled()
+
+    # A caption file, shifted by two seconds: the 3:33 line lands at 3:35.
+    form = panel.get_by_role("form", name="자막 파일 넣기")
+    form.get_by_label("자막 파일 (SRT·VTT)").set_input_files(str(CAPTION))
+    form.get_by_label("시간 오프셋 (초)").fill("2")
+    form.get_by_role("button", name="자막 넣기").click()
+    expect(panel).to_contain_text("자막 파일", timeout=10_000)
+    expect(panel).to_contain_text("발언 4건")
+    lines = page.get_by_role("list", name="발언 목록")
+    expect(lines.locator("li").first).to_contain_text("안녕하세요 E2E 자막")
+    page.get_by_label("대본 찾기").fill("벌칙")
+    expect(lines.locator("li")).to_have_count(1)
+    expect(lines).to_contain_text("벌칙으로 노래")  # the <i> tag is gone
+    expect(lines).to_contain_text("03:35")
+    page.get_by_label("대본 찾기").fill("")
+    page.screenshot(path=str(SHOTS / "caption-file.png"))
+    page.get_by_role("tab", name="파일").click()
+    expect(page.get_by_role("button", name=re.compile("대본 SRT"))).to_be_visible()
+
+    # The stream: downloaded to runtime/audio, recognised, deleted.
+    page.get_by_role("tab", name="대본").click()
+    panel.get_by_role("button", name="다시 인식").click()
+    job = page.locator(".job")
+    expect(job).to_contain_text(re.compile("방송 음성 받기|방송 내용 인식"), timeout=10_000)
+    expect(job).to_contain_text(re.compile(r"발언 \d+건을 인식했습니다"), timeout=30_000)
+    expect(panel).to_contain_text("이 컴퓨터에서 인식", timeout=10_000)
+    expect(panel).to_contain_text("발언 40건")
+    assert not RUNTIME_AUDIO.exists() or not any(RUNTIME_AUDIO.iterdir()), list(RUNTIME_AUDIO.iterdir())
+    page.screenshot(path=str(SHOTS / "stream-transcript.png"))
+
+    # A file that is not a caption is refused with a reason, and the transcript stays.
+    page.get_by_text("자막 파일로 바꾸기").click()
+    form = panel.get_by_role("form", name="자막 파일 넣기")
+    form.get_by_label("자막 파일 (SRT·VTT)").set_input_files(
+        {"name": "note.srt", "mimeType": "text/plain", "buffer": "그냥 메모입니다\n".encode()}
+    )
+    form.get_by_role("button", name="자막 넣기").click()
+    expect(form.get_by_role("alert")).to_contain_text("SRT 또는 WebVTT 자막 파일이 아닙니다")
+    expect(panel).to_contain_text("발언 40건")
+
+
+# The rejected non-caption file answers 400 on purpose.
+test_caption_file_then_stream_audio_on_a_vod.allow_console = ["status of 400"]

@@ -8,15 +8,17 @@ import (
 )
 
 type settingsJSON struct {
-	AIProvider      string            `json:"aiProvider"`
-	AIModels        map[string]string `json:"aiModels"`
-	AIEndpoints     map[string]string `json:"aiEndpoints"`
-	Sensitive       bool              `json:"sensitive"`
-	IncludeComments bool              `json:"includeComments"`
-	ViewerAdaptive  bool              `json:"viewerAdaptive"`
-	File            string            `json:"file"`
-	KeyFile         string            `json:"keyFile"`
-	AIProviderAuto  bool              `json:"aiProviderAuto"`
+	AIProvider      string                       `json:"aiProvider"`
+	AIModels        map[string]string            `json:"aiModels"`
+	AIEndpoints     map[string]string            `json:"aiEndpoints"`
+	Sensitive       bool                         `json:"sensitive"`
+	IncludeComments bool                         `json:"includeComments"`
+	ViewerAdaptive  bool                         `json:"viewerAdaptive"`
+	ASREngine       string                       `json:"asrEngine"`
+	ASRPaths        map[string]map[string]string `json:"asrPaths"`
+	File            string                       `json:"file"`
+	KeyFile         string                       `json:"keyFile"`
+	AIProviderAuto  bool                         `json:"aiProviderAuto"`
 }
 
 func toSettingsJSON(s app.SettingsInfo) settingsJSON {
@@ -27,9 +29,13 @@ func toSettingsJSON(s app.SettingsInfo) settingsJSON {
 	if endpoints == nil {
 		endpoints = map[string]string{}
 	}
+	paths := s.ASRPaths
+	if paths == nil {
+		paths = map[string]map[string]string{}
+	}
 	return settingsJSON{AIProvider: s.AIProvider, AIModels: models, AIEndpoints: endpoints, Sensitive: s.Sensitive,
-		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, File: s.File, KeyFile: s.KeyFile,
-		AIProviderAuto: s.AIProviderAuto}
+		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, ASREngine: s.ASREngine, ASRPaths: paths,
+		File: s.File, KeyFile: s.KeyFile, AIProviderAuto: s.AIProviderAuto}
 }
 
 // settings returns the defaults the screens start from (nothing secret).
@@ -40,12 +46,14 @@ func (h *handler) settings(w http.ResponseWriter, r *http.Request) {
 // saveSettings replaces every default at once, so each one must be given.
 func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		AIProvider      *string           `json:"aiProvider"`
-		AIModels        map[string]string `json:"aiModels"`
-		AIEndpoints     map[string]string `json:"aiEndpoints"`
-		Sensitive       *bool             `json:"sensitive"`
-		IncludeComments *bool             `json:"includeComments"`
-		ViewerAdaptive  *bool             `json:"viewerAdaptive"`
+		AIProvider      *string                      `json:"aiProvider"`
+		AIModels        map[string]string            `json:"aiModels"`
+		AIEndpoints     map[string]string            `json:"aiEndpoints"`
+		Sensitive       *bool                        `json:"sensitive"`
+		IncludeComments *bool                        `json:"includeComments"`
+		ViewerAdaptive  *bool                        `json:"viewerAdaptive"`
+		ASREngine       string                       `json:"asrEngine"`
+		ASRPaths        map[string]map[string]string `json:"asrPaths"`
 	}
 	if !readBody(w, r, &body) {
 		return
@@ -55,7 +63,8 @@ func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, err := h.cfg.Core.SaveSettings(app.Settings{AIProvider: *body.AIProvider, AIModels: body.AIModels, AIEndpoints: body.AIEndpoints,
-		Sensitive: *body.Sensitive, IncludeComments: *body.IncludeComments, ViewerAdaptive: *body.ViewerAdaptive})
+		Sensitive: *body.Sensitive, IncludeComments: *body.IncludeComments, ViewerAdaptive: *body.ViewerAdaptive,
+		ASREngine: body.ASREngine, ASRPaths: body.ASRPaths})
 	if err != nil {
 		writeAppError(w, err)
 		return

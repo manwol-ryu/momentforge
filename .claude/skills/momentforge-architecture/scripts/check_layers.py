@@ -31,7 +31,7 @@ ALLOWED: dict[str, tuple[str, ...] | None] = {
     "internal/mcp": ("internal/app", "internal/domain"),
     "internal/app": (
         "internal/platform", "internal/detect", "internal/store", "internal/ai", "internal/ai/cut",
-        "internal/asr", "internal/backup",
+        "internal/asr", "internal/asr/caption", "internal/backup",  # caption은 엔진이 아니라 자막 파일 변환 라이브러리
         "internal/export", "internal/events", "internal/privacy", "internal/domain",
     ),
     "internal/platform": ("internal/domain",),

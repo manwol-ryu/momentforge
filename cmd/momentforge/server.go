@@ -25,6 +25,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/app"
 	"github.com/manwol-ryu/momentforge/internal/asr"
 	"github.com/manwol-ryu/momentforge/internal/asr/applespeech"
+	"github.com/manwol-ryu/momentforge/internal/asr/whisper"
 	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/detect/rules"
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -192,14 +193,17 @@ func registerAI(override []ai.Provider) *ai.Registry {
 }
 
 // registerASR registers the speech recognition engines: macOS's own first
-// (through the embedded helper), then whatever a build-tagged file adds.
+// (through the embedded helper), then whisper.cpp (a program the user
+// installs and names in the settings), after whatever a build-tagged file adds.
 func registerASR(dataDir, version string) *asr.Registry {
 	r := &asr.Registry{}
 	// Build-tagged engines first: the E2E binary's fake must win over the real one, which is ready on any Mac.
 	r.Register(extraASR...)
+	runtimeDir := filepath.Join(dataDir, "runtime")
 	if len(speechHelper) > 0 {
-		r.Register(applespeech.New(speechHelper, filepath.Join(dataDir, "runtime"), version))
+		r.Register(applespeech.New(speechHelper, runtimeDir, version))
 	}
+	r.Register(whisper.New(runtimeDir))
 	return r
 }
 

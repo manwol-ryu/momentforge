@@ -58,7 +58,7 @@ export class ApiError extends Error {
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set(KEY_HEADER, accessKey());
-  if (init.body) headers.set("Content-Type", "application/json");
+  if (typeof init.body === "string") headers.set("Content-Type", "application/json");
   let res: Response;
   try {
     res = await fetch(path, { ...init, headers });
@@ -139,6 +139,14 @@ export const api = {
   asrEngines: () => getJSON<{ engines: ASREngine[] }>("/api/asr"),
   transcribe: (sessionId: string) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/transcribe`),
   transcript: (sessionId: string) => getJSON<TranscriptInfo | null>(`/api/sessions/${enc(sessionId)}/transcript`),
+  /** Stores an SRT/VTT file as the session's transcript, every time shifted by offsetMs. */
+  async importCaption(sessionId: string, file: File, offsetMs: number): Promise<TranscriptInfo> {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    form.append("offsetMs", String(Math.round(offsetMs)));
+    const res = await apiFetch(`/api/sessions/${enc(sessionId)}/transcript/file`, { method: "POST", body: form });
+    return (await res.json()) as TranscriptInfo;
+  },
   utterances: (sessionId: string, fromMs: number, toMs: number, limit = 500) =>
     getJSON<{ utterances: Utterance[] }>(`/api/sessions/${enc(sessionId)}/utterances?from=${Math.floor(fromMs)}&to=${Math.floor(toMs)}&limit=${limit}`),
   sessions: () => getJSON<Session[]>("/api/sessions"),

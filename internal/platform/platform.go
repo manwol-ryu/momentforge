@@ -229,3 +229,26 @@ func (r *Registry) MediaOrigins() []string {
 	}
 	return out
 }
+
+// AudioProgress is how far a VOD audio download has come.
+type AudioProgress struct {
+	Segments      int   // segments written
+	TotalSegments int   // segments in the playlist (0 when unknown)
+	Bytes         int64 // bytes written
+	DoneMs        int64 // broadcast time covered so far
+}
+
+// AudioFile is a downloaded audio track for local transcription.
+type AudioFile struct {
+	Path       string // dst plus the container's extension (.mp4, .ts, .aac)
+	DurationMs int64  // from the playlist
+}
+
+// AudioSource downloads the lightest rendition of a VOD's public stream
+// (audio-only when the platform offers one) into a file at dst plus an
+// extension, so it can be transcribed on this computer
+// (docs/AI-CUT-ANALYSIS.md 2.3). The file is temporary: the caller deletes
+// it after transcribing. Nothing is stored or played from it.
+type AudioSource interface {
+	VODAudio(ctx context.Context, t Target, dst string, progress func(AudioProgress)) (AudioFile, error)
+}

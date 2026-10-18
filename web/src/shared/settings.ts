@@ -10,6 +10,8 @@ export const builtInSettings: Settings = {
   sensitive: false,
   includeComments: true,
   viewerAdaptive: true,
+  asrEngine: "",
+  asrPaths: {},
 };
 
 /** The saved defaults (the data folder's settings.env). */

@@ -13,6 +13,7 @@ import (
 	"github.com/manwol-ryu/momentforge/internal/backup"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/export"
+	"github.com/manwol-ryu/momentforge/internal/platform"
 	"github.com/manwol-ryu/momentforge/internal/privacy"
 	"github.com/manwol-ryu/momentforge/internal/store"
 )
@@ -234,8 +235,16 @@ func backupEvents(salt []byte, records []backup.Record) []domain.ChatEvent {
 	return out
 }
 
-// defaultASR is the first registered engine that is ready, if any.
+// defaultASR is the engine the settings name when it is ready, else the
+// first registered engine that is ready, if any.
 func (a *App) defaultASR(ctx context.Context) asr.Engine {
+	if id := a.Settings().ASREngine; id != "" {
+		if e, ok := a.cfg.ASR.Get(id); ok {
+			if ready, _ := e.Ready(ctx); ready {
+				return e
+			}
+		}
+	}
 	for _, e := range a.cfg.ASR.All() {
 		if ok, _ := e.Ready(ctx); ok {
 			return e
@@ -246,49 +255,90 @@ func (a *App) defaultASR(ctx context.Context) asr.Engine {
 
 // ASREngineView is one speech recognition engine's state for the screen.
 type ASREngineView struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Ready bool   `json:"ready"`
-	How   string `json:"how,omitempty"` // what to do when it is not ready, or a note when it is
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Ready    bool          `json:"ready"`
+	How      string        `json:"how,omitempty"` // what to do when it is not ready, or a note when it is
+	Default  bool          `json:"default"`       // the engine a transcription would use now
+	Settings []asr.Setting `json:"settings,omitempty"`
 }
 
 // ASREngines lists the engines in registration order.
 func (a *App) ASREngines(ctx context.Context) []ASREngineView {
 	out := []ASREngineView{}
+	def := a.defaultASR(ctx)
 	for _, e := range a.cfg.ASR.All() {
 		ok, how := e.Ready(ctx)
-		out = append(out, ASREngineView{ID: e.ID(), Name: e.Name(), Ready: ok, How: how})
+		v := ASREngineView{ID: e.ID(), Name: e.Name(), Ready: ok, How: how, Default: def != nil && def.ID() == e.ID()}
+		if c, can := e.(asr.Configurable); can {
+			v.Settings = c.Settings()
+		}
+		out = append(out, v)
 	}
 	return out
 }
 
-// StartTranscribe runs speech recognition on a session's audio (its media
-// reference) in the background, replacing an earlier transcript.
+// StartTranscribe runs speech recognition on a session's audio in the
+// background, replacing an earlier transcript. The audio is the session's
+// media file (an imported backup) or, for a VOD whose platform can serve
+// its stream, the lightest rendition downloaded to a temporary file that is
+// deleted afterwards (docs/AI-CUT-ANALYSIS.md 2.3).
 func (a *App) StartTranscribe(ctx context.Context, sid string) (JobStatus, error) {
 	s, err := a.cfg.Store.Session(ctx, sid)
 	if err != nil {
 		return JobStatus{}, err
 	}
-	refs, err := a.cfg.Store.MediaRefs(ctx, sid)
+	path, stream, err := a.transcribeSource(ctx, s)
 	if err != nil {
 		return JobStatus{}, err
-	}
-	path := ""
-	for _, m := range refs {
-		if m.Kind == "audio" || (m.Kind == "video" && path == "") {
-			path = m.Path
-		}
-	}
-	if path == "" {
-		return JobStatus{}, domain.NewUserError("INPUT", "이 작업에는 연결된 음성·영상 파일이 없어 전사할 수 없습니다.")
 	}
 	if a.defaultASR(ctx) == nil {
 		return JobStatus{}, domain.NewUserError("ASR", "쓸 수 있는 음성 인식 엔진이 없습니다. 설정의 음성 인식 상태를 확인하세요.")
 	}
 	return a.jobs.start(a.ctx, "transcribe", func(ctx context.Context, h job) error {
 		h.update(func(js *JobStatus) { js.SessionID, js.Title, js.DurationMs = s.ID, s.Title, s.DurationMs })
+		if stream != nil {
+			return a.transcribeStream(ctx, h, s, stream)
+		}
 		return a.transcribe(ctx, h, s.ID, path)
 	})
+}
+
+// transcribeSource is where a session's audio comes from: a media file
+// path, or the platform that streams it. Neither is a user error.
+func (a *App) transcribeSource(ctx context.Context, s store.Session) (path string, stream platform.AudioSource, err error) {
+	refs, err := a.cfg.Store.MediaRefs(ctx, s.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, m := range refs {
+		if m.Kind == "audio" || (m.Kind == "video" && path == "") {
+			path = m.Path
+		}
+	}
+	if path != "" {
+		return path, nil, nil
+	}
+	if src := a.audioSource(s); src != nil {
+		return "", src, nil
+	}
+	return "", nil, domain.NewUserError("INPUT", "이 작업에는 연결된 음성·영상 파일이 없고, 플랫폼에서 음성을 받을 수도 없어 전사할 수 없습니다. 자막 파일(SRT·VTT)을 넣을 수는 있습니다.")
+}
+
+// audioSource is the platform that can stream this VOD's audio, or nil.
+func (a *App) audioSource(s store.Session) platform.AudioSource {
+	if s.Kind == string(platform.KindLive) || IsDemo(s) {
+		return nil
+	}
+	p, ok := a.cfg.Platforms.Get(s.Platform)
+	if !ok {
+		return nil
+	}
+	src, can := p.(platform.AudioSource)
+	if !can {
+		return nil
+	}
+	return src
 }
 
 // transcribe runs the default engine on the file and stores the result.
@@ -317,18 +367,30 @@ func (a *App) transcribe(ctx context.Context, h job, sid, path string) error {
 	if len(utts) == 0 {
 		return domain.NewUserError("ASR", "인식된 발언이 없습니다. 음성 파일에 소리가 있는지 확인하세요.")
 	}
-	t, err := a.cfg.Store.SaveTranscript(ctx, store.Transcript{SessionID: sid, Source: "asr", Engine: engine.ID(), Model: "system",
-		Coverage: asr.Coverage(utts, 30000)}, utts)
-	if err != nil {
+	model := "system"
+	if m, ok := engine.(asr.ModelNamer); ok && m.Model() != "" {
+		model = m.Model()
+	}
+	if err := a.saveTranscript(ctx, sid, store.Transcript{SessionID: sid, Source: "asr", Engine: engine.ID(), Model: model}, utts); err != nil {
 		return err
 	}
-	if err := export.WriteTranscript(filepath.Join(a.exportDir(sid), "transcript"), t.ID, utts); err != nil {
-		a.logError("write transcript", err)
-	}
-	a.writeUnified(context.WithoutCancel(ctx), sid)
 	h.update(func(s *JobStatus) {
 		s.Utterances, s.Message = len(utts), fmt.Sprintf("발언 %d건을 인식했습니다.", len(utts))
 	})
+	return nil
+}
+
+// saveTranscript stores a transcript, writes its caption files and refreshes the unified timeline.
+func (a *App) saveTranscript(ctx context.Context, sid string, t store.Transcript, utts []domain.Utterance) error {
+	t.Coverage = asr.Coverage(utts, 30000)
+	saved, err := a.cfg.Store.SaveTranscript(ctx, t, utts)
+	if err != nil {
+		return err
+	}
+	if err := export.WriteTranscript(filepath.Join(a.exportDir(sid), "transcript"), saved.ID, utts); err != nil {
+		a.logError("write transcript", err)
+	}
+	a.writeUnified(context.WithoutCancel(ctx), sid)
 	return nil
 }
 
@@ -389,13 +451,18 @@ func (a *App) MediaFile(ctx context.Context, sid, kind string) (string, error) {
 }
 
 // hasVideoFile says whether a session has a video file to play from.
-func (a *App) hasVideoFile(sid string) bool {
+func (a *App) hasVideoFile(sid string) bool { return a.hasMediaKind(sid, "video") }
+
+// hasMediaFile says whether a session has any media file to transcribe.
+func (a *App) hasMediaFile(sid string) bool { return a.hasMediaKind(sid, "") }
+
+func (a *App) hasMediaKind(sid, kind string) bool {
 	refs, err := a.cfg.Store.MediaRefs(context.Background(), sid)
 	if err != nil {
 		return false
 	}
 	for _, m := range refs {
-		if m.Kind == "video" {
+		if kind == "" || m.Kind == kind {
 			return true
 		}
 	}

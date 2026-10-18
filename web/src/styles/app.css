@@ -1105,6 +1105,11 @@ textarea {
   min-width: 0;
 }
 
+/* A frame's tab list scrolls sideways on a phone instead of widening the page. */
+.start-main > * {
+  min-width: 0;
+}
+
 .start-tabs .tab-list {
   display: inline-flex;
   max-width: 100%;
@@ -1199,6 +1204,38 @@ textarea {
 
 .start-side .actions {
   margin-top: var(--space-3);
+}
+
+/* A caption file as the transcript: the file, its offset and the action, under a fold. */
+.caption-form {
+  margin-top: var(--space-3, 12px);
+}
+.caption-fields {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+.caption-fields input[type="number"] {
+  max-width: 10rem;
+}
+
+/* Settings → 방송 내용 인식: the engines as cards like the AI providers. */
+.engines {
+  list-style: none;
+  margin: var(--space-3, 12px) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3, 12px);
+}
+.engine-default {
+  font-weight: 400;
+  color: var(--muted);
+}
+.engine-how {
+  margin: 0;
+}
+.engine-setting {
+  display: grid;
+  gap: var(--space-1, 4px);
 }
 
 /* The transcript tab: a search box, a ten-minute pager, and lines like the chat log. */

@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -63,6 +64,7 @@ type Core interface {
 	ASREngines(ctx context.Context) []app.ASREngineView
 	Transcript(ctx context.Context, sid string) (app.TranscriptView, bool, error)
 	Utterances(ctx context.Context, sid string, from, to int64, limit int) ([]domain.Utterance, error)
+	ImportCaption(ctx context.Context, sid, name string, r io.Reader, offsetMs int64) (app.TranscriptView, error)
 	MediaFile(ctx context.Context, sid, kind string) (string, error)
 	CutPlan(ctx context.Context, id string) (app.CutPlanView, json.RawMessage, error)
 	CompareAI(ctx context.Context, idA, idB string) (*app.AIComparison, error)
@@ -158,6 +160,7 @@ func (h *handler) apiRoutes(r chi.Router) {
 			r.Get("/cuts", h.cutPlans)
 			r.Post("/transcribe", h.transcribe)
 			r.Get("/transcript", h.transcript)
+			r.Post("/transcript/file", h.importCaption)
 			r.Get("/utterances", h.utterances)
 			r.Get("/files/*", h.download)
 		})

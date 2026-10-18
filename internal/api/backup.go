@@ -74,6 +74,36 @@ func (h *handler) transcript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
+// importCaption stores an uploaded SRT/WebVTT file as the session's
+// transcript: multipart form with "file" and an optional "offsetMs".
+func (h *handler) importCaption(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, app.CaptionMaxBytes+1<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "INPUT", "자막 파일을 받지 못했습니다. 64MB 이하의 SRT·VTT 파일을 골라 주세요.")
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	f, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INPUT", "자막 파일을 골라 주세요.")
+		return
+	}
+	defer f.Close()
+	var offset int64
+	if v := strings.TrimSpace(r.FormValue("offsetMs")); v != "" {
+		if offset, err = strconv.ParseInt(v, 10, 64); err != nil {
+			writeError(w, http.StatusBadRequest, "INPUT", "시간 오프셋은 밀리초 정수로 적어 주세요.")
+			return
+		}
+	}
+	v, err := h.cfg.Core.ImportCaption(r.Context(), chi.URLParam(r, "id"), header.Filename, f, offset)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
 type utteranceJSON struct {
 	ID      string `json:"id"`
 	StartMs int64  `json:"startMs"`

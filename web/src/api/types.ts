@@ -19,7 +19,17 @@ export interface ServerEvent<T = unknown> {
   data?: T;
 }
 
-export type JobPhase = "starting" | "checking" | "collecting" | "analyzing" | "comments" | "transcribing" | "done" | "paused" | "error";
+export type JobPhase =
+  | "starting"
+  | "checking"
+  | "collecting"
+  | "analyzing"
+  | "comments"
+  | "downloading"
+  | "transcribing"
+  | "done"
+  | "paused"
+  | "error";
 
 export interface JobStatus {
   id: string;
@@ -71,6 +81,12 @@ export interface Session {
   canPlay: boolean;
   canReadComments: boolean;
   watchUrl?: string;
+  /**
+   * Where speech recognition would read the audio from: "media" (a file this
+   * session points at), "stream" (the platform's public stream, downloaded
+   * for the transcription and deleted) or absent (a caption file can still be added).
+   */
+  transcribeSource?: "media" | "stream";
 }
 
 export interface DetectWindow {
@@ -125,6 +141,18 @@ export interface ASREngine {
   name: string;
   ready: boolean;
   how?: string;
+  /** The engine a transcription would use now. */
+  default: boolean;
+  /** Paths the engine takes from the settings (whisper.cpp: its program and model file). */
+  settings?: ASRSetting[];
+}
+
+export interface ASRSetting {
+  key: string;
+  label: string;
+  help?: string;
+  placeholder?: string;
+  value: string;
 }
 
 /** One recorded broadcast in a NAS backup folder. */
@@ -412,6 +440,10 @@ export interface Settings {
   sensitive: boolean;
   includeComments: boolean;
   viewerAdaptive: boolean;
+  /** Speech recognition engine a transcription uses when ready; "" for the first ready one. */
+  asrEngine: string;
+  /** Engine ID → setting key → path, for engines that take paths. */
+  asrPaths: Record<string, Record<string, string>>;
 }
 
 export interface SettingsInfo extends Settings {

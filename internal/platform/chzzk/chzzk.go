@@ -41,6 +41,7 @@ var (
 type Chzzk struct {
 	base     string
 	http     *platform.HTTPClient
+	cdn      *platform.HTTPClient // media segments for VODAudio (audio.go)
 	comments commentEndpoint
 	live     liveEndpoints
 }
@@ -89,6 +90,7 @@ func New(opts ...Option) *Chzzk {
 		base:     apiBase,
 		live:     defaultLive(),
 		http:     client(apiHost),
+		cdn:      newCDNClient(),
 		comments: commentEndpoint{base: commentBase, http: client(commentHost)},
 	}
 	for _, o := range opts {

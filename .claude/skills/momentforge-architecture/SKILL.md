@@ -43,7 +43,7 @@ Go 모듈 경로는 `github.com/manwol-ryu/momentforge`입니다. 패키지는 �
 | `cmd/momentforge` | 모두 (구현체 등록·조립만 담당) |
 | `internal/api` | `app`, `events`, `domain` |
 | `internal/mcp` | `app`, `domain` |
-| `internal/app` | `platform`, `detect`, `store`, `ai`, `ai/cut`, `asr`, `backup`, `export`, `events`, `privacy`, `domain` (각 패키지의 루트만; `ai/cut`은 제공자가 아니라 컷 분석의 지시문·검증 라이브러리라 예외) |
+| `internal/app` | `platform`, `detect`, `store`, `ai`, `ai/cut`, `asr`, `asr/caption`, `backup`, `export`, `events`, `privacy`, `domain` (각 패키지의 루트만; `ai/cut`은 제공자가 아니라 컷 분석의 지시문·검증 라이브러리, `asr/caption`은 엔진이 아니라 자막 파일(SRT·VTT) 변환 라이브러리라 예외) |
 | `internal/platform` | `domain` |
 | `internal/platform/<플랫폼>` | `platform`, `domain` |
 | `internal/detect` | `domain` |

@@ -127,6 +127,7 @@ type sessionJSON struct {
 	CanPlay            bool      `json:"canPlay"`
 	CanReadComments    bool      `json:"canReadComments"`
 	WatchURL           string    `json:"watchUrl,omitempty"`
+	TranscribeSource   string    `json:"transcribeSource,omitempty"`
 }
 
 func toSessionJSON(s app.SessionInfo) sessionJSON {
@@ -136,7 +137,7 @@ func toSessionJSON(s app.SessionInfo) sessionJSON {
 		Cursor: s.Cursor, Pages: s.Pages, ChatCount: s.ChatCount, ErrorCode: s.ErrorCode,
 		ErrorMessage: s.ErrorMessage, LatestAnalysisID: s.LatestAnalysisID, CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt, IsDemo: s.IsDemo, CanResume: s.CanResume, CanPlay: s.CanPlay, CanReadComments: s.CanReadComments,
-		WatchURL: s.WatchURL,
+		WatchURL: s.WatchURL, TranscribeSource: s.TranscribeSource,
 	}
 }
 

@@ -38,6 +38,11 @@ type SessionInfo struct {
 	CanPlay            bool // the platform can stream it (a LIVE capture: the channel's current broadcast) in the app
 	CanReadComments    bool // the platform can read the video's comments
 	WatchURL           string
+	// TranscribeSource says where speech recognition would read the audio
+	// from: "media" (a file this session points at), "stream" (the
+	// platform's public stream, downloaded for the transcription and then
+	// deleted) or "" (none; a caption file can still be added).
+	TranscribeSource string
 }
 
 func (a *App) info(s store.Session) SessionInfo {
@@ -60,6 +65,9 @@ func (a *App) info(s store.Session) SessionInfo {
 			_, comments := p.(platform.CommentSource)
 			out.CanResume = vod && (s.State == store.StatePaused || s.State == store.StateCommentsOnly)
 			out.CanPlay, out.CanReadComments = play, comments
+			if _, audio := p.(platform.AudioSource); audio {
+				out.TranscribeSource = "stream"
+			}
 		}
 		if link := a.linker(s); link != nil {
 			out.WatchURL = link(0)
@@ -69,6 +77,9 @@ func (a *App) info(s store.Session) SessionInfo {
 	} else if s.Platform == backupPlatform {
 		out.PlatformName = "NAS 백업"
 		out.CanPlay = a.hasVideoFile(s.ID)
+	}
+	if a.hasMediaFile(s.ID) {
+		out.TranscribeSource = "media"
 	}
 	return out
 }

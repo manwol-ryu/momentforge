@@ -168,3 +168,43 @@ def test_settings_on_a_phone_and_in_dark_mode(page: Page, base_url: str) -> None
     bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
     assert bg == "rgb(28, 28, 28)", bg
     full_shot(page, "settings-dark.png")
+
+
+def test_settings_show_speech_engines_and_keep_whisper_paths(page: Page, base_url: str) -> None:
+    """The 방송 내용 인식 tab lists every engine with its state; whisper.cpp's
+    paths are kept in settings.env and its state says what is still missing."""
+    open_settings(page, base_url)
+    page.get_by_role("tab", name="방송 내용 인식").click()
+    engines = page.get_by_role("list", name="음성 인식 엔진")
+    fake = engines.locator("section[data-engine='e2efake']")
+    whisper = engines.locator("section[data-engine='whispercpp']")
+    expect(fake.locator(".provider-state")).to_have_text("준비됨")
+    expect(fake).to_contain_text("지금 쓰는 엔진")
+    expect(whisper.locator(".provider-state")).to_have_text("준비 안 됨")
+    expect(whisper).to_contain_text("whisper-cli 실행파일 경로를 적어 주세요")
+    expect(page.get_by_role("radio", name="자동")).to_be_checked()
+    expect(page.get_by_text(re.compile("자동: 지금은 준비된 첫 엔진인 E2E 가짜 음성 인식"))).to_be_visible()
+    full_shot(page, "settings-asr.png")
+
+    whisper.get_by_label("whisper-cli 실행파일").fill("/nonexistent/momentforge-e2e/whisper-cli")
+    whisper.get_by_label("모델 파일(.bin)").fill("/nonexistent/momentforge-e2e/ggml-large-v3-turbo-q5_0.bin")
+    page.get_by_role("radio", name="whisper.cpp (whisper-cli)").check()
+    save_defaults(page)
+    saved = (DATA / "settings.env").read_text()
+    for line in ["ASR_ENGINE=whispercpp", "ASR_WHISPERCPP_BIN=/nonexistent/momentforge-e2e/whisper-cli",
+                 "ASR_WHISPERCPP_MODEL=/nonexistent/momentforge-e2e/ggml-large-v3-turbo-q5_0.bin"]:
+        assert line + "\n" in saved, saved
+    # Saving re-checks the engines: the program is still missing, so the fake stays the one in use.
+    expect(whisper).to_contain_text("whisper-cli를 찾지 못했습니다: /nonexistent/momentforge-e2e/whisper-cli")
+    expect(fake).to_contain_text("지금 쓰는 엔진")
+
+    # Back to the defaults for later tests.
+    open_settings(page, base_url)
+    page.get_by_role("tab", name="방송 내용 인식").click()
+    whisper = page.get_by_role("list", name="음성 인식 엔진").locator("section[data-engine='whispercpp']")
+    expect(whisper.get_by_label("whisper-cli 실행파일")).to_have_value("/nonexistent/momentforge-e2e/whisper-cli")
+    whisper.get_by_label("whisper-cli 실행파일").fill("")
+    whisper.get_by_label("모델 파일(.bin)").fill("")
+    page.get_by_role("radio", name="자동").check()
+    save_defaults(page)
+    assert "ASR_" not in (DATA / "settings.env").read_text()

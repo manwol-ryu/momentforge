@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
+	"github.com/manwol-ryu/momentforge/internal/asr"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
 
@@ -25,6 +26,8 @@ const (
 	envAIProvider       = "AI_PROVIDER"
 	envAIModelPrefix    = "AI_MODEL_"
 	envAIEndpointPrefix = "AI_ENDPOINT_"
+	envASREngine        = "ASR_ENGINE"
+	envASRPrefix        = "ASR_" // + engine + "_" + setting key, for Configurable engines' paths
 	envSensitive        = "COLLECT_SENSITIVE"
 	envIncludeComments  = "COLLECT_COMMENTS"
 	envViewerAdaptive   = "LIVE_VIEWER_ADAPTIVE"
@@ -50,6 +53,11 @@ type Settings struct {
 	Sensitive       bool              // "항상 가장 민감하게"
 	IncludeComments bool              // a VOD collection also reads the video's comments
 	ViewerAdaptive  bool              // a LIVE capture adapts to viewer-count changes
+	// ASREngine is the speech recognition engine a transcription uses when
+	// it is ready ("" for the first ready one); ASRPaths are Configurable
+	// engines' settings (engine ID → setting key → path).
+	ASREngine string
+	ASRPaths  map[string]map[string]string
 }
 
 // SettingsInfo is Settings with the files that keep them and the keys.
@@ -99,6 +107,7 @@ func (a *App) Settings() SettingsInfo {
 	s := Settings{
 		AIModels:        map[string]string{},
 		AIEndpoints:     map[string]string{},
+		ASRPaths:        map[string]map[string]string{},
 		Sensitive:       flag(envSensitive, false),
 		IncludeComments: flag(envIncludeComments, true),
 		ViewerAdaptive:  flag(envViewerAdaptive, true),
@@ -124,7 +133,35 @@ func (a *App) Settings() SettingsInfo {
 			}
 		}
 	}
+	if id, _ := lookupEnv(raw, envASREngine); id != "" {
+		if _, ok := a.cfg.ASR.Get(id); ok {
+			s.ASREngine = id
+		}
+	}
+	for _, e := range a.cfg.ASR.All() {
+		c, ok := e.(asr.Configurable)
+		if !ok {
+			continue
+		}
+		for _, st := range c.Settings() {
+			if v, _ := lookupEnv(raw, asrEnvName(e.ID(), st.Key)); validPath(v) {
+				if s.ASRPaths[e.ID()] == nil {
+					s.ASRPaths[e.ID()] = map[string]string{}
+				}
+				s.ASRPaths[e.ID()][st.Key] = v
+			}
+		}
+	}
 	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath(), AIProviderAuto: auto}
+}
+
+func asrEnvName(engine, key string) string {
+	return envASRPrefix + envName(engine) + "_" + envName(key)
+}
+
+// validPath is a non-empty path without control characters, up to 1024 bytes.
+func validPath(p string) bool {
+	return p != "" && len(p) <= 1024 && !strings.ContainsFunc(p, unicode.IsControl)
 }
 
 // SaveSettings checks and writes the defaults to settings.env.
@@ -172,6 +209,42 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 			entries = append(entries, envEntry{envAIEndpointPrefix + envName(p.ID()), u})
 		}
 	}
+	if s.ASREngine != "" {
+		if _, ok := a.cfg.ASR.Get(s.ASREngine); !ok {
+			return SettingsInfo{}, domain.NewUserError("INPUT", "기본 음성 인식 엔진을 목록에서 골라 주세요.")
+		}
+		entries = append(entries, envEntry{envASREngine, s.ASREngine})
+	}
+	for id, values := range s.ASRPaths {
+		e, ok := a.cfg.ASR.Get(id)
+		c, can := e.(asr.Configurable)
+		if !ok || !can {
+			return SettingsInfo{}, domain.NewUserError("INPUT", "경로를 정할 수 없는 음성 인식 엔진입니다: "+id)
+		}
+		known := map[string]bool{}
+		for _, st := range c.Settings() {
+			known[st.Key] = true
+		}
+		for k, v := range values {
+			if !known[k] {
+				return SettingsInfo{}, domain.NewUserError("INPUT", e.Name()+"에 없는 설정 항목입니다: "+k)
+			}
+			if v = strings.TrimSpace(v); v != "" && !validPath(v) {
+				return SettingsInfo{}, domain.NewUserError("INPUT", e.Name()+"의 "+k+" 경로를 확인해 주세요. 줄바꿈 없이 1024자까지 쓸 수 있습니다.")
+			}
+		}
+	}
+	for _, e := range a.cfg.ASR.All() { // registration order keeps the file stable
+		c, ok := e.(asr.Configurable)
+		if !ok {
+			continue
+		}
+		for _, st := range c.Settings() {
+			if v := strings.TrimSpace(s.ASRPaths[e.ID()][st.Key]); v != "" {
+				entries = append(entries, envEntry{asrEnvName(e.ID(), st.Key), v})
+			}
+		}
+	}
 	entries = append(entries,
 		envEntry{envSensitive, strconv.FormatBool(s.Sensitive)},
 		envEntry{envIncludeComments, strconv.FormatBool(s.IncludeComments)},
@@ -188,7 +261,25 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 			"설정 파일을 쓸 수 없습니다: "+a.settingsPath()+". 데이터 폴더의 쓰기 권한을 확인하세요.", err)
 	}
 	a.applyEndpoints()
+	a.applyASRSettings()
 	return a.Settings(), nil
+}
+
+// applyASRSettings gives Configurable engines their saved paths (cleared
+// where none is saved).
+func (a *App) applyASRSettings() {
+	saved := a.Settings().ASRPaths
+	for _, e := range a.cfg.ASR.All() {
+		if c, ok := e.(asr.Configurable); ok {
+			values := saved[e.ID()]
+			if values == nil {
+				values = map[string]string{}
+			}
+			if err := c.Configure(values); err != nil {
+				slog.Warn("saved speech engine paths not used", "engine", e.ID(), "err", err)
+			}
+		}
+	}
 }
 
 // applyEndpoints points Endpointed providers at the saved addresses (the
