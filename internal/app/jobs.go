@@ -15,7 +15,7 @@ import (
 // It is published on the event bus as "job" every time it changes.
 type JobStatus struct {
 	ID              string    `json:"id"`
-	Kind            string    `json:"kind"` // "collect" | "analyze" | "comments"
+	Kind            string    `json:"kind"` // "collect" | "analyze" | "comments" | "bundle" | …
 	Busy            bool      `json:"busy"`
 	Phase           string    `json:"phase"` // checking, collecting, analyzing, done, paused, error
 	Message         string    `json:"message"`
@@ -30,6 +30,7 @@ type JobStatus struct {
 	Comments        int       `json:"comments,omitempty"`        // comments read (comments job)
 	Recommendations int       `json:"recommendations,omitempty"` // viewer recommendations found
 	Utterances      int       `json:"utterances,omitempty"`      // utterances recognised (transcribe step)
+	Bytes           int64     `json:"bytes,omitempty"`           // bytes downloaded (bundle video)
 	Warning         string    `json:"warning,omitempty"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }

@@ -362,3 +362,40 @@ func TestCutDecisionsValidateBody(t *testing.T) {
 		t.Fatalf("a note without the access key: %d", rec.Code)
 	}
 }
+
+func (f fakeCore) Bundle(_ context.Context, sid string) (app.BundleView, error) {
+	if sid != "s1" {
+		return app.BundleView{}, domain.NewUserError("NOT_FOUND", "저장된 수집 작업을 찾을 수 없습니다.")
+	}
+	return app.BundleView{Dir: "/data/backups/s1", VideoState: "none", VideoSource: "download", VideoHeight: 720, VideoOn: true}, nil
+}
+
+func (f fakeCore) StartBundle(_ context.Context, req app.BundleRequest) (app.JobStatus, error) {
+	msg := "text"
+	if req.Video {
+		msg = "video"
+	}
+	return app.JobStatus{ID: "j2", Kind: "bundle", Busy: true, SessionID: req.SessionID, Message: msg}, nil
+}
+
+func TestBundleRoutes(t *testing.T) {
+	h := newTestHandler(fakeCore{}, nil, nil)
+	hdr := map[string]string{KeyHeader: testKey}
+	if rec := request(h, "GET", "/api/sessions/s1/bundle", hdr); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), `"videoSource":"download"`) || !strings.Contains(rec.Body.String(), `"videoHeight":720`) {
+		t.Fatalf("view: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/sessions/s1/bundle", `{"video":true}`, hdr); rec.Code != 202 ||
+		!strings.Contains(rec.Body.String(), `"kind":"bundle"`) || !strings.Contains(rec.Body.String(), `"message":"video"`) {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/sessions/s1/bundle", `{"video":"yes"}`, hdr); rec.Code != 400 {
+		t.Fatalf("bad body: %d %s", rec.Code, rec.Body)
+	}
+	if rec := request(h, "GET", "/api/sessions/nope/bundle", hdr); errorCode(t, rec) != "NOT_FOUND" {
+		t.Fatalf("unknown session: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/sessions/s1/bundle", `{}`, nil); rec.Code != 403 && rec.Code != 401 {
+		t.Fatalf("without the access key: %d", rec.Code)
+	}
+}

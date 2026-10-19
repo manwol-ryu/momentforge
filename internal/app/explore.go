@@ -18,6 +18,8 @@ import (
 const (
 	exploreMaxPage  = 200
 	exploreMaxQuery = 100
+
+	exploreMaxUtterancePage = 500 // utterances are short; a transcript is read in larger pages
 )
 
 // ExploreSessions lists sessions newest first; hidden ones only when asked.
@@ -158,4 +160,54 @@ func (a *App) ChatActivity(ctx context.Context, sid string, bucketMs, fromMs, to
 		return Activity{}, err
 	}
 	return Activity{BucketMs: bucketMs, Buckets: b, Gaps: gaps}, nil
+}
+
+// UtterancePage is one page of a session's newest transcript.
+type UtterancePage struct {
+	Transcript TranscriptView
+	Utterances []domain.Utterance
+	Total      int
+}
+
+// errNoTranscript says where a transcript comes from, for a session without one.
+var errNoTranscript = domain.NewUserError("NO_TRANSCRIPT",
+	"이 세션에는 방송 발언(대본)이 없습니다. 앱의 대본 탭에서 방송 내용 인식을 실행하거나 자막 파일을 넣으면 생깁니다. 채팅은 mf_search_chats로 찾을 수 있습니다.")
+
+// SearchUtterances finds the newest transcript's utterances starting in
+// [fromMs, toMs) whose text contains query, in time order.
+func (a *App) SearchUtterances(ctx context.Context, sid, query string, fromMs, toMs int64, offset, limit int) (UtterancePage, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || utf8.RuneCountInString(query) > exploreMaxQuery {
+		return UtterancePage{}, domain.NewUserError("INPUT", "검색어를 1~100자로 입력하세요.")
+	}
+	return a.utterancePage(ctx, sid, query, fromMs, toMs, offset, limit)
+}
+
+// UtterancesInRange pages through the newest transcript's utterances starting in [fromMs, toMs).
+func (a *App) UtterancesInRange(ctx context.Context, sid string, fromMs, toMs int64, offset, limit int) (UtterancePage, error) {
+	return a.utterancePage(ctx, sid, "", fromMs, toMs, offset, limit)
+}
+
+func (a *App) utterancePage(ctx context.Context, sid, query string, fromMs, toMs int64, offset, limit int) (UtterancePage, error) {
+	if offset < 0 || limit < 1 || limit > exploreMaxUtterancePage {
+		return UtterancePage{}, domain.NewUserError("INPUT", "limit은 1~500, cursor는 이전 응답의 next_cursor를 쓰세요.")
+	}
+	if _, err := a.cfg.Store.Session(ctx, sid); err != nil {
+		return UtterancePage{}, err
+	}
+	t, ok, err := a.Transcript(ctx, sid)
+	if err != nil {
+		return UtterancePage{}, err
+	}
+	if !ok {
+		return UtterancePage{}, errNoTranscript
+	}
+	list, total, err := a.cfg.Store.UtterancePage(ctx, t.ID, query, fromMs, toMs, offset, limit)
+	if err != nil {
+		return UtterancePage{}, err
+	}
+	if list == nil {
+		list = []domain.Utterance{}
+	}
+	return UtterancePage{Transcript: t, Utterances: list, Total: total}, nil
 }

@@ -14,6 +14,9 @@ export const builtInSettings: Settings = {
   asrPaths: {},
   cutSearchRounds: 4,
   cutSearchKb: 80,
+  backupDir: "",
+  backupVideo: true,
+  backupVideoHeight: 720,
 };
 
 /** The saved defaults (the data folder's settings.env). */

@@ -136,6 +136,11 @@ func snapshot(events []domain.ChatEvent) (int64, string) {
 
 // writeChat refreshes the session's chat files from the database.
 func (a *App) writeChat(ctx context.Context, sid string) error {
+	return a.writeChatTo(ctx, sid, a.exportDir(sid))
+}
+
+// writeChatTo writes the session's chat files (manifest.json, chat.txt, chat.jsonl) into dir.
+func (a *App) writeChatTo(ctx context.Context, sid, dir string) error {
 	st := a.cfg.Store
 	s, err := st.Session(ctx, sid)
 	if err != nil {
@@ -154,7 +159,7 @@ func (a *App) writeChat(ctx context.Context, sid string) error {
 	if finished {
 		avail = s.DurationMs
 	}
-	return export.WriteChat(a.exportDir(sid), export.ChatManifest{
+	return export.WriteChat(dir, export.ChatManifest{
 		ID: s.ID, Platform: s.Platform, TargetID: s.TargetID, Title: s.Title, DurationMs: s.DurationMs,
 		ReportedDurationMs: s.ReportedDurationMs, State: s.State, Cursor: s.Cursor, Pages: s.Pages,
 		Gaps: gaps, Error: s.ErrorCode, AvailableEndMs: avail,

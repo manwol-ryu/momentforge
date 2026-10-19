@@ -203,15 +203,20 @@ func (a *App) AddCutNote(ctx context.Context, id, text, appliesTo string) (CutPl
 // writeConfirmed rewrites exports/<session>/cuts/confirmed.* from the
 // confirmed plans (removed when none is left).
 func (a *App) writeConfirmed(ctx context.Context, sid string) {
+	if err := a.writeConfirmedTo(ctx, sid, filepath.Join(a.exportDir(sid), "cuts")); err != nil {
+		a.logError("write confirmed cuts", err)
+	}
+}
+
+// writeConfirmedTo writes confirmed.edl, confirmed.csv and confirmed.editnest.json into dir.
+func (a *App) writeConfirmedTo(ctx context.Context, sid, dir string) error {
 	s, err := a.cfg.Store.Session(ctx, sid)
 	if err != nil {
-		a.logError("confirmed cuts", err)
-		return
+		return err
 	}
 	plans, err := a.cfg.Store.ConfirmedCutPlans(ctx, sid)
 	if err != nil {
-		a.logError("confirmed cuts", err)
-		return
+		return err
 	}
 	f := export.ConfirmedCutsFile{SessionID: sid, ClipName: s.Title, DurationMs: s.DurationMs}
 	if refs, err := a.cfg.Store.MediaRefs(ctx, sid); err == nil {
@@ -234,9 +239,7 @@ func (a *App) writeConfirmed(ctx context.Context, sid string) {
 		f.Cuts = append(f.Cuts, c)
 	}
 	sort.SliceStable(f.Cuts, func(i, j int) bool { return f.Cuts[i].Spans[0].StartMs < f.Cuts[j].Spans[0].StartMs })
-	if err := export.WriteConfirmedCuts(filepath.Join(a.exportDir(sid), "cuts"), f); err != nil {
-		a.logError("write confirmed cuts", err)
-	}
+	return export.WriteConfirmedCuts(dir, f)
 }
 
 // CutEvidence is a cited ref with where to watch it (absent for a plan made

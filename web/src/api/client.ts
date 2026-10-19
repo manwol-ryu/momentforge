@@ -1,6 +1,7 @@
 import type {
   ASREngine,
   BackupBroadcast,
+  BundleView,
   TranscriptInfo,
   Utterance,
   AIComparison,
@@ -149,6 +150,8 @@ export const api = {
   importBackup: (req: { path: string; transcribe: boolean; sensitive: boolean }) => postJSON<JobStatus>("/api/import/backup", req),
   asrEngines: () => getJSON<{ engines: ASREngine[] }>("/api/asr"),
   transcribe: (sessionId: string) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/transcribe`),
+  bundle: (sessionId: string) => getJSON<BundleView>(`/api/sessions/${enc(sessionId)}/bundle`),
+  startBundle: (sessionId: string, video: boolean) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/bundle`, { video }),
   transcript: (sessionId: string) => getJSON<TranscriptInfo | null>(`/api/sessions/${enc(sessionId)}/transcript`),
   /** Stores an SRT/VTT file as the session's transcript, every time shifted by offsetMs. */
   async importCaption(sessionId: string, file: File, offsetMs: number): Promise<TranscriptInfo> {

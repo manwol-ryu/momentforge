@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { JobStatus } from "../../api/types";
-import { timecode } from "../format";
+import { formatSize, timecode } from "../format";
 import { Link } from "../navigation";
 
 const phaseText: Record<string, string> = {
@@ -13,6 +13,8 @@ const phaseText: Record<string, string> = {
   comments: "영상 댓글 읽기",
   downloading: "방송 음성 받기",
   transcribing: "방송 내용 인식",
+  bundling: "백업 묶음 만들기",
+  video: "백업 묶음 영상 받기",
   done: "완료",
   paused: "중단됨",
   error: "중단됨",
@@ -22,7 +24,9 @@ const phaseText: Record<string, string> = {
 export function JobPanel({ job, showResultLink = true }: { job: JobStatus; showResultLink?: boolean }) {
   const cancel = useMutation({ mutationFn: api.cancelJob });
   if (!job.id) return null;
-  const collecting = (job.phase === "collecting" || job.phase === "downloading" || job.phase === "transcribing") && job.durationMs > 0;
+  const collecting =
+    (job.phase === "collecting" || job.phase === "downloading" || job.phase === "transcribing" || job.phase === "video") &&
+    job.durationMs > 0;
   const failed = job.phase === "error" || job.phase === "paused";
   const longForm = job.durationMs >= 3_600_000;
 
@@ -53,6 +57,8 @@ export function JobPanel({ job, showResultLink = true }: { job: JobStatus; showR
               ? `까지 인식, 발언 ${(job.utterances ?? 0).toLocaleString("ko-KR")}건`
               : job.phase === "downloading"
                 ? `까지 받음, 조각 ${job.pages}개`
+                : job.phase === "video"
+                  ? `까지 받음, 조각 ${job.pages}개, ${formatSize(job.bytes ?? 0)}`
                 : `까지 받음, 페이지 ${job.pages}개`}
           </p>
         </>

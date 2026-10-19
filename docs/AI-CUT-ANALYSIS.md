@@ -86,6 +86,8 @@ type Engine interface {
 
 확인할 것(6-D 조사 항목): 치지직 다시보기 HLS에 오디오 전용 렌디션이 있는지, 조각 컨테이너(fMP4·TS)와 엔진 입력의 호환(Apple 도우미는 AVFoundation으로 fMP4·m4a를 읽음, TS는 리먹스 필요; whisper-cli는 WAV라 도우미의 `decode` 하위 명령이나 ffmpeg가 필요). 이 확인이 끝나기 전까지 2.3절의 "받아서 바로 넘긴다"는 가정입니다.
 
+확인 결과(2026-10-19, REDESIGN.md 15절): 오디오 전용 렌디션은 없고 모든 변형이 영상+음성이며, 조각은 `EXT-X-MAP` + `.m4v`의 fMP4입니다. 첫 조각은 약 2.06초에서 시작하므로, 음성 받기도 백업 묶음 영상과 같이 조각의 `tfdt`를 첫 조각 시작만큼 당겨 파일이 0초에서 시작하게 합니다(읽는 쪽이 첫 시각을 어떻게 다루든 발언 시각이 채팅과 같은 시간축). 가장 낮은 변형(144p)의 fMP4는 Apple 도우미(AVFoundation)가 읽는 형식이지만 실제 받기·전사는 사용자와 확인 대기이고, whisper-cli 입력 변환은 남은 과제입니다.
+
 ### 2.4 소리 이벤트와 화면 인식 (로컬 가능성 확인 뒤 결정)
 
 사용자 결정: "로컬 모델로 되는지 확인해서, 되면 구현하고 안 되면 보류". 확인 순서와 기준:
@@ -122,6 +124,8 @@ type Engine interface {
 
 묶음 만들기는 작업 화면 **파일** 탭의 "백업 묶음 만들기"에서 시작하고(진행 카드, 중단·이어받기), 이미 있는 묶음은 바뀐 파일(새 컷 계획, 새 전사)만 갱신합니다. 불러오기(묶음 → 새 데이터 폴더)는 6-D 이후 과제로 두되, 형식은 처음부터 불러올 수 있게 고정 스키마와 버전을 둡니다. 영상 받기는 2.3절의 HLS 받기를 그대로 쓰며 재인코딩·자르기는 하지 않습니다(그 일은 editnest).
 
+구현(2026-10-19, 6-D): 파일 탭 **백업 묶음** 칸의 "백업 묶음 만들기"(있으면 "갱신", 영상이 멈췄으면 "영상 이어받기"). 실제 파일은 위 표와 조금 다릅니다. 기존 내보내기 형식을 그대로 쓰려고 `chat-manifest.json`(수집 상태)을 더하고, 분석은 `analysis/<분석 ID>/` 폴더, 통합 타임라인은 `timeline/`, 댓글은 `comments/`, 대본은 최신 하나를 `transcript.*`로 둡니다. 영상은 `platform.VideoSource`(`chzzk.VODVideo`)가 설정의 화질 이하 변형을 골라 초기화 조각과 모든 조각을 이어 붙이고, 조각의 `tfdt`에서 첫 조각의 시작을 빼서 **MP4 0초 = 영상 0초**로 만듭니다(`video_offset_ms = 0`, 원래 시작은 `video.json`의 `original_first_pts_ms`). 받는 동안 `video.mp4.part`와 `video.json`에 이어받을 위치(조각 수, 바이트, 트랙별 이동량, 빠진 구간)를 남기고, 끝나면 SHA-256을 재서 `video.mp4`로 바꿉니다. NAS 백업 작업은 영상을 복사하지 않고 `video.ref`만 씁니다. 다시 만들면 바뀐 파일만 옮기고, 지난 manifest에 있던 이 앱의 파일만 지웁니다. 결정은 REDESIGN.md 15절(2026-10-19)에 있습니다.
+
 ### 2.5a NAS 백업 폴더 불러오기 (2026-10-18 확인·결정)
 
 사용자의 NAS(`docker/chzzk-automation`)가 치지직 다시보기를 매일 자동 백업합니다. 2026-10-18에 `김꼬멍 new/26/10/`에서 확인한 구성은 방송 한 편당 네 파일입니다: `YY_MM_DD 제목.mp4`(원본 화질 리먹스, 예: 1080p60 H.264, 7시간 43분에 28.5GB), **`.m4a`(원본 AAC 음성만, 673MB)**, `.chat.jsonl`(한 줄에 하나: `t` 영상 기준 ms, `at` 실제 시각, `type` chat·donation·subscription·system, `status`, `uid`, `nick`, `role`, `msg`, 이모티콘 URL, 후원 `amount`·`anonymous`·`donation_type`, 구독 `months`·`tier`), `.chat.txt`(읽기용). 영상·음성 트랙은 0초에서 시작하고 채팅 `t`의 끝이 음성 길이와 같아 **시간축 보정이 필요 없습니다**(`video_offset_ms = 0`).
@@ -143,7 +147,7 @@ type Engine interface {
 - `utterances`(세션, id, start_ms, end_ms, speaker_role, text, confidence, engine, model_version, transcript_id)
 - `transcripts`(세션, id, source=`asr|file`, engine, model, created_at, audio_kept, coverage: 전사한 구간 목록)
 - `observations`(세션, id, kind=`sound|screen_text|scene_cut`, start_ms, end_ms, label, text, confidence, engine) — 2.4절이 확정되면
-- `backups`(세션, path, manifest_version, created_at, updated_at, files_json) — 백업 묶음의 위치와 상태
+- `backups`(세션, path, manifest_version, created_at, updated_at, files_json) — 백업 묶음의 위치와 상태 → 마이그레이션 `0011_backups.sql`(세션당 한 줄: path, manifest_version, video_state, files_json, bytes, created_at, updated_at)
 
 검색: `utterances.text`에 SQLite FTS5 색인(`unicode61` 토크나이저, 한국어는 공백 단위라 부분 일치 `LIKE` 검색도 함께 제공). 채팅 검색과 같은 함수 모양으로 `SearchUtterances`·`UtterancesAround`·`UtterancesBetween`.
 
@@ -369,6 +373,8 @@ type StepProvider interface {
 
 실제 방송 검증(치지직 다시보기, 실제 제공자)은 6-B·6-C·6-D 끝에 사용자와 함께 합니다.
 
+6-D 백업 묶음·MCP 대본 도구 구현 기록(2026-10-19): `internal/platform/chzzk/video.go`·`fmp4.go`(화질 선택, fMP4 이어 붙이기, `tfdt` 이동, 이어받기, 404·410 조각은 빠진 구간으로 기록, TS·끝나지 않은 재생 목록은 거절), `internal/export/bundle.go`(manifest·README·notes.md, 바뀐 파일만 옮기는 `SyncBundle`), `internal/app/bundle.go`(작업 `bundle`: 글 파일 → manifest → 영상), `internal/store/backups.go`, API `GET·POST /api/sessions/{id}/bundle`, 설정의 "백업 묶음" 탭, 화면 `BundlePanel`, MCP `mf_search_utterances`·`mf_get_transcript`(`internal/mcp/transcript.go`). 테스트: 합성 fMP4로 시각 이동·상자 제거·이어받기·빠진 조각, 가짜 영상으로 묶음 내용·salt 없음·바뀐 파일 0개·남의 파일 보존·중단 뒤 이어받기·거절된 영상, MCP 도구, E2E `test_bundle.py`.
+
 6-D 구현 기록(2026-10-18): **시각 보정**(`internal/ai/cut/resolve.go`) — 발언 시작 −0.3초·끝 +0.5초, 채팅 −6초/+3초에 그 시각이 발언 중간이면 그 발언 경계로(최대 10초), 20초 미만 간격 합침, 영상 끝 맞춤을 모두 `adjustments`에 기록. `SeekOf`(근거 버튼 시각)와 `StartOf`(구간 시작)를 나눔. `ResolveBoundaries`가 경계 후보 세 개를 모두 풀어 `boundary_decisions.resolved`에, `IndexRefs`가 인용 근거의 시각·앞부분 120자를 `refs`에 저장. 파이프라인 버전 3. **확정·메모** — 마이그레이션 `0010_cut_decisions.sql`(`user_notes_json`, `confirmed_boundary`, `confirmed_at`, 후보 묶음 색인), `store.CurrentCutPlans`는 확정본(가장 새 확정 버전)과 그보다 새 버전을 함께, 확정이 없으면 최신만. `app.ConfirmCut`(같은 후보 묶음의 다른 확정을 풀고 경계 후보 검증, 구간 없는 결과는 거절) · `AddCutNote`(500자, 계획당 20개) · 미리보기가 그 후보 묶음의 모든 버전 메모를 모아 `CutPreview.notes`로 보여 주고 지문(fingerprint)에 넣으며, 실행은 그 메모를 계획 단계 `user_notes`로 보내고 새 계획의 `notes_applied`에 남김. API `POST /api/cuts/{id}/confirm`·`/notes`, `GET /api/cuts/{id}`에 결과 상자용 `detail`. 통합 타임라인의 컷 항목에 `cut`(결과 상자 전체: 원인과 근거 시각, 경계 후보별 구간, 검수 답, 메모, `keptVersion`). **내보내기** — 확정할 때마다 `cuts/confirmed.edl·csv·editnest.json`(4.5절). editnest 참고 사본을 확인하니 "구간 받기"에는 EDL·CSV 불러오기가 없어(파일로 구간을 넣는 길은 "타임라인 메모"의 JSON 불러오기 → "구간 받기"의 "타임라인 메모에서 가져오기"뿐) 타임라인 메모 JSON을 함께 씀(REDESIGN.md 15절). **MCP** — `mf_list_cut_plans`(확정본과 새 버전 또는 모든 버전, 페이지), `mf_get_cut_plan`(원인·근거 시각과 글, 경계 후보, 검수 답·실패 이유, 메모). **화면** — 6.3절의 결과 상자, 타임라인 트랙 아래쪽의 보라 컷 띠(고른 후보의 지금 보는 경계 후보, 앞선 맥락은 옅게), "다시 분석"은 그 후보만 골라 컷 분석 미리보기. **E2E 가짜 제공자** — `full_event`가 본 장면을 읽은 범위의 마지막 근거까지 늘리고, 메모를 받으면 시작 이유를 "메모 반영: …"으로. **검증** — Go 테스트(`TestResolveSpansUsesEvidenceTimes`·`TestChatBoundariesSnapToUtterances`, 메모 → v2 · 확정본 유지 · 확정 전환·취소와 확정본 파일, API 본문 검사, MCP 두 도구), E2E `test_phase6.py`(경계 후보 전환과 타임라인 띠, 근거 버튼 이동, 검수 답, 메모, "전체"로 확정, 확정본 EDL·editnest JSON 다운로드, 다시 분석 → 메모가 미리보기와 계획 단계에 들어가 새 버전이 생기고 확정본과 EDL이 그대로). **남은 것** — 세션 백업 묶음 쓰기(2.5절), 실제 제공자로 검수 실패 이유 문장 품질 확인, editnest에서 확정본 JSON을 실제로 불러와 보기, 소리 이벤트 끝까지 늘리기(6-E 관측이 생기면).
 
 6-C 구현 기록(2026-10-18): `internal/ai/cut/search.go`(도구 이름·한도, `Budget`·`BudgetUse`, `Clamp`(기본값·상한 적용, `events`·`list_threads`는 6-E 전까지 "없음"), `Merge`(검색 근거를 `found_by_search`로 표시해 입력에 합침), `SearchResult`), `Input.searched`, 분석 지시문 v2(검색 결과 설명, 같은 요청 반복 금지, 못 찾으면 표현을 바꾸거나 activity→read_around), `Plan.searches`·`search_budget`, 파이프라인 버전 2. `internal/app/ai_tools.go`가 서버에서 실행: `search`는 발언(`store.SearchUtterances`, LIKE) 먼저 채팅(`SearchChats`) 다음, `read_around`·`read_range`는 발언 60건+채팅 200건, `activity`는 `ChatActivity`. LIVE는 미리보기 때의 seq까지만 읽음. `analyzeCandidate`가 분석 → 검색 → 분석을 예산 안에서 반복하고, 새 근거가 없으면 멈춤. **검색마다 확인**(미리보기 옵션 `confirmSearches`): 실행이 `AIRunView.pending`(후보, 단계, 찾은 발언·채팅 전체)으로 멈추고 `POST /api/ai/runs/{id}/continue {send}`로 "보내고 계속" 또는 "보내지 않고 계속"(그 근거를 입력에서 빼고 미리보기 범위로 계획, `search_budget.declined`). `sent_log`에 단계마다 `round`와 처음 보내는 `new_refs`를 기록. 예산은 설정(`AI_CUT_SEARCH_ROUNDS`·`AI_CUT_SEARCH_KB`)에서 바꾸며 0이면 검색 없음. 화면: 컷 분석 선택 시 "검색 결과를 보내기 전에 매번 확인" 체크, 미리보기 요약에 "최대 N단계·MKB", 실행 중 확인 상자(`.ai-pending`), 후보 아래 컷 상자에 "검색 N단계로 근거 M건을 더 읽음 · 이야기 시작 mm:ss". E2E: 가짜 음성 인식의 약속 발언을 1:05(첫 후보 창 밖)로 옮겨 `test_phase6b.py`가 검색 → 확인 상자 → 보내기 → 이야기 시작 01:05·setup 구간을 확인(데모는 10분이라 "20분 전" 대신 백업 픽스처 20분의 3분 30초 전 발언으로 검증). 단위 테스트: `Clamp`·`Merge`, 검색으로 기원 찾기, 확인 대기·승인·거절, 예산 0.
@@ -390,7 +396,7 @@ E2E 가짜 제공자는 결정적인 단계 응답을 내도록 확장합니다.
 - 제공자·엔진 분기 금지: `StepProvider`·`asr.Engine`은 등록과 타입 단언으로.
 - 새 마이그레이션 파일만 추가(`0007_cut_plans.sql`, `0008_transcripts.sql`, 필요 시 `0009_observations.sql`).
 - 지시문은 고정 문자열(캐시). `TestPromptIsCacheable`과 같은 검사를 단계별 지시문에도.
-- MCP에 `mf_search_utterances`·`mf_get_transcript`·`mf_list_cut_plans`·`mf_get_cut_plan` 읽기 도구 추가.
+- MCP에 `mf_search_utterances`·`mf_get_transcript`·`mf_list_cut_plans`·`mf_get_cut_plan` 읽기 도구 추가. (6-D에 모두 들어감: 발언 검색과 구간 읽기는 최신 대본만, 발언 `ref`는 `utt:<ID>`)
 - 외부 의존: Swift 도우미(Apple 프레임워크만), 선택 `whisper-cli`. Go 모듈 추가 없음(FTS5는 현재 SQLite 드라이버에서 가능한지 6-A에서 확인).
 - PRIVACY·README: 음성 받기·보관·삭제, 발언이 제공자로 나감, 로컬 인식은 외부 전송 없음.
 

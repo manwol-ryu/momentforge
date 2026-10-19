@@ -27,13 +27,15 @@ export type JobPhase =
   | "comments"
   | "downloading"
   | "transcribing"
+  | "bundling"
+  | "video"
   | "done"
   | "paused"
   | "error";
 
 export interface JobStatus {
   id: string;
-  kind: "collect" | "analyze" | "comments" | "import" | "transcribe" | "";
+  kind: "collect" | "analyze" | "comments" | "import" | "transcribe" | "bundle" | "";
   busy: boolean;
   phase: JobPhase | "";
   message: string;
@@ -50,8 +52,28 @@ export interface JobStatus {
   recommendations?: number;
   /** Utterances recognised so far (transcribe step). */
   utterances?: number;
+  /** Bytes downloaded (bundle video step). */
+  bytes?: number;
   warning?: string;
   updatedAt: string;
+}
+
+/** A session's backup bundle (docs/AI-CUT-ANALYSIS.md 2.5) and what a new one would include. */
+export interface BundleView {
+  /** Where the bundle is, or would be written. */
+  dir: string;
+  exists: boolean;
+  updatedAt?: string;
+  files: number;
+  bytes: number;
+  videoState: "complete" | "partial" | "ref" | "none";
+  /** download: the platform's public stream; ref: a NAS backup's file, only referenced; "": no video. */
+  videoSource: "download" | "ref" | "";
+  videoRef?: string;
+  /** The tallest rendition a download takes. */
+  videoHeight: number;
+  /** The settings' default for including the video. */
+  videoOn: boolean;
 }
 
 export type LiveState = "starting" | "collecting" | "reconnecting" | "stopping" | "stopped" | "ended" | "error" | "incomplete";
@@ -524,6 +546,10 @@ export interface Settings {
   /** Cut analysis: search rounds per candidate (0 = no searching) and the KB of evidence searches may add. */
   cutSearchRounds: number;
   cutSearchKb: number;
+  /** Session backup bundles: their folder ("" = the data folder's backups), whether a new one includes the video, its quality. */
+  backupDir: string;
+  backupVideo: boolean;
+  backupVideoHeight: number;
 }
 
 export interface SettingsInfo extends Settings {
@@ -533,6 +559,10 @@ export interface SettingsInfo extends Settings {
   keyFile: string;
   /** No provider is saved: aiProvider is the one this computer could use when the app started. */
   aiProviderAuto: boolean;
+  /** Qualities a bundle's video can be downloaded at. */
+  backupVideoHeights: number[];
+  /** Where bundles go when backupDir is empty. */
+  backupDefaultDir: string;
 }
 
 export interface AIModel {

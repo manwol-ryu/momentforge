@@ -164,7 +164,7 @@ func TestMCPToolsAreReadOnlyPagedAndHelpful(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"mf_list_sessions", "mf_get_session", "mf_search_chats", "mf_get_chats_around", "mf_list_candidates",
-		"mf_get_candidate_context", "mf_get_timeline", "mf_list_cut_plans", "mf_get_cut_plan"}
+		"mf_get_candidate_context", "mf_get_timeline", "mf_search_utterances", "mf_get_transcript", "mf_list_cut_plans", "mf_get_cut_plan"}
 	if len(list.Tools) != len(want) {
 		t.Fatalf("%d tools", len(list.Tools))
 	}
@@ -266,7 +266,7 @@ func TestMCPToolsAreReadOnlyPagedAndHelpful(t *testing.T) {
 		t.Fatalf("json text %q", text)
 	}
 	extra := map[string]map[string]any{"mf_search_chats": {"query": "ㅋ"}, "mf_get_chats_around": {"time": "5:00"},
-		"mf_get_candidate_context": {"candidate_id": "rule:m0001"}}
+		"mf_get_candidate_context": {"candidate_id": "rule:m0001"}, "mf_search_utterances": {"query": "벌칙"}}
 	for _, tool := range want {
 		if tool == "mf_get_cut_plan" {
 			continue // needs a plan; TestMCPCutPlanTools

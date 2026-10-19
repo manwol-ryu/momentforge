@@ -223,6 +223,11 @@ func digest(v any) string {
 }
 
 func (a *App) writeComments(c store.CommentCapture, sess store.Session, comments []store.StoredComment, recs []store.ViewerRecommendation) error {
+	return writeCommentsTo(filepath.Join(a.exportDir(sess.ID), "comments", c.ID), c, sess, comments, recs)
+}
+
+// writeCommentsTo writes a comment capture's files into dir.
+func writeCommentsTo(dir string, c store.CommentCapture, sess store.Session, comments []store.StoredComment, recs []store.ViewerRecommendation) error {
 	m := export.CommentManifest{CaptureID: c.ID, SessionID: sess.ID, VideoID: sess.TargetID, Source: c.Source, State: c.State,
 		Pages: c.Pages, Issues: c.Issues, ParserVersion: c.ParserVersion}
 	if c.ReportedCount >= 0 {
@@ -241,7 +246,7 @@ func (a *App) writeComments(c store.CommentCapture, sess store.Session, comments
 			out[i].EndMs = &recs[i].EndMs
 		}
 	}
-	return export.WriteComments(filepath.Join(a.exportDir(sess.ID), "comments", c.ID), m, rows, out)
+	return export.WriteComments(dir, m, rows, out)
 }
 
 func optional(s string) *string {

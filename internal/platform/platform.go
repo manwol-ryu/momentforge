@@ -244,6 +244,71 @@ type AudioFile struct {
 	DurationMs int64  // from the playlist
 }
 
+// VideoRequest asks for a VOD's video track.
+type VideoRequest struct {
+	// MaxHeight picks the tallest rendition at or below it (the shortest
+	// rendition when none is); 0 takes the tallest.
+	MaxHeight int
+	// Resume continues a partial file at the download path; nil starts over.
+	Resume *VideoResume
+}
+
+// VideoResume is where an interrupted video download stopped. The adapter
+// starts over when the playlist no longer matches it.
+type VideoResume struct {
+	Height        int          `json:"height"`
+	TotalSegments int          `json:"total_segments"`
+	Segments      int          `json:"segments"` // segments already in the file
+	Bytes         int64        `json:"bytes"`    // the file's length after them
+	DoneMs        int64        `json:"done_ms"`
+	Shift         []TrackShift `json:"shift"`
+	Missing       []domain.Gap `json:"missing"`
+}
+
+// TrackShift is how far a track's timestamps were moved back so the file
+// starts at 0 (in the track's timescale).
+type TrackShift struct {
+	TrackID   uint32 `json:"track_id"`
+	Timescale uint32 `json:"timescale"`
+	Ticks     uint64 `json:"ticks"`
+}
+
+// VideoRendition is the variant a video download took.
+type VideoRendition struct {
+	Width     int     `json:"width"`
+	Height    int     `json:"height"`
+	Bandwidth int64   `json:"bandwidth"`
+	Codecs    string  `json:"codecs"`
+	FrameRate float64 `json:"frame_rate"`
+}
+
+// VideoProgress is a video download's state after each segment; State is
+// enough to resume from.
+type VideoProgress struct {
+	Rendition VideoRendition
+	State     VideoResume
+}
+
+// VideoFile is a finished video download.
+type VideoFile struct {
+	Path       string
+	DurationMs int64 // from the playlist
+	Container  string
+	Rendition  VideoRendition
+	// FirstPTSMs is the stream's first presentation time before the file
+	// was rebased to start at 0 (docs/AI-CUT-ANALYSIS.md 2.5).
+	FirstPTSMs int64
+	State      VideoResume // segments, bytes, shift and missing spans of the whole file
+}
+
+// VideoSource downloads a VOD's public stream into one fragmented MP4
+// without re-encoding: the init section and every segment in order, with
+// segment timestamps moved back so the file's 0 s is the video's 0 s. It is
+// the session backup bundle's editing copy (docs/AI-CUT-ANALYSIS.md 2.5).
+type VideoSource interface {
+	VODVideo(ctx context.Context, t Target, path string, req VideoRequest, progress func(VideoProgress)) (VideoFile, error)
+}
+
 // AudioSource downloads the lightest rendition of a VOD's public stream
 // (audio-only when the platform offers one) into a file at dst plus an
 // extension, so it can be transcribed on this computer

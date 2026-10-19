@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +36,15 @@ const (
 	envViewerAdaptive   = "LIVE_VIEWER_ADAPTIVE"
 	envCutSearchRounds  = "AI_CUT_SEARCH_ROUNDS" // cut analysis: analyze rounds after the first (0 = no searching)
 	envCutSearchKB      = "AI_CUT_SEARCH_KB"     // cut analysis: text searches may add per candidate
+	envBackupDir        = "BACKUP_DIR"           // where session backup bundles go ("" = <data>/backups)
+	envBackupVideo      = "BACKUP_VIDEO"         // a new bundle includes the video by default
+	envBackupHeight     = "BACKUP_VIDEO_HEIGHT"  // the tallest video rendition a bundle downloads
 )
+
+// BackupHeights are the video qualities a bundle can download (docs/AI-CUT-ANALYSIS.md 2.5).
+var BackupHeights = []int{1080, 720, 480, 360}
+
+const defaultBackupHeight = 720
 
 var settingsHeader = []string{
 	"MomentForge 기본값. 설정 화면에서 저장하면 이 파일을 다시 씁니다.",
@@ -67,6 +76,12 @@ type Settings struct {
 	// evidence they may bring in.
 	CutSearchRounds int
 	CutSearchKB     int
+	// Session backup bundles (docs/AI-CUT-ANALYSIS.md 2.5): the folder they
+	// go in ("" for <data>/backups), whether a new bundle includes the
+	// video, and the tallest rendition it downloads.
+	BackupDir         string
+	BackupVideo       bool
+	BackupVideoHeight int
 }
 
 // SettingsInfo is Settings with the files that keep them and the keys.
@@ -74,6 +89,8 @@ type SettingsInfo struct {
 	Settings
 	File    string
 	KeyFile string
+	// BackupDefaultDir is where bundles go when BackupDir is empty.
+	BackupDefaultDir string
 	// AIProviderAuto: no provider is saved, so AIProvider is the one this
 	// computer could use when the app started.
 	AIProviderAuto bool
@@ -122,14 +139,22 @@ func (a *App) Settings() SettingsInfo {
 		return def
 	}
 	s := Settings{
-		AIModels:        map[string]string{},
-		AIEndpoints:     map[string]string{},
-		ASRPaths:        map[string]map[string]string{},
-		Sensitive:       flag(envSensitive, false),
-		IncludeComments: flag(envIncludeComments, true),
-		ViewerAdaptive:  flag(envViewerAdaptive, true),
-		CutSearchRounds: number(envCutSearchRounds, cut.DefaultSearchRounds, 0, cut.MaxSearchRounds),
-		CutSearchKB:     number(envCutSearchKB, cut.DefaultSearchKB, 0, cut.MaxSearchKB),
+		AIModels:          map[string]string{},
+		AIEndpoints:       map[string]string{},
+		ASRPaths:          map[string]map[string]string{},
+		Sensitive:         flag(envSensitive, false),
+		IncludeComments:   flag(envIncludeComments, true),
+		ViewerAdaptive:    flag(envViewerAdaptive, true),
+		CutSearchRounds:   number(envCutSearchRounds, cut.DefaultSearchRounds, 0, cut.MaxSearchRounds),
+		CutSearchKB:       number(envCutSearchKB, cut.DefaultSearchKB, 0, cut.MaxSearchKB),
+		BackupVideo:       flag(envBackupVideo, true),
+		BackupVideoHeight: number(envBackupHeight, defaultBackupHeight, 1, 4320),
+	}
+	if !slices.Contains(BackupHeights, s.BackupVideoHeight) {
+		s.BackupVideoHeight = defaultBackupHeight
+	}
+	if d, _ := lookupEnv(raw, envBackupDir); validPath(d) && filepath.IsAbs(d) {
+		s.BackupDir = d
 	}
 	if id, _ := lookupEnv(raw, envAIProvider); id != "" {
 		if _, ok := a.cfg.AI.Get(id); ok {
@@ -171,7 +196,8 @@ func (a *App) Settings() SettingsInfo {
 			}
 		}
 	}
-	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath(), AIProviderAuto: auto}
+	return SettingsInfo{Settings: s, File: a.settingsPath(), KeyFile: a.keyFilePath(), AIProviderAuto: auto,
+		BackupDefaultDir: filepath.Join(a.cfg.DataDir, "backups")}
 }
 
 func asrEnvName(engine, key string) string {
@@ -270,12 +296,26 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 	if s.CutSearchKB < 0 || s.CutSearchKB > cut.MaxSearchKB {
 		return SettingsInfo{}, domain.NewUserError("INPUT", fmt.Sprintf("컷 분석의 검색 추가 전송량은 0~%dKB 사이여야 합니다.", cut.MaxSearchKB))
 	}
+	if s.BackupDir = strings.TrimSpace(s.BackupDir); s.BackupDir != "" {
+		if !validPath(s.BackupDir) || !filepath.IsAbs(s.BackupDir) {
+			return SettingsInfo{}, domain.NewUserError("INPUT", "백업 묶음 폴더는 /로 시작하는 전체 경로로 적어 주세요. 비우면 데이터 폴더의 backups를 씁니다.")
+		}
+		entries = append(entries, envEntry{envBackupDir, filepath.Clean(s.BackupDir)})
+	}
+	if s.BackupVideoHeight == 0 {
+		s.BackupVideoHeight = defaultBackupHeight
+	}
+	if !slices.Contains(BackupHeights, s.BackupVideoHeight) {
+		return SettingsInfo{}, domain.NewUserError("INPUT", "백업 묶음의 영상 화질을 목록에서 골라 주세요.")
+	}
 	entries = append(entries,
 		envEntry{envSensitive, strconv.FormatBool(s.Sensitive)},
 		envEntry{envIncludeComments, strconv.FormatBool(s.IncludeComments)},
 		envEntry{envViewerAdaptive, strconv.FormatBool(s.ViewerAdaptive)},
 		envEntry{envCutSearchRounds, strconv.Itoa(s.CutSearchRounds)},
 		envEntry{envCutSearchKB, strconv.Itoa(s.CutSearchKB)},
+		envEntry{envBackupVideo, strconv.FormatBool(s.BackupVideo)},
+		envEntry{envBackupHeight, strconv.Itoa(s.BackupVideoHeight)},
 	)
 	a.settings.mu.Lock()
 	err := writeEnvFile(a.settingsPath(), settingsHeader, entries)

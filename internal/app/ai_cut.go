@@ -687,16 +687,21 @@ func (a *App) saveCutPlan(ctx context.Context, run store.AIRun, p cut.Plan) (sto
 }
 
 func (a *App) writeCutPlan(sid string, p cut.Plan) {
+	if err := writeCutPlanTo(filepath.Join(a.exportDir(sid), "cuts", p.ID), sid, p); err != nil {
+		a.logError("write cut plan", err)
+	}
+}
+
+// writeCutPlanTo writes a plan's plan.json, cuts.csv and cuts.edl into dir.
+func writeCutPlanTo(dir, sid string, p cut.Plan) error {
 	eff := p.EffectiveSpans()
 	spans := make([]export.CutSpan, len(eff))
 	for i, s := range eff {
 		spans[i] = export.CutSpan{Order: i + 1, StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role, StartRef: s.StartRef, EndRef: s.EndRef}
 	}
 	reasons := strings.TrimSpace(p.Boundaries.StartReason + " / " + p.Boundaries.EndReason)
-	if err := export.WriteCutPlan(filepath.Join(a.exportDir(sid), "cuts", p.ID), export.CutPlanFile{ID: p.ID, SessionID: sid,
-		State: p.State, Target: p.Reaction.Target, Reason: reasons, Spans: spans, Plan: ai.Encode(p)}); err != nil {
-		a.logError("write cut plan", err)
-	}
+	return export.WriteCutPlan(dir, export.CutPlanFile{ID: p.ID, SessionID: sid,
+		State: p.State, Target: p.Reaction.Target, Reason: reasons, Spans: spans, Plan: ai.Encode(p)})
 }
 
 // CutPlanView is a plan in lists.

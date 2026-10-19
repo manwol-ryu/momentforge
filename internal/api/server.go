@@ -62,6 +62,8 @@ type Core interface {
 	ScanBackups(ctx context.Context, dir string) ([]app.BackupView, error)
 	StartImportBackup(req app.ImportRequest) (app.JobStatus, error)
 	StartTranscribe(ctx context.Context, sid string) (app.JobStatus, error)
+	Bundle(ctx context.Context, sid string) (app.BundleView, error)
+	StartBundle(ctx context.Context, req app.BundleRequest) (app.JobStatus, error)
 	ASREngines(ctx context.Context) []app.ASREngineView
 	Transcript(ctx context.Context, sid string) (app.TranscriptView, bool, error)
 	Utterances(ctx context.Context, sid string, from, to int64, limit int) ([]domain.Utterance, error)
@@ -163,6 +165,8 @@ func (h *handler) apiRoutes(r chi.Router) {
 			r.Get("/ai/runs", h.aiRuns)
 			r.Get("/cuts", h.cutPlans)
 			r.Post("/transcribe", h.transcribe)
+			r.Get("/bundle", h.bundle)
+			r.Post("/bundle", h.startBundle)
 			r.Get("/transcript", h.transcript)
 			r.Post("/transcript/file", h.importCaption)
 			r.Get("/utterances", h.utterances)

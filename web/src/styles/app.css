@@ -558,6 +558,8 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  /* The saved-work list scrolls inside; nothing in the sidebar may lengthen the page. */
+  overflow: hidden;
   border-right: 1px solid var(--rule);
   background: color-mix(in srgb, var(--sunken) 45%, var(--paper));
 }
@@ -1769,6 +1771,8 @@ textarea {
   }
 
   .panel-tabs .tab-panel {
+    /* The containing block of the absolute pieces inside (segmented-control pills, visually hidden labels), so they scroll with it instead of lengthening the page. */
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -3088,6 +3092,17 @@ button.cut-ref:focus-visible {
 
 .files li:hover {
   background: var(--sunken);
+}
+
+/* Session backup bundle (Files tab): a folder path is long and must wrap anywhere. */
+.bundle-path {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.bundle .facts {
+  margin-block: var(--space-2);
 }
 
 .file-size {

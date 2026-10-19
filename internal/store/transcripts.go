@@ -117,3 +117,27 @@ func (s *Store) SearchUtterances(ctx context.Context, transcriptID, query string
 	defer rows.Close()
 	return scanUtterances(rows)
 }
+
+// UtterancePage pages through a transcript's utterances starting in
+// [from, to), in time order, keeping those whose text contains query when
+// it is not empty. total counts every match.
+func (s *Store) UtterancePage(ctx context.Context, transcriptID, query string, from, to int64, offset, limit int) ([]domain.Utterance, int, error) {
+	where := "transcript_id=? AND start_ms>=? AND start_ms<?"
+	args := []any{transcriptID, from, to}
+	if query != "" {
+		where += ` AND text LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(query)+"%")
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM utterances WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+utteranceColumns+" FROM utterances WHERE "+where+" ORDER BY start_ms, seq LIMIT ? OFFSET ?",
+		append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	list, err := scanUtterances(rows)
+	return list, total, err
+}

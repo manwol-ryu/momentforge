@@ -10,7 +10,7 @@ import { Tabs } from "../../shared/motion/Tabs";
 import { useDocumentTitle } from "../../shared/navigation";
 import { useSettings } from "../../shared/settings";
 
-type Section = "ai" | "asr" | "collect";
+type Section = "ai" | "asr" | "collect" | "backup";
 
 /** Only the non-empty values of a map, in a stable order (empty means "the provider's own"). */
 function filled(m: Record<string, string> | undefined): Record<string, string> {
@@ -45,6 +45,9 @@ function valuesOf(s: Settings): Settings {
     asrPaths: filledPaths(s.asrPaths),
     cutSearchRounds: s.cutSearchRounds ?? 4,
     cutSearchKb: s.cutSearchKb ?? 80,
+    backupDir: (s.backupDir ?? "").trim(),
+    backupVideo: s.backupVideo ?? true,
+    backupVideoHeight: s.backupVideoHeight || 720,
   };
 }
 
@@ -296,6 +299,53 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                   </label>
                 </fieldset>
                 <p className="field-help">새 작업의 수집 양식이 이 값으로 시작합니다. 양식에서 바꾼 값은 그 작업에만 씁니다.</p>
+              </div>
+            ),
+          },
+          {
+            id: "backup",
+            label: "백업 묶음",
+            content: (
+              <div className="settings-collect">
+                <fieldset className="settings-group">
+                  <legend className="field-label">묶음을 둘 폴더</legend>
+                  <label className="field">
+                    <span className="field-label">폴더 경로</span>
+                    <input
+                      type="text"
+                      value={draft.backupDir}
+                      onChange={(e) => change({ backupDir: e.target.value })}
+                      placeholder={saved.backupDefaultDir}
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <p className="field-help">
+                    비우면 데이터 폴더의 backups에 둡니다. NAS에 두려면 마운트한 공유 폴더의 전체 경로(예: /Volumes/공유/momentforge)를
+                    적습니다. 작업마다 이 폴더 안에 작업 ID 이름의 폴더를 만듭니다.
+                  </p>
+                </fieldset>
+                <fieldset className="settings-group">
+                  <legend className="field-label">영상</legend>
+                  <label className="check check-option">
+                    <input type="checkbox" checked={draft.backupVideo} onChange={(e) => change({ backupVideo: e.target.checked })} />
+                    <span>
+                      새 묶음에 영상 포함
+                      <span className="check-help">
+                        치지직 다시보기를 재인코딩 없이 video.mp4로 받습니다. 720p 3시간이 약 4GB입니다. NAS 백업에서 불러온 작업은 영상을
+                        복사하지 않고 경로만 적습니다.
+                      </span>
+                    </span>
+                  </label>
+                  <Segmented
+                    name="backup-height"
+                    legend="받을 화질 (이 화질 이하에서 가장 높은 것)"
+                    value={String(draft.backupVideoHeight)}
+                    onChange={(v) => change({ backupVideoHeight: Number(v) })}
+                    options={(saved.backupVideoHeights ?? [1080, 720, 480, 360]).map((h) => ({ value: String(h), label: `${h}p` }))}
+                  />
+                </fieldset>
+                <p className="field-help">작업 화면의 파일 탭에서 ‘백업 묶음 만들기’를 누르면 이 값으로 시작합니다.</p>
               </div>
             ),
           },

@@ -393,7 +393,7 @@ type JobManager interface {
 | SDK | mcp-builder는 TypeScript를 권장하지만, 단일 실행파일 유지를 위해 공식 Go SDK(`modelcontextprotocol/go-sdk`) 사용 |
 | 전송 방식 | 로컬 전용이므로 stdio |
 | 도구 범위 | **읽기 전용**만 제공. 수집 시작·삭제 같은 쓰기 도구는 제공하지 않음 (`readOnlyHint: true`) |
-| 이름 | `mf_` 접두어 + 동작: `mf_list_sessions`, `mf_get_session`, `mf_search_chats`, `mf_get_chats_around`, `mf_list_candidates`, `mf_get_candidate_context`, `mf_get_timeline`, `mf_list_cut_plans`, `mf_get_cut_plan`(6-D) |
+| 이름 | `mf_` 접두어 + 동작: `mf_list_sessions`, `mf_get_session`, `mf_search_chats`, `mf_get_chats_around`, `mf_list_candidates`, `mf_get_candidate_context`, `mf_get_timeline`, `mf_search_utterances`, `mf_get_transcript`(6-D), `mf_list_cut_plans`, `mf_get_cut_plan`(6-D) |
 | 응답 | 구조화 출력(`outputSchema`) + 사람이 읽을 텍스트. 채팅 조회는 `limit`·`cursor` 페이지네이션 필수 (긴 방송은 수만 건) |
 | 오류 | 다음 행동을 알려주는 문구 (예: "세션 ID가 없습니다. mf_list_sessions로 ID를 확인하세요") |
 | 개인정보 | 가명 작성자 키만 노출. 원문 응답(`raw_pages`)은 제공하지 않음 |
@@ -412,6 +412,8 @@ type JobManager interface {
 | `mf_get_timeline` | `bucket_seconds`(60), `start`, `end`, `limit`(100/500) | 구간별 채팅·작성자 수, 가장 많은 5구간, 공백 |
 | `mf_list_cut_plans` (6-D) | `session_id`, `all_versions`, `limit`(20/100), `cursor` | AI 컷 분석 결과: 후보마다 확정본과 그보다 새 버전(또는 모든 버전), 검수 상태, 확정 경계 후보, 반응 대상·원인, 편집 구간 |
 | `mf_get_cut_plan` (6-D) | `plan_id` | 원인 후보와 지지·반대 근거(시각·앞부분 글), 이야기 기원·사건 시작·필수 맥락, 경계 후보 3개의 구간, 결말, 검수 답·실패 이유, 미확정 질문, 사용자 메모 |
+| `mf_search_utterances` (6-D) | `session_id`, `query`(부분 일치, 1~100자), `start`, `end`, `limit`(50/200), `cursor` | 최신 대본(음성 인식·자막 파일)에서 일치 발언과 전체 수, 대본 정보. 발언 `ref`는 컷 분석 근거의 `utt:` ID와 같음. 대본이 없으면 대본 탭과 `mf_search_chats`를 안내하는 오류 |
+| `mf_get_transcript` (6-D) | `session_id`, `start`, `end`(비우면 처음~끝), `limit`(100/500), `cursor` | 구간에서 시작하는 발언을 시간순으로, 대본 출처·엔진·발언 수·전사한 구간 |
 
 평가: 데모 데이터에 붙여넣은 시청자 댓글 3개와 결정적인 가짜 AI 검토를 더한 데이터(`cmd/momentforge/mcp_test.go`의 `buildEvalData`)로 질문 10개를 만들고, `TestMCPEvalAnswers`가 도구 호출만으로 답을 다시 구해 확인합니다(`make test`에 포함). 모델로 푸는 평가는 15절 기록 참고.
 
@@ -495,6 +497,8 @@ type JobManager interface {
 | `GET /api/sessions/{id}/cuts`, `GET /api/cuts/{id}` | 컷 계획 목록, 한 계획 전체(`summary`·결과 상자용 `detail`·`plan`) | 6-A, 6-D |
 | `POST /api/cuts/{id}/confirm` `{confirmed?, boundary?}` | 컷 확정(경계 후보 short·context·full_event, 비우면 AI 선택)·취소. 같은 후보의 다른 버전 확정은 풀리고 `cuts/confirmed.*`를 다시 씀 | 6-D |
 | `POST /api/cuts/{id}/notes` `{text, appliesTo?}` | 메모 저장(500자, 계획당 20개). 다음 컷 분석의 계획 단계 `user_notes`로 들어감 | 6-D |
+| `GET /api/sessions/{id}/bundle` | 백업 묶음 상태(위치, 파일 수·크기, 영상 상태 complete·partial·ref·none)와 새로 만들 때의 영상 출처(download·ref·없음)·화질·기본 선택 | 6-D |
+| `POST /api/sessions/{id}/bundle` `{video}` | 백업 묶음 만들기·갱신(작업 `bundle`, 단계 `bundling` → `video`). 다시 누르면 멈춘 영상을 이어받음 | 6-D |
 | `POST /api/ai/key` `{provider, key, persist}` | `persist`면 키를 데이터 폴더 `.env`에도 씀. 빈 키는 메모리와 `.env`에서 지움. 응답과 `GET /api/ai`는 키 대신 `keySource`(env·file·memory)와 `keyName`만 | 설정 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
@@ -585,7 +589,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | **3. LIVE** ✅ | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** (구현 완료, 실제 확인 대기) | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
 | **5. AI 강화 (확장 1순위)** (구현 완료, 실제 확인 대기) | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
-| **6. AI 2세대: 컷 분석** (설계 확정 2026-10-17, [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md) 8절) | 6-A 근거·계획 구조 + 데모 사례 ✅(2026-10-18) → 6-B 방송 내용 인식 ✅(2026-10-18: 한국어 인식 측정, Apple 음성 인식 도우미, whisper.cpp 선택 엔진, **NAS 백업 불러오기**(m4a+chat.jsonl, 후원·구독 포함), 대본 탭, SRT·VTT 내보내기·자막 파일 넣기, 치지직 HLS 음성 받기, 설정의 엔진 상태; 실제 치지직 음성 받기는 사용자와 확인 대기) → 6-C 원인·맥락 검색 ✅(2026-10-18: 서버 실행 도구 4종+보류 2종, 설정의 예산, `sent_log`의 `new_refs`, 검색마다 확인 옵션) → 6-D 컷 결정·검수 ✅(2026-10-18: 후보 아래 결과 상자(원인 대안·근거 재생 버튼, 이야기 기원·사건 시작·필수 맥락, 경계 후보 짧게|맥락|전체 전환과 타임라인 띠, 결말·검수 답·실패 이유), 발언 경계 보정(−0.3초/+0.5초, 채팅 경계는 발언 경계로 당김)과 `adjustments` 기록, 확정·메모(`0010` 마이그레이션, 메모 → 다시 분석 = 새 버전, 확정본 유지), 확정본 내보내기 `cuts/confirmed.edl·csv·editnest.json`, MCP `mf_list_cut_plans`·`mf_get_cut_plan`; 세션 백업 묶음 쓰기는 남음) → 6-E 로컬 관측(소리·화면 글자 가능성 확인)·이야기 색인 → 6-F LIVE 잠정 컷 | claude-api, webapp-testing, skill-creator | 각 하위 단계의 완료 기준은 상세 설계 8절. 실제 다시보기 검증은 6-B·6-C·6-D 끝에 사용자와 함께 |
+| **6. AI 2세대: 컷 분석** (설계 확정 2026-10-17, [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md) 8절) | 6-A 근거·계획 구조 + 데모 사례 ✅(2026-10-18) → 6-B 방송 내용 인식 ✅(2026-10-18: 한국어 인식 측정, Apple 음성 인식 도우미, whisper.cpp 선택 엔진, **NAS 백업 불러오기**(m4a+chat.jsonl, 후원·구독 포함), 대본 탭, SRT·VTT 내보내기·자막 파일 넣기, 치지직 HLS 음성 받기, 설정의 엔진 상태; 실제 치지직 음성 받기는 사용자와 확인 대기) → 6-C 원인·맥락 검색 ✅(2026-10-18: 서버 실행 도구 4종+보류 2종, 설정의 예산, `sent_log`의 `new_refs`, 검색마다 확인 옵션) → 6-D 컷 결정·검수 ✅(2026-10-18: 후보 아래 결과 상자(원인 대안·근거 재생 버튼, 이야기 기원·사건 시작·필수 맥락, 경계 후보 짧게|맥락|전체 전환과 타임라인 띠, 결말·검수 답·실패 이유), 발언 경계 보정(−0.3초/+0.5초, 채팅 경계는 발언 경계로 당김)과 `adjustments` 기록, 확정·메모(`0010` 마이그레이션, 메모 → 다시 분석 = 새 버전, 확정본 유지), 확정본 내보내기 `cuts/confirmed.edl·csv·editnest.json`, MCP `mf_list_cut_plans`·`mf_get_cut_plan`; 세션 백업 묶음(2026-10-19: 파일 탭 "백업 묶음 만들기", 치지직 영상을 재인코딩 없이 0초 기준으로 받기·이어받기, NAS 백업은 영상 경로만, 바뀐 파일만 갱신, 설정의 폴더·영상·화질)과 MCP `mf_search_utterances`·`mf_get_transcript`; 실제 치지직 영상 받기와 editnest에서 묶음 영상 자르기는 사용자와 확인 대기) → 6-E 로컬 관측(소리·화면 글자 가능성 확인)·이야기 색인 → 6-F LIVE 잠정 컷 | claude-api, webapp-testing, skill-creator | 각 하위 단계의 완료 기준은 상세 설계 8절. 실제 다시보기 검증은 6-B·6-C·6-D 끝에 사용자와 함께 |
 | 7+. 이후 확장 | 탐지 파라미터 UI·규칙 추가 → LIVE 다채널·LIVE→VOD 연결 → 다른 플랫폼(SOOP·유튜브) | `add-detection-rule`, `add-platform` | 단계별 별도 계획 |
 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
@@ -605,6 +609,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 - [x] 저장 목록 숨김·복원 (4단계)
 - [x] 선택형 AI(미리보기 확인 후 실행) (4단계, OpenAI 응답 형식은 가짜 서버로 확인, 실제 키로 확인 대기)
 - [x] (legacy에 없던 기능) AI 컷 분석의 결과 상자·확정·메모·확정본 EDL/CSV/editnest JSON 내보내기 (6-D, 가짜 제공자로 확인, 실제 제공자·editnest 불러오기는 사용자와 확인 대기)
+- [x] (legacy에 없던 기능) 세션 백업 묶음: 영상(치지직은 재인코딩 없이 0초 기준, NAS는 경로)·채팅·대본·타임라인·분석·댓글·컷·AI 실행 기록·메모를 한 폴더로, 중단·이어받기, 바뀐 파일만 갱신 (6-D, 가짜 플랫폼·가짜 영상으로 확인, 실제 치지직 영상 받기는 사용자와 확인 대기)
 - [x] 127.0.0.1 바인딩·로컬 접근 키·Host·Origin 검사, 보안 헤더·CSP (0단계)
 - [x] 작성자 가명화 (2~3단계, 세션별 HMAC. LIVE 재전송 판별 키도 HMAC으로만 저장)
 
@@ -721,5 +726,11 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-18 | 6-B 완료 (자막 파일, 치지직 음성 받기, whisper.cpp, 설정) | 자막 파일은 `internal/asr`의 엔진이 아니라 변환 라이브러리 `internal/asr/caption`으로 두고 `app`이 직접 import하도록 구조 규칙에 예외(`ai/cut`과 같은 이유)를 추가. 음성 받기는 플랫폼 선택 인터페이스 `platform.AudioSource`로 두어 `app`은 플랫폼을 모르고, 받은 파일은 `runtime/audio/`에서 전사 뒤 항상 삭제·시작 시 폴더 비움. whisper.cpp는 자동 탐색·자동 다운로드 없이 설정의 전체 경로만 쓰고, WAV가 아니면 ffmpeg 또는 macOS `afconvert`로 변환(둘 다 없으면 WAV만 가능하다고 안내). 설정은 `ASR_ENGINE`·`ASR_<엔진>_<키>`로 `settings.env`에 저장하고 `asr.Configurable`로 엔진에 적용. 작업 단계 `downloading`을 추가. 치지직 실제 다시보기의 렌디션·컨테이너는 사용자와 함께 확인해야 함(TS 조각이면 Apple 도우미가 못 읽을 수 있음). 자세한 것은 `docs/AI-CUT-ANALYSIS.md` 8절 6-B 기록 |
 | 2026-10-18 | 6-C 검색 예산과 확인 방식 | 후보당 요청 상한을 설계 초안의 8회 대신 **기본 4단계 + 재계획 3회 + 검색 단계 수(기본 4) = 11회**로 정함(8회면 검색 뒤 재계획 여유가 없음). 검색은 같은 세션 안에서만, 발언 먼저 채팅 다음, 새 근거가 없으면 즉시 종료. 사용자 결정(5번) "상한에 한 번 동의"가 기본이고 "검색마다 확인"은 미리보기 옵션으로 두어 실행이 `pending`으로 멈추고 `continue` API로 이어짐. 예산은 `settings.env`(`AI_CUT_SEARCH_ROUNDS`·`AI_CUT_SEARCH_KB`)에서 바꿈. `events`·`list_threads`는 6-E 전까지 "없음"으로 답함 |
 | 2026-10-18 | 6-D 확정·메모·경계 보정·editnest 연결 (구현 중 정함, 사용자 확인 필요 항목 포함) | **확정**: 후보 묶음마다 확정 버전은 하나(다른 버전을 확정하면 앞 확정이 풀림). 확정할 때 고른 경계 후보(짧게·맥락·전체)를 함께 저장하고 확정본 내보내기와 타임라인 띠가 그 구간을 씀. 검수 실패 결과도 사용자가 확정할 수 있고(사용자 판단 우선), 구간이 없는 결과는 확정할 수 없음. **현재 결과 규칙**: 확정본이 있으면 확정본과 그보다 새 버전을 함께 보여 주고(새 버전에 "확정본 vN 유지"), 없으면 최신 하나. **메모**: 그 후보 묶음의 모든 버전에 남긴 메모를 모아 다음 계획 단계에 보내며, 미리보기 요약과 "보낼 내용 전체"에 메모가 보임(전송 전 확인 원칙). 메모는 DB(`ai_cut_plans.user_notes_json`)와 그 계획의 `plan.json`에만 저장. **경계 보정**: 발언 시작 −0.3초·끝 +0.5초, 채팅 시작 −6초·끝 +3초이고 그 시각이 발언 중간이면 그 발언의 경계로 옮김(최대 10초), 20초 미만 간격 합침과 영상 끝 맞춤까지 모두 `adjustments`에 기록. 근거 버튼의 시각은 발언 시작 그대로(채팅은 −6초). 파이프라인 버전 3. **editnest**: 참고 사본을 확인하니 "구간 받기" 화면에는 EDL·CSV 불러오기가 없고, "타임라인 메모"의 **JSON 불러오기** → "구간 받기"의 **타임라인 메모에서 가져오기**가 파일로 구간을 넣는 유일한 길이라 `confirmed.edl`·`confirmed.csv`(편집 프로그램용)에 더해 타임라인 메모 형식의 `confirmed.editnest.json`을 씀. editnest를 고쳐 EDL을 직접 읽게 할지는 사용자 결정 대기 |
+| 2026-10-19 | 치지직 다시보기 HLS 확인 (6-D 조사 항목. 공개 다시보기 15723059의 재생 목록과 144p 첫 조각만 읽음) | 오디오 전용 렌디션은 **없고** 1080p·720p·480p·360p·144p 변형이 모두 영상+음성(avc1+mp4a). 조각은 `EXT-X-MAP` 초기화 조각 + 2초 `.m4v`의 **fMP4**(조각마다 `styp`·`moof`·`mdat`·`emsg`, `tfhd`는 moof 기준 오프셋). timescale은 영상 3000, 음성 48000이고 첫 조각이 **약 2.06초**에서 시작. 그래서 음성 받기(2.3절)는 지금처럼 가장 낮은 변형(144p, 약 190kbps)을 받고, 영상은 초기화 조각 + 조각을 이어 붙이면 재인코딩 없이 MP4가 됨. editnest 참고 사본의 cutter는 fragmented MP4를 시험 대상에 포함함(`cutter/REPORT.md`) |
+| 2026-10-19 | 백업 묶음 영상의 시간축 (사용자 선택) | **0초로 맞춤**: 받을 때 첫 조각의 시작(가장 이른 트랙 기준, 트랙마다 자기 timescale로 환산)을 모든 조각의 `tfdt`에서 빼서 MP4 0초 = 영상 0초(`video_offset_ms = 0`, NAS 백업과 같음). 샘플은 그대로 두고 미디어가 없는 상자(`styp`·`sidx`·`emsg`·`prft`)만 뺌. 원래 시작 시각은 `video.json`의 `original_first_pts_ms`. 대안(조각 그대로 + manifest에 오프셋 약 2067ms)은 editnest에서 자를 때마다 더해야 해서 고르지 않음. 앞 조각이 빠져(404·410) 뒤 조각에서 기준을 정할 때는 그 조각의 재생 목록 시각만큼 덜 빼서 시간축을 지킴 |
+| 2026-10-19 | 백업 묶음의 영상 포함 (사용자 선택) | **선택, 기본 켬**: 파일 탭의 "영상 포함 (720p 이하)"가 설정의 기본값으로 시작. 설정의 "백업 묶음" 탭에 폴더(비우면 데이터 폴더의 `backups`, 전체 경로만), 새 묶음에 영상 포함, 화질(1080·720·480·360p, 기본 720p: 그 이하에서 가장 높은 변형). NAS 백업에서 불러온 작업은 영상을 복사하지 않고 `manifest.json`의 `video.ref`에 경로·크기·수정 시각만 |
+| 2026-10-19 | 백업 묶음 구현 (구현 중 정함) | **파일 배치**: 기존 내보내기 함수를 폴더만 바꿔 다시 써서 형식을 하나로 유지. `chat.jsonl`·`chat.txt`·`chat-manifest.json`(수집 상태), `transcript.json·srt·vtt`(최신 대본), `timeline/`, `analysis/<분석 ID>/`(2.5절 표의 `analysis/<ID>.json` 대신 기존 분석 내보내기 폴더 그대로), `comments/`(최신 댓글 수집), `cuts/<계획 ID>/`(모든 버전)와 `cuts/confirmed.*`, `ai-runs/<실행 ID>.json`(보낸 계획·`sent_log`·추천·사용량·비용, 키 없음), `notes.md`, `README.txt`, `manifest.json`(형식 `momentforge-backup` v1, 파일마다 크기·SHA-256). **갱신**: 임시 폴더에 쓴 뒤 내용이 다른 파일만 옮기고, 지난 manifest에 있던 이 앱의 파일 중 없어진 것만 지움(사용자가 넣은 파일과 묶음 밖 경로는 지우지 않음). **순서**: 글 파일을 먼저 쓰고 manifest를 남긴 뒤 영상을 받음(`video.mp4.part`와 `video.json`에 3초마다 이어받을 위치 저장, 끝나면 SHA-256을 재고 `video.mp4`로 바꿈). 작업 중단·네트워크 오류는 이어받을 수 있게 남기고, 영상을 줄 수 없다는 오류(`PLAYBACK_RESTRICTED`·`PLAYBACK_UNAVAILABLE`·`MEDIA`, 예: TS 조각, 끝나지 않은 재생 목록)는 영상 없이 묶음을 마치고 이유를 manifest와 작업 카드에 적음. 받은 영상은 "영상 포함"을 끄고 갱신해도 남김. **범위**: 다시보기만(생방송 기록은 6-F와 함께), 수집 중에는 만들지 않음. 위치와 상태는 `backups` 표(마이그레이션 `0011`). 묶음 영상으로 다시 전사하기(2.3절)는 후속 |
+| 2026-10-19 | 설정 저장 API의 하위 호환 | 백업 묶음 설정(`backupDir`·`backupVideo`·`backupVideoHeight`)은 요청에 없으면 저장된 값을 유지. 다른 항목처럼 필수로 두면 이전 화면과 테스트의 저장 요청이 모두 실패하기 때문 |
+| 2026-10-19 | 이전부터 있던 문제 2건 (E2E에서 발견) | (1) 같은 후보의 컷 계획 버전들이 통합 타임라인에서 무작위 ID 순으로 놓여 `TestCutNotesMakeANewVersionAndTheConfirmedOneStays`가 약 절반 확률로 실패 → 같은 시각·출처면 버전 순. (2) 저장한 작업이 10개가 되자 작업대가 창보다 길어짐: 사이드바 내용과 도구 패널 안의 절대 위치 요소(분할 선택의 알약, 화면 읽기용 글자)가 스크롤 상자를 벗어나 페이지를 늘림 → 사이드바 `overflow: hidden`, 도구 패널을 그 요소들의 기준 상자(`position: relative`)로 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

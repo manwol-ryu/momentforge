@@ -128,7 +128,13 @@ func downloadHLS(ctx context.Context, client *platform.HTTPClient, playlistURL, 
 		}
 	}()
 	var written int64
-	write := func(u *url.URL) error {
+	// fMP4 segments are rebased to start at 0 like the bundle's video, so
+	// utterance times match the chat whatever the reader does with the
+	// first fragment's decode time. An init section that is not ISO BMFF
+	// is copied as is.
+	var timescales map[uint32]uint32
+	var shift []platform.TrackShift
+	write := func(u *url.URL, isInit bool) error {
 		res, err := client.Get(ctx, u.String())
 		if err != nil {
 			return err
@@ -136,20 +142,34 @@ func downloadHLS(ctx context.Context, client *platform.HTTPClient, playlistURL, 
 		if res.Status != 200 {
 			return domain.NewUserError("HTTP_ERROR", fmt.Sprintf("음성 조각을 받지 못했습니다 (HTTP %d).", res.Status))
 		}
-		if written += int64(len(res.Body)); written > maxAudioByte {
+		body := res.Body
+		switch {
+		case isInit:
+			timescales, _ = initTimescales(body)
+		case timescales != nil:
+			if shift == nil {
+				if shift, _, err = chooseShift(body, timescales); err != nil {
+					return schema("음성 조각의 형식을 읽지 못했습니다.")
+				}
+			}
+			if body, err = rebaseSegment(body, shift); err != nil {
+				return schema("음성 조각의 형식을 읽지 못했습니다.")
+			}
+		}
+		if written += int64(len(body)); written > maxAudioByte {
 			return domain.NewUserError("MEDIA", "음성 크기가 예상 범위를 넘어 받기를 멈췄습니다.")
 		}
-		_, err = f.Write(res.Body)
+		_, err = f.Write(body)
 		return err
 	}
 	if pl.init != nil {
-		if err := write(pl.init); err != nil {
+		if err := write(pl.init, true); err != nil {
 			return platform.AudioFile{}, err
 		}
 	}
 	var done int64
 	for i, s := range pl.segments {
-		if err := write(s.url); err != nil {
+		if err := write(s.url, false); err != nil {
 			return platform.AudioFile{}, err
 		}
 		done += s.durMs

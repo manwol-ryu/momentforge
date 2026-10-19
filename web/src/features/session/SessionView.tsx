@@ -31,6 +31,7 @@ import { sessionKindText } from "../../shared/sessionText";
 import { Timeline } from "../../shared/timeline/Timeline";
 import { WorkbenchSkeleton } from "../../shared/skeleton/WorkbenchSkeleton";
 import { useJob } from "../../shared/useJob";
+import { BundlePanel } from "./BundlePanel";
 import { CommentsPanel } from "./CommentsPanel";
 import { TranscriptPanel } from "./TranscriptPanel";
 
@@ -165,7 +166,12 @@ export function SessionView({ id }: { id: string }) {
   tools.push({
     id: "files",
     label: "파일",
-    content: <Files sessionId={s.id} analysisId={analysisId} timeline={tl} updatedAt={s.updatedAt} />,
+    content: (
+      <>
+        <Files sessionId={s.id} analysisId={analysisId} timeline={tl} updatedAt={s.updatedAt} />
+        {isVOD && <BundlePanel s={s} busy={busy} />}
+      </>
+    ),
   });
 
   return (

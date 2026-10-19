@@ -18,6 +18,11 @@ type settingsJSON struct {
 	ASRPaths        map[string]map[string]string `json:"asrPaths"`
 	CutSearchRounds int                          `json:"cutSearchRounds"`
 	CutSearchKB     int                          `json:"cutSearchKb"`
+	BackupDir       string                       `json:"backupDir"`
+	BackupVideo     bool                         `json:"backupVideo"`
+	BackupHeight    int                          `json:"backupVideoHeight"`
+	BackupHeights   []int                        `json:"backupVideoHeights"`
+	BackupDefault   string                       `json:"backupDefaultDir"`
 	File            string                       `json:"file"`
 	KeyFile         string                       `json:"keyFile"`
 	AIProviderAuto  bool                         `json:"aiProviderAuto"`
@@ -38,7 +43,9 @@ func toSettingsJSON(s app.SettingsInfo) settingsJSON {
 	return settingsJSON{AIProvider: s.AIProvider, AIModels: models, AIEndpoints: endpoints, Sensitive: s.Sensitive,
 		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, ASREngine: s.ASREngine, ASRPaths: paths,
 		CutSearchRounds: s.CutSearchRounds, CutSearchKB: s.CutSearchKB,
-		File: s.File, KeyFile: s.KeyFile, AIProviderAuto: s.AIProviderAuto}
+		BackupDir: s.BackupDir, BackupVideo: s.BackupVideo, BackupHeight: s.BackupVideoHeight, BackupHeights: app.BackupHeights,
+		BackupDefault: s.BackupDefaultDir,
+		File:          s.File, KeyFile: s.KeyFile, AIProviderAuto: s.AIProviderAuto}
 }
 
 // settings returns the defaults the screens start from (nothing secret).
@@ -59,6 +66,10 @@ func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		ASRPaths        map[string]map[string]string `json:"asrPaths"`
 		CutSearchRounds *int                         `json:"cutSearchRounds"`
 		CutSearchKB     *int                         `json:"cutSearchKb"`
+		// The bundle settings came later; a body without them keeps the saved ones.
+		BackupDir    *string `json:"backupDir"`
+		BackupVideo  *bool   `json:"backupVideo"`
+		BackupHeight int     `json:"backupVideoHeight"`
 	}
 	if !readBody(w, r, &body) {
 		return
@@ -68,9 +79,21 @@ func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, domain.NewUserError("INPUT", "설정 값이 빠졌습니다. 화면을 새로 고친 뒤 다시 저장하세요."))
 		return
 	}
+	cur := h.cfg.Core.Settings()
+	backupDir, backupVideo, backupHeight := cur.BackupDir, cur.BackupVideo, cur.BackupVideoHeight
+	if body.BackupDir != nil {
+		backupDir = *body.BackupDir
+	}
+	if body.BackupVideo != nil {
+		backupVideo = *body.BackupVideo
+	}
+	if body.BackupHeight != 0 {
+		backupHeight = body.BackupHeight
+	}
 	s, err := h.cfg.Core.SaveSettings(app.Settings{AIProvider: *body.AIProvider, AIModels: body.AIModels, AIEndpoints: body.AIEndpoints,
 		Sensitive: *body.Sensitive, IncludeComments: *body.IncludeComments, ViewerAdaptive: *body.ViewerAdaptive,
-		ASREngine: body.ASREngine, ASRPaths: body.ASRPaths, CutSearchRounds: *body.CutSearchRounds, CutSearchKB: *body.CutSearchKB})
+		ASREngine: body.ASREngine, ASRPaths: body.ASRPaths, CutSearchRounds: *body.CutSearchRounds, CutSearchKB: *body.CutSearchKB,
+		BackupDir: backupDir, BackupVideo: backupVideo, BackupVideoHeight: backupHeight})
 	if err != nil {
 		writeAppError(w, err)
 		return

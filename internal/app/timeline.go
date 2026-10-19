@@ -153,6 +153,10 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 		if x.Source != y.Source {
 			return x.Source < y.Source
 		}
+		// Versions of one cut plan start together; IDs are random, so order them by version.
+		if x.Cut != nil && y.Cut != nil && x.Cut.Version != y.Cut.Version {
+			return x.Cut.Version < y.Cut.Version
+		}
 		return x.ID < y.ID
 	})
 	return t, nil
@@ -160,14 +164,28 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 
 // writeUnified rewrites exports/<session>/timeline/ after a source changed.
 func (a *App) writeUnified(ctx context.Context, sid string) {
-	t, err := a.Timeline(ctx, sid)
+	f, ok, err := a.unifiedFile(ctx, sid)
 	if err != nil {
 		a.logError("build unified timeline", err)
 		return
 	}
+	if !ok {
+		return
+	}
+	if err := export.WriteTimeline(filepath.Join(a.exportDir(sid), "timeline"), f); err != nil {
+		a.logError("write unified timeline", err)
+	}
+}
+
+// unifiedFile is a VOD's unified timeline as written to timeline/ (ok is false for a LIVE capture).
+func (a *App) unifiedFile(ctx context.Context, sid string) (export.TimelineFile, bool, error) {
+	t, err := a.Timeline(ctx, sid)
+	if err != nil {
+		return export.TimelineFile{}, false, err
+	}
 	s, err := a.cfg.Store.Session(ctx, sid)
 	if err != nil || s.Kind != string(platform.KindVOD) {
-		return
+		return export.TimelineFile{}, false, err
 	}
 	f := export.TimelineFile{SessionID: sid, VideoID: s.TargetID, Title: t.Title, DurationMs: t.DurationMs,
 		AnalysisID: t.AnalysisID, CaptureID: t.CaptureID, AIRunID: t.AIRunID}
@@ -176,9 +194,7 @@ func (a *App) writeUnified(ctx context.Context, sid string) {
 			ClipStartMs: it.ClipStartMs, ClipEndMs: it.ClipEndMs, Title: it.Title, CommentText: it.CommentText,
 			Rationale: it.Rationale, Uncertainty: it.Uncertainty, WatchURL: it.WatchURL})
 	}
-	if err := export.WriteTimeline(filepath.Join(a.exportDir(sid), "timeline"), f); err != nil {
-		a.logError("write unified timeline", err)
-	}
+	return f, true, nil
 }
 
 // aiItems are the AI part of the unified timeline.
