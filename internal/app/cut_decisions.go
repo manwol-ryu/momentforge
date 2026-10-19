@@ -287,6 +287,7 @@ type CutVerification struct {
 	ClipPass      *bool             `json:"clipPass,omitempty"`
 	Answers       map[string]string `json:"answers,omitempty"` // what, condition, result, references, why_reaction
 	Gaps          []string          `json:"gaps"`
+	Asides        []string          `json:"asides"` // unknowns the clip check judged not needed for the target
 	SourcePass    *bool             `json:"sourcePass,omitempty"`
 	Findings      []string          `json:"findings"` // which source checks flagged a problem
 	Notes         []string          `json:"notes"`
@@ -450,11 +451,12 @@ func cutDetail(rec store.CutPlan, p cut.Plan) CutDetail {
 		d.Adjustments = append(d.Adjustments, CutAdjustment{Ref: a.Ref, FromMs: a.FromMs, ToMs: a.ToMs, Why: a.Why})
 	}
 	v := p.Verification
-	d.Verification = CutVerification{Gaps: []string{}, Findings: sourceFindings(v.AgainstSource), Notes: []string{}, Issues: orEmpty(v.Issues),
+	d.Verification = CutVerification{Gaps: []string{}, Asides: []string{}, Findings: sourceFindings(v.AgainstSource), Notes: []string{}, Issues: orEmpty(v.Issues),
 		EvidenceMatch: v.EvidenceMatch}
 	if v.ClipOnly != nil {
 		pass := v.ClipOnly.Pass
 		d.Verification.ClipPass, d.Verification.Answers, d.Verification.Gaps = &pass, v.ClipOnly.Answers, orEmpty(v.ClipOnly.Gaps)
+		d.Verification.Asides = orEmpty(v.ClipOnly.Asides)
 	}
 	if v.AgainstSource != nil {
 		pass := v.AgainstSource.Pass

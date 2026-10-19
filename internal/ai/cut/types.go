@@ -153,7 +153,8 @@ type Adjustment struct {
 type ClipVerification struct {
 	Pass    bool              `json:"pass"`
 	Answers map[string]string `json:"answers"` // what, condition, result, references, why_reaction
-	Gaps    []string          `json:"gaps"`
+	Gaps    []string          `json:"gaps"`    // missing pieces the target needs: these fail the check
+	Asides  []string          `json:"asides"`  // unknowns the target does not need (a single viewer's side remark): shown, never a failure
 }
 
 // SourceVerification is the second check: against the surrounding

@@ -97,7 +97,8 @@ func VerifyClipSchema() map[string]any {
 		"answers": object(map[string]any{
 			"what": str(), "condition": str(), "result": str(), "references": str(), "why_reaction": str(),
 		}),
-		"gaps": strs(),
+		"gaps":   strs(),
+		"asides": strs(),
 	})
 }
 

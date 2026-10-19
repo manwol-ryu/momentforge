@@ -206,6 +206,12 @@ func ParseClipVerification(raw json.RawMessage) (ClipVerification, error) {
 	if v.Gaps == nil {
 		v.Gaps = []string{}
 	}
+	if v.Asides == nil {
+		v.Asides = []string{}
+	}
+	if len(v.Asides) > 6 {
+		v.Asides = v.Asides[:6]
+	}
 	return v, nil
 }
 

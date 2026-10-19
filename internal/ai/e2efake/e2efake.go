@@ -188,7 +188,7 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 		}
 	case "verify_clip":
 		out = map[string]any{"pass": true, "answers": map[string]string{"what": "벌칙 약속 뒤의 도전", "condition": "지면 벌칙",
-			"result": "실패", "references": "'아까'는 setup의 약속", "why_reaction": "약속과 결과의 대비"}, "gaps": []string{}}
+			"result": "실패", "references": "'아까'는 setup의 약속", "why_reaction": "약속과 결과의 대비"}, "gaps": []string{}, "asides": []string{}}
 	case "verify_source":
 		out = map[string]any{"pass": true, "mixed_attempt": false, "cut_condition": false, "missed_correction": false,
 			"ended_early": false, "notes": []string{}}

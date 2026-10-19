@@ -382,7 +382,9 @@ func stepRefs(step ai.StepRequest) []string {
 		}
 		if spans, ok := in["spans"].([]cut.ClipSpan); ok {
 			for _, s := range spans {
-				add(s.Evidence)
+				for _, e := range s.Evidence {
+					out = append(out, e.Ref)
+				}
 			}
 		}
 	}
@@ -504,7 +506,7 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 			}
 			continue // a structural problem: re-plan with the reasons, or give up after the retries
 		}
-		clipRaw, err := send(cand, cut.VerifyClipStep(an.Target, checked.Spans, in.Evidence))
+		clipRaw, err := send(cand, cut.VerifyClipStep(an.Target, checked.Spans, in.Evidence, cut.KeyRefs(an, answer)))
 		if err != nil {
 			return out, err
 		}

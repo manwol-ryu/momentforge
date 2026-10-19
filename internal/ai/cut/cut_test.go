@@ -187,6 +187,46 @@ func TestVerificationParsing(t *testing.T) {
 	}
 }
 
+func TestAsidesNeverFailTheClipCheck(t *testing.T) {
+	clip, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"해당 없음","result":"x","references":"x","why_reaction":"x"},"gaps":[],"asides":["채팅 '이미 써먹었죠'가 가리키는 일은 알 수 없음"]}`))
+	if err != nil || len(clip.Asides) != 1 {
+		t.Fatalf("clip %+v err %v", clip, err)
+	}
+	if issues := Issues(&clip, nil); len(issues) != 0 {
+		t.Errorf("an aside became an issue: %v", issues)
+	}
+	// An answer from before asides existed still reads, with an empty list.
+	old, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"x","result":"x","references":"x","why_reaction":"x"},"gaps":[]}`))
+	if err != nil || old.Asides == nil {
+		t.Fatalf("old %+v err %v", old, err)
+	}
+}
+
+func TestVerifyClipMarksKeyEvidence(t *testing.T) {
+	ev := []Evidence{
+		{Ref: "utt:1", Kind: KindUtterance, StartMs: 10_000, EndMs: 15_000, Text: "받아 갔잖아 아니네 다른 사람이었네"},
+		{Ref: "chat:a", Kind: KindChat, StartMs: 16_000, Text: "ㅋㅋㅋㅋ"},
+		{Ref: "chat:b", Kind: KindChat, StartMs: 17_000, Text: "이미 써먹었죠"},
+		{Ref: "chat:out", Kind: KindChat, StartMs: 90_000, Text: "범위 밖"},
+	}
+	an := Analysis{Causes: []Cause{{Support: []string{"utt:1", "chat:a"}}, {Support: []string{"chat:b"}}}}
+	answer := PlanAnswer{EventStartRef: "utt:1", RequiredContextRefs: []string{"utt:1"}}
+	key := KeyRefs(an, answer)
+	step := VerifyClipStep("오인과 정정", []Span{{StartMs: 9_000, EndMs: 20_000, Role: "main"}}, ev, key)
+	spans := step.Input.(map[string]any)["spans"].([]ClipSpan)
+	got := map[string]bool{}
+	for _, e := range spans[0].Evidence {
+		got[e.Ref] = e.Key
+	}
+	if len(got) != 3 || !got["utt:1"] || !got["chat:a"] || got["chat:b"] {
+		t.Errorf("key marks = %v (only the first cause, required context and event start are key)", got)
+	}
+	b, _ := json.Marshal(spans[0].Evidence[2])
+	if strings.Contains(string(b), `"key"`) || !strings.Contains(string(b), `"ref":"chat:b"`) {
+		t.Errorf("a side remark is sent without a key mark: %s", b)
+	}
+}
+
 func TestClampAppliesDefaultsAndLimits(t *testing.T) {
 	in := Input{WindowStartMs: 215000, WindowEndMs: 415000, DurationMs: 1_200_000,
 		Candidates: []Candidate{{ID: "rule:m1", ClipStartMs: 275000, ClipEndMs: 355000}}}

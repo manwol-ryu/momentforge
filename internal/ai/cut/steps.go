@@ -33,10 +33,35 @@ func PlanStep(in Input, an Analysis, previousIssues []string, notes []UserNote) 
 
 // ClipSpan is one chosen span with only the evidence inside it.
 type ClipSpan struct {
-	StartMs  int64      `json:"start_ms"`
-	EndMs    int64      `json:"end_ms"`
-	Role     string     `json:"role"`
-	Evidence []Evidence `json:"evidence"`
+	StartMs  int64          `json:"start_ms"`
+	EndMs    int64          `json:"end_ms"`
+	Role     string         `json:"role"`
+	Evidence []ClipEvidence `json:"evidence"`
+}
+
+// ClipEvidence is one piece of evidence in the clip. Key marks what the plan
+// leans on to explain the target, so the check can tell a reference the
+// target needs from a single viewer's side remark that only happens to be in
+// the clip.
+type ClipEvidence struct {
+	Evidence
+	Key bool `json:"key,omitempty"`
+}
+
+// KeyRefs is what a plan leans on to explain its target: the first cause's
+// support, the required context, the story origin and the event start.
+func KeyRefs(an Analysis, answer PlanAnswer) []string {
+	var out []string
+	if len(an.Causes) > 0 {
+		out = append(out, an.Causes[0].Support...)
+	}
+	out = append(out, answer.RequiredContextRefs...)
+	for _, r := range []string{answer.StoryOriginRef, answer.EventStartRef} {
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // SelectedEvidence is the evidence that lies inside the spans, in time order.
@@ -50,14 +75,19 @@ func SelectedEvidence(spans []Span, evidence []Evidence) []Evidence {
 	return out
 }
 
-// VerifyClipStep is step ⑥: the chosen spans with their evidence only.
-func VerifyClipStep(target string, spans []Span, evidence []Evidence) ai.StepRequest {
+// VerifyClipStep is step ⑥: the chosen spans with their evidence only, the
+// refs in key marked (KeyRefs).
+func VerifyClipStep(target string, spans []Span, evidence []Evidence, key []string) ai.StepRequest {
+	isKey := make(map[string]bool, len(key))
+	for _, r := range key {
+		isKey[r] = true
+	}
 	clip := make([]ClipSpan, 0, len(spans))
 	for _, s := range spans {
-		cs := ClipSpan{StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role, Evidence: []Evidence{}}
+		cs := ClipSpan{StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role, Evidence: []ClipEvidence{}}
 		for _, e := range evidence {
 			if Within(e, []Span{s}) {
-				cs.Evidence = append(cs.Evidence, e)
+				cs.Evidence = append(cs.Evidence, ClipEvidence{Evidence: e, Key: isKey[e.Ref]})
 			}
 		}
 		clip = append(clip, cs)

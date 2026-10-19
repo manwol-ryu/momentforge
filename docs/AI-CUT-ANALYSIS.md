@@ -180,6 +180,8 @@ type Engine interface {
 
 검수가 실패하면 ④로 한 번 돌아가고(이유를 입력에 넣음), 두 번째도 실패하면 **"검수 실패"로 저장**하고 이유를 그대로 보여 줍니다.
 
+⑥의 실패 기준(지시문 v2, 2026-10-19): 클립 근거 중 계획이 target을 설명하려고 기댄 것(첫 원인의 지지 근거, 필수 맥락, 이야기 기원, 사건 시작)에 `key: true`를 붙여 보냅니다. 과거를 가리키는 말은 key 근거에 있거나, 여러 작성자가 같은 과거를 가리키거나, 방송자의 답이 target의 일부일 때만 실패 사유(`gaps`)이고, key가 없는 시청자 한 사람의 곁가지 말은 `asides`(참고, 실패 사유 아님)로 받습니다. 질문과 답·말실수·농담처럼 원래 조건이 없는 사건의 "조건 없음"도 실패 사유가 아닙니다. 계기는 실제 다시보기 15723059 확인에서 곁가지 채팅("이미 써먹었죠") 때문에 후보 1이 재계획 뒤에도 검수 실패로 남은 것입니다(REDESIGN.md 15절).
+
 ### 3.2 검색 도구 (서버가 실행)
 
 모델은 ②의 출력에 검색 요청 목록을 적고, 서버가 실행해 다음 요청에 결과를 넣습니다. 도구는 `app`(`internal/app/ai_tools.go`)에 두고 MCP 도구와 같은 저장소 조회를 씁니다. 발언이 있으면 **발언을 먼저, 채팅을 보조로** 돌려줍니다.
@@ -261,7 +263,7 @@ type StepProvider interface {
   "unresolved_questions": ["후원 문구는 발언·채팅에 없어 확인하지 못함"],
 
   "verification": {
-    "clip_only": { "pass": true, "answers": { "what": "…", "condition": "…", "result": "…", "references": "…", "why_reaction": "…" }, "gaps": [] },
+    "clip_only": { "pass": true, "answers": { "what": "…", "condition": "…", "result": "…", "references": "…", "why_reaction": "…" }, "gaps": [], "asides": [] },
     "against_source": { "pass": true, "mixed_attempt": false, "cut_condition": false, "missed_correction": false, "ended_early": false, "notes": [] },
     "evidence_match": "all_read", "boundary_ok": true
   },

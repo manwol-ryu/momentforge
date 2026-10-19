@@ -1,7 +1,7 @@
 package cut
 
 // PromptVersions change whenever a step's instruction or schema changes.
-var PromptVersions = map[string]int{"analyze": 2, "plan": 1, "verify_clip": 1, "verify_source": 1}
+var PromptVersions = map[string]int{"analyze": 2, "plan": 1, "verify_clip": 2, "verify_source": 1}
 
 // Every instruction is fixed text with no times, IDs or anything that
 // varies, so providers can cache it (Claude caches a prefix of 512 tokens
@@ -72,6 +72,7 @@ const PromptVerifyClip = `편집 클립에 들어갈 원본(발언과 채팅)만
 
 ## 입력 형식
 - spans: 클립에 들어갈 구간 목록. 각 구간의 evidence가 그 구간 안의 발언·채팅 전부다. 시각은 영상 시작부터의 밀리초다.
+- evidence의 key가 true인 근거는 앞 단계가 target을 설명하려고 기댄 근거(원인 근거, 필수 맥락, 이야기 시작, 사건 시작)다. key가 없는 근거는 같은 시간대라서 클립에 함께 들어갔을 뿐이며, target과 관계없는 시청자 한 사람의 곁가지 말일 수 있다.
 - target: 앞 단계가 정한 "이 클립이 보여 주려는 것". 검수는 이 target 기준으로 한다.
 
 ## 할 일
@@ -82,18 +83,21 @@ const PromptVerifyClip = `편집 클립에 들어갈 원본(발언과 채팅)만
 - references: 채팅이나 발언의 "아까", "그거", "다시", "또"가 무엇을 가리키는지 클립 안에서 알 수 있는가?
 - why_reaction: 왜 이 반응이 나왔다고 클립만으로 설명할 수 있는가?
 
-pass는 다섯 질문 중 target을 이해하는 데 꼭 필요한 것에 모두 답할 수 있을 때만 true다. 채팅이 과거를 가리키는데 그 과거가 클립에 없으면 pass는 false이고 gaps에 "채팅이 가리키는 '아까 …'가 클립에 없음"처럼 구체적으로 적어라. "별로다" 같은 평가가 아니라 어떤 근거가 빠졌는지를 적어라.
+pass는 다섯 질문 중 target을 이해하는 데 꼭 필요한 것에 모두 답할 수 있을 때만 true다. target이 기대는 말이 과거를 가리키는데 그 과거가 클립에 없으면 pass는 false이고 gaps에 "채팅이 가리키는 '아까 …'가 클립에 없음"처럼 구체적으로 적어라. "별로다" 같은 평가가 아니라 어떤 근거가 빠졌는지를 적어라.
+
+gaps와 asides를 나눠라. gaps는 target을 이해하는 데 필요한데 클립에 없는 것만이고, 하나라도 있으면 pass는 false다. asides는 클립 안에서 알 수 없지만 target을 이해하는 데는 필요 없는 것이며, pass에 영향을 주지 않는다. 과거를 가리키는 말은 다음 중 하나일 때만 gaps다: key가 true인 근거에 있다, 여러 작성자가 같은 과거를 가리킨다, 방송자가 그 말에 답하고 그 답이 target의 일부다. 그 밖에 key가 없는 시청자 한 사람의 곁가지 말("이미 써먹었죠", "또 술 마시러 가요?")이 가리키는 과거는 asides에 적어라.
 
 ## 판단할 때 주의할 것
-- 조건이란 결과의 뜻을 정하는 말이다: "지면 벌칙", "이번에 못 깨면 끝", "맞히면 선물". 결과만 있고 조건이 없으면 condition은 "알 수 없음"이다.
+- 조건이란 결과의 뜻을 정하는 말이다: "지면 벌칙", "이번에 못 깨면 끝", "맞히면 선물". 결과만 있고 조건이 없으면 condition은 "알 수 없음"이다. 질문과 답, 말실수, 농담, 잡담처럼 원래 조건이 없는 사건이면 condition에 "해당 없음"이라고 쓰고 gaps에 넣지 마라. 조건이 없다는 것은 그런 사건에서 빠진 근거가 아니다.
 - 결과란 조건이 적용된 사실이다: 실패, 성공, 답, 정정. 반응(웃음, 비명)은 결과가 아니라 결과에 대한 반응이다.
 - 발언은 음성 인식 결과라 낱말이 틀릴 수 있다. 문맥으로 뜻이 통하면 그대로 믿되, 뜻이 뒤집히는 자리(부정어, 숫자, 이름)는 "확인 필요"라고 적어라.
 - 시청자 채팅만으로 사건을 재구성하지 마라. 채팅은 반응이지 사건의 기록이 아니다. 사건은 발언이나 결과로 확인해야 한다.
 - target과 다른 재미 요소가 클립에 있어도 그것은 평가 대상이 아니다. target 하나만 기준으로 답하라.
+- 반대로 target이 주장하는 사건이나 반응이 클립 안에 없으면 그것은 gaps다. target이 클립보다 넓게 적혔다는 뜻이기 때문이다.
 - 클립이 너무 길어 target과 무관한 부분이 많아도 pass를 false로 하지는 마라. 그것은 길이의 문제이지 이해의 문제가 아니며 gaps가 아니라 answers에 드러난다.
 
 ## 출력 규칙
-지정된 JSON 스키마만 따르고 JSON 밖에 설명을 쓰지 마라. 각 답은 2문장 이내, gaps는 6개 이하다.`
+지정된 JSON 스키마만 따르고 JSON 밖에 설명을 쓰지 마라. 각 답은 2문장 이내, gaps와 asides는 각각 6개 이하다.`
 
 // PromptVerifySource is step ⑦: against the surrounding broadcast, the clip
 // must not mix attempts, cut a condition, drop a correction or end early.

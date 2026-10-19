@@ -440,6 +440,8 @@ export interface CutDetail {
     clipPass?: boolean;
     answers?: Partial<Record<"what" | "condition" | "result" | "references" | "why_reaction", string>>;
     gaps: string[];
+    /** Unknowns the clip check judged not needed for the target; never a failure. */
+    asides: string[];
     sourcePass?: boolean;
     findings: string[];
     notes: string[];

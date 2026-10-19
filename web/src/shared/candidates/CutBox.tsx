@@ -286,6 +286,12 @@ export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, on
                     </div>
                   ) : null,
                 )}
+                {v.asides.length > 0 && (
+                  <div>
+                    <dt>참고 (실패 사유 아님)</dt>
+                    <dd>{v.asides.join(" · ")}</dd>
+                  </div>
+                )}
               </dl>
             </details>
           )}
