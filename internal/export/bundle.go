@@ -118,6 +118,7 @@ type BundleVideoFile struct {
 	Segments      int          `json:"segments"`
 	TotalSegments int          `json:"total_segments"`
 	Bytes         int64        `json:"bytes"`
+	Fragments     uint32       `json:"fragments"`        // movie fragments written, renumbered from 1
 	SHA256        string       `json:"sha256,omitempty"` // of the complete file
 	FirstPTSMs    int64        `json:"original_first_pts_ms"`
 	Rebased       bool         `json:"rebased"`

@@ -84,8 +84,9 @@ func TestRebaseMovesEveryTrackBackByTheEarliestStart(t *testing.T) {
 	if firstMs != 2050 || len(shift) != 2 || shift[0] != want[0] || shift[1] != want[1] {
 		t.Fatalf("shift = %v, first %d ms", shift, firstMs)
 	}
+	var seq uint32
 	for n, wantV := range []uint64{4500, 184500} {
-		out, err := rebaseSegment(testSegment(n), shift)
+		out, err := rebaseSegment(testSegment(n), shift, &seq)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,9 +102,13 @@ func TestRebaseMovesEveryTrackBackByTheEarliestStart(t *testing.T) {
 		if got := strings.Join(types, ","); got != "moof,mdat,moof,mdat" {
 			t.Errorf("segment %d boxes = %s", n, got)
 		}
+		// Both fragments of a segment carry the same number on CHZZK; joined, they count up.
+		if got := mfhdSeqs(t, out); len(got) != 2 || got[0] != uint32(2*n+1) || got[1] != uint32(2*n+2) {
+			t.Errorf("segment %d fragment numbers = %v", n, got)
+		}
 	}
 	// A segment that starts before the first one is refused, not wrapped around.
-	if _, err := rebaseSegment(testSegment(0), []platform.TrackShift{{TrackID: 1, Timescale: 90000, Ticks: 1 << 40}, {TrackID: 2, Timescale: 48000}}); err == nil {
+	if _, err := rebaseSegment(testSegment(0), []platform.TrackShift{{TrackID: 1, Timescale: 90000, Ticks: 1 << 40}, {TrackID: 2, Timescale: 48000}}, &seq); err == nil {
 		t.Error("underflow accepted")
 	}
 	// An absolute base data offset cannot survive joining segments.
@@ -213,6 +218,30 @@ func TestDownloadVideoJoinsRebasedSegments(t *testing.T) {
 	if bytes.Contains(data, []byte("styp")) || bytes.Contains(data, []byte("emsg")) {
 		t.Error("boxes without media were kept")
 	}
+	if got := mfhdSeqs(t, rest); len(got) != 6 || got[0] != 1 || got[5] != 6 || vf.State.Fragments != 6 {
+		t.Errorf("fragment numbers = %v, state %d", got, vf.State.Fragments)
+	}
+}
+
+// mfhdSeqs lists the movie fragment sequence numbers in order.
+func mfhdSeqs(t *testing.T, b []byte) []uint32 {
+	t.Helper()
+	top, err := boxes(b, 0, len(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []uint32
+	for _, x := range top {
+		if x.typ != "moof" {
+			continue
+		}
+		m, ok, _ := child(b, x, "mfhd")
+		if !ok {
+			t.Fatal("moof without mfhd")
+		}
+		out = append(out, binary.BigEndian.Uint32(b[m.body+4:]))
+	}
+	return out
 }
 
 func TestDownloadVideoResumesAndRecordsMissingSegments(t *testing.T) {
@@ -247,6 +276,10 @@ func TestDownloadVideoResumesAndRecordsMissingSegments(t *testing.T) {
 	frags, _ := fragments(data[len(testInit()):])
 	if len(frags) != 4 {
 		t.Fatalf("fragments = %d", len(frags))
+	}
+	// Numbering goes on from where the first run stopped.
+	if got := mfhdSeqs(t, data[len(testInit()):]); len(got) != 4 || got[0] != 1 || got[3] != 4 {
+		t.Errorf("fragment numbers after resume = %v", got)
 	}
 	// A different rendition starts over instead of appending to the wrong file.
 	other := state
@@ -295,5 +328,8 @@ func TestAudioDownloadRebasesFragmentedMP4(t *testing.T) {
 	}
 	if v, a := frags[0].get(data[len(testInit()):]), frags[1].get(data[len(testInit()):]); v != 4500 || a != 0 {
 		t.Errorf("first fragment times = %d, %d", v, a)
+	}
+	if got := mfhdSeqs(t, data[len(testInit()):]); len(got) != 6 || got[5] != 6 {
+		t.Errorf("audio fragment numbers = %v", got)
 	}
 }

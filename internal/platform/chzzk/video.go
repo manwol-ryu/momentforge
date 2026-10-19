@@ -176,7 +176,7 @@ func downloadVideo(ctx context.Context, client *platform.HTTPClient, playlistURL
 	st := platform.VideoResume{Height: v.rendition.Height, TotalSegments: len(pl.segments)}
 	flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
 	if r := req.Resume; r != nil && r.Height == st.Height && r.TotalSegments == st.TotalSegments &&
-		r.Segments > 0 && r.Segments <= len(pl.segments) && len(r.Shift) > 0 {
+		r.Segments > 0 && r.Segments <= len(pl.segments) && len(r.Shift) > 0 && r.Fragments > 0 {
 		if info, err := os.Stat(path); err == nil && info.Size() >= r.Bytes {
 			st = *r
 			st.Missing = append([]domain.Gap(nil), r.Missing...)
@@ -227,7 +227,7 @@ func downloadVideo(ctx context.Context, client *platform.HTTPClient, playlistURL
 			st.Shift = shift
 		}
 		if seg != nil {
-			out, err := rebaseSegment(seg, st.Shift)
+			out, err := rebaseSegment(seg, st.Shift, &st.Fragments)
 			if err != nil {
 				return platform.VideoFile{}, schema("영상 조각의 형식을 읽지 못했습니다.")
 			}

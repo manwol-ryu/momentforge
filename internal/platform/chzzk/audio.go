@@ -134,6 +134,7 @@ func downloadHLS(ctx context.Context, client *platform.HTTPClient, playlistURL, 
 	// is copied as is.
 	var timescales map[uint32]uint32
 	var shift []platform.TrackShift
+	var fragmentSeq uint32
 	write := func(u *url.URL, isInit bool) error {
 		res, err := client.Get(ctx, u.String())
 		if err != nil {
@@ -152,7 +153,7 @@ func downloadHLS(ctx context.Context, client *platform.HTTPClient, playlistURL, 
 					return schema("음성 조각의 형식을 읽지 못했습니다.")
 				}
 			}
-			if body, err = rebaseSegment(body, shift); err != nil {
+			if body, err = rebaseSegment(body, shift, &fragmentSeq); err != nil {
 				return schema("음성 조각의 형식을 읽지 못했습니다.")
 			}
 		}

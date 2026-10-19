@@ -70,7 +70,7 @@ func (f *Fake) VODVideo(ctx context.Context, t platform.Target, path string, req
 			return platform.VideoFile{}, fmt.Errorf("write fake video: %w", err)
 		}
 		st.Bytes += int64(len(b))
-		st.Segments, st.DoneMs = i+1, int64(i+1)*per
+		st.Segments, st.DoneMs, st.Fragments = i+1, int64(i+1)*per, st.Fragments+1
 		if progress != nil {
 			progress(platform.VideoProgress{Rendition: rend, State: st})
 		}

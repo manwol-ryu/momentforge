@@ -258,8 +258,9 @@ type VideoRequest struct {
 type VideoResume struct {
 	Height        int          `json:"height"`
 	TotalSegments int          `json:"total_segments"`
-	Segments      int          `json:"segments"` // segments already in the file
-	Bytes         int64        `json:"bytes"`    // the file's length after them
+	Segments      int          `json:"segments"`  // segments already in the file
+	Bytes         int64        `json:"bytes"`     // the file's length after them
+	Fragments     uint32       `json:"fragments"` // movie fragments written (the next one is numbered Fragments+1)
 	DoneMs        int64        `json:"done_ms"`
 	Shift         []TrackShift `json:"shift"`
 	Missing       []domain.Gap `json:"missing"`

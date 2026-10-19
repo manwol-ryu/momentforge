@@ -13,7 +13,10 @@ import (
 // that starts at 0 s: read each track's timescale from the init section,
 // move every fragment's decode time (tfdt) back by the first segment's
 // start, and drop the per-segment boxes that carry no media (styp, sidx,
-// emsg, prft). Samples are copied as they are; nothing is re-encoded.
+// emsg, prft). Each movie fragment is also renumbered: CHZZK repeats the
+// fragment sequence number inside a segment (and every segment restarts
+// it), and AVFoundation stops reading a joined file at the first repeat.
+// Samples are copied as they are; nothing is re-encoded.
 
 type box struct {
 	typ        string
@@ -252,9 +255,10 @@ func chooseShift(seg []byte, timescales map[uint32]uint32) (shift []platform.Tra
 	return shift, int64(base * 1000 / baseTS), nil
 }
 
-// rebaseSegment returns seg with every fragment moved back by shift and
-// the boxes that carry no media dropped.
-func rebaseSegment(seg []byte, shift []platform.TrackShift) ([]byte, error) {
+// rebaseSegment returns seg with every fragment moved back by shift, its
+// movie fragments numbered on from *seq (which it advances), and the boxes
+// that carry no media dropped.
+func rebaseSegment(seg []byte, shift []platform.TrackShift, seq *uint32) ([]byte, error) {
 	frags, err := fragments(seg)
 	if err != nil {
 		return nil, err
@@ -284,6 +288,13 @@ func rebaseSegment(seg []byte, shift []platform.TrackShift) ([]byte, error) {
 		switch x.typ {
 		case "styp", "sidx", "emsg", "prft":
 			continue
+		case "moof":
+			mfhd, ok, err := child(out, x, "mfhd")
+			if err != nil || !ok || mfhd.end-mfhd.body < 8 {
+				return nil, fmt.Errorf("movie fragment without mfhd")
+			}
+			*seq++
+			binary.BigEndian.PutUint32(out[mfhd.body+4:], *seq)
 		}
 		kept = append(kept, out[x.start:x.end]...)
 	}

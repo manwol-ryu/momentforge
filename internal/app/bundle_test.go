@@ -56,7 +56,7 @@ func (f *fakeVideo) VODVideo(ctx context.Context, t platform.Target, path string
 		}
 		b := bytes.Repeat([]byte{byte('a' + i)}, 10)
 		file.Write(b)
-		st.Segments, st.Bytes, st.DoneMs = i+1, st.Bytes+10, int64(i+1)*f.duration/3
+		st.Segments, st.Bytes, st.DoneMs, st.Fragments = i+1, st.Bytes+10, int64(i+1)*f.duration/3, st.Fragments+1
 		progress(platform.VideoProgress{Rendition: rend, State: st})
 	}
 	return platform.VideoFile{Path: path, DurationMs: f.duration, Container: "fmp4", Rendition: rend, FirstPTSMs: 2050, State: st}, nil

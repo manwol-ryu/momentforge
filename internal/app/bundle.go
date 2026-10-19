@@ -628,7 +628,7 @@ func (a *App) downloadBundleVideo(ctx context.Context, h job, b *bundleState) er
 
 func fillVideoDoc(doc *export.BundleVideoFile, r platform.VideoRendition, st platform.VideoResume) {
 	doc.Width, doc.Height, doc.Bandwidth, doc.Codecs, doc.FrameRate = r.Width, r.Height, r.Bandwidth, r.Codecs, r.FrameRate
-	doc.Segments, doc.TotalSegments, doc.Bytes, doc.DoneMs = st.Segments, st.TotalSegments, st.Bytes, st.DoneMs
+	doc.Segments, doc.TotalSegments, doc.Bytes, doc.DoneMs, doc.Fragments = st.Segments, st.TotalSegments, st.Bytes, st.DoneMs, st.Fragments
 	doc.Missing = export.GapsOf(st.Missing)
 	doc.Shift = doc.Shift[:0]
 	for _, s := range st.Shift {
@@ -653,11 +653,12 @@ func shiftMs(shift []export.TrackShift) int64 {
 }
 
 func resumeOf(doc *export.BundleVideoFile) *platform.VideoResume {
-	if doc.Segments == 0 || len(doc.Shift) == 0 {
+	// A partial file without a fragment count was numbered before renumbering existed; it starts over.
+	if doc.Segments == 0 || len(doc.Shift) == 0 || doc.Fragments == 0 {
 		return nil
 	}
 	r := &platform.VideoResume{Height: doc.Height, TotalSegments: doc.TotalSegments, Segments: doc.Segments, Bytes: doc.Bytes,
-		DoneMs: doc.DoneMs, Missing: append([]domain.Gap(nil), doc.Missing...)}
+		DoneMs: doc.DoneMs, Fragments: doc.Fragments, Missing: append([]domain.Gap(nil), doc.Missing...)}
 	for _, s := range doc.Shift {
 		r.Shift = append(r.Shift, platform.TrackShift(s))
 	}
