@@ -398,6 +398,7 @@ backups/<작업 ID>/
 | `make build` | 화면 빌드 → 실행파일에 넣기 → `bin/momentforge` |
 | `make test` | 구조 검사 + gofmt + go vet + go test + 화면 타입 검사 |
 | `make e2e` | 가짜 생방송·가짜 AI를 넣은 `bin/momentforge-e2e`로 Playwright 정상 작동 테스트 (Python 3.9 이상) |
+| `MF_CUT_EVAL_DATA=<데이터 폴더> go test ./cmd/momentforge -run TestCutEvalReport -v` | 저장된 컷 분석 결과를 `e2e/cut-eval/cases/`의 정답과 비교한 보고서 (읽기 전용, AI에 보내지 않음). 사용법은 [e2e/cut-eval/README.md](e2e/cut-eval/README.md) |
 
 설계와 결정 기록은 [docs/REDESIGN.md](docs/REDESIGN.md), 화면 디자인은 [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md), Claude Code 개발 지침은 [CLAUDE.md](CLAUDE.md)에 있습니다.
 

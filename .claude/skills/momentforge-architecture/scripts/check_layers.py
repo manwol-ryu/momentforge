@@ -29,6 +29,7 @@ ALLOWED: dict[str, tuple[str, ...] | None] = {
     "cmd/*": None,  # None = 모두 허용 (조립 담당)
     "internal/api": ("internal/app", "internal/events", "internal/domain"),
     "internal/mcp": ("internal/app", "internal/domain"),
+    "internal/cuteval": ("internal/app", "internal/domain"),  # 컷 분석 평가(개발용): MCP처럼 app의 읽기 함수만
     "internal/app": (
         "internal/platform", "internal/detect", "internal/store", "internal/ai", "internal/ai/cut",
         "internal/asr", "internal/asr/caption", "internal/backup",  # caption은 엔진이 아니라 자막 파일 변환 라이브러리

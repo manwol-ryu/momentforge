@@ -39,6 +39,7 @@ Desktop.ini
 # MomentForge (Go rewrite)
 .momentforge/
 e2e/.data/
+e2e/cut-eval/drafts/
 bin/
 node_modules/
 .claude/settings.local.json

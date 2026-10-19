@@ -41,6 +41,7 @@ make e2e          # 가짜 생방송을 넣은 bin/momentforge-e2e 빌드 후 e2
 python3 -I .claude/skills/momentforge-architecture/scripts/check_layers.py   # 구조 검사만
 ./bin/momentforge mcp --data /절대/경로/.momentforge   # MCP 서버(stdio, 읽기 전용). Claude Desktop·Code에 이 명령으로 등록
 MF_MCP_EVAL_DATA=<빈 폴더> go test ./cmd/momentforge -run TestMCPEvalAnswers   # e2e/mcp-eval.xml용 평가 데이터 만들기
+MF_CUT_EVAL_DATA=<데이터 폴더> go test ./cmd/momentforge -run TestCutEvalReport -v   # 컷 분석 평가(e2e/cut-eval/), 읽기 전용. MF_CUT_EVAL_DRAFT=<세션 ID>면 확정 컷에서 정답 초안
 ```
 
 개발 환경: Go 1.26 이상, Node 20.19 이상, Python 3.9 이상(검사 스크립트·E2E). 실행 결과물은 `bin/momentforge` 하나이며, 사용자는 Go·Node·Python이 필요 없습니다.

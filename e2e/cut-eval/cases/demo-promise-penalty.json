@@ -1,0 +1,23 @@
+{
+  "id": "demo-promise-penalty",
+  "title": "아까 한 벌칙 약속을 시청자가 떠올림",
+  "tags": ["callback", "promise_penalty"],
+  "session": {"demo": true},
+  "moment": "4:50",
+  "gold": {
+    "start": {"from": "3:30", "to": "3:41", "why": "3:40 벌칙 약속부터 시작해야 반응을 이해함"},
+    "end": {"from": "5:18", "to": "5:40", "why": "5:12~5:18 벌칙을 받아들이는 말까지"},
+    "must_include": [
+      {"from": "3:40", "to": "3:46", "why": "벌칙 약속"},
+      {"from": "4:50", "to": "5:00", "why": "자신만만하다가 죽음"},
+      {"from": "5:12", "to": "5:18", "why": "벌칙 수락"}
+    ],
+    "cause": [
+      {"from": "3:40", "to": "3:46", "why": "앞선 약속 (채팅의 '아까 벌칙')"},
+      {"from": "4:57", "to": "5:00", "why": "실패한 순간"}
+    ],
+    "origin": {"from": "3:35", "to": "3:46", "why": "약속한 발언"},
+    "ending": "confirmed"
+  },
+  "note": "데모 데이터의 가짜 발언(domain.DemoUtterances)과 채팅(DemoCallbackChat)에 맞춘 정답. 실제 방송이 아님."
+}
