@@ -186,7 +186,54 @@ func (h *handler) cutPlan(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"summary": v, "plan": plan})
+	d, err := h.cfg.Core.CutPlanDetail(r.Context(), v.ID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": v, "detail": d, "plan": plan})
+}
+
+// confirmCut confirms a cut plan with one of its boundary candidates
+// (empty: the one the analysis chose), or takes the confirmation back.
+func (h *handler) confirmCut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Confirmed *bool  `json:"confirmed"`
+		Boundary  string `json:"boundary"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	switch body.Boundary {
+	case "", "short", "context", "full_event":
+	default:
+		writeError(w, http.StatusBadRequest, "INPUT", "경계 후보는 short, context, full_event 중 하나입니다.")
+		return
+	}
+	confirmed := body.Confirmed == nil || *body.Confirmed
+	v, err := h.cfg.Core.ConfirmCut(r.Context(), chi.URLParam(r, "id"), confirmed, body.Boundary)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": v})
+}
+
+// addCutNote keeps the user's note on a cut plan for the next analysis.
+func (h *handler) addCutNote(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text      string `json:"text"`
+		AppliesTo string `json:"appliesTo"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	v, err := h.cfg.Core.AddCutNote(r.Context(), chi.URLParam(r, "id"), body.Text, body.AppliesTo)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": v})
 }
 
 func (h *handler) aiCancel(w http.ResponseWriter, r *http.Request) {

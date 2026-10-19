@@ -362,6 +362,79 @@ export interface TimelineItem {
   storyOriginMs?: number;
   verified?: boolean;
   version?: number;
+  /** Cut plans: everything the result box shows. */
+  cut?: CutDetail;
+}
+
+export type CutBoundaryName = "short" | "context" | "full_event";
+
+/** A ref a cut plan cites: where to watch it (absent for an old plan) and its first words. */
+export interface CutEvidence {
+  ref: string;
+  kind: "utterance" | "chat" | "comment";
+  atMs?: number;
+  text?: string;
+}
+
+export interface CutCause {
+  kind: "broadcast_event" | "callback_to_earlier" | "viewer_joke" | "donation" | "unknown";
+  summary: string;
+  direction: string;
+  support: CutEvidence[];
+  against: CutEvidence[];
+}
+
+/** A cut plan as the result box shows it (docs/AI-CUT-ANALYSIS.md 6.3). */
+export interface CutDetail {
+  planId: string;
+  sessionId: string;
+  candidateIds: string[];
+  version: number;
+  state: "ok" | "verify_failed" | "failed";
+  confirmed: boolean;
+  confirmedBoundary?: CutBoundaryName;
+  confirmedAt?: string;
+  /** A newer version: the confirmed version that stays current beside it. */
+  keptVersion?: number;
+  sources: string[];
+  provider: string;
+  model: string;
+  createdAt: string;
+  target: string;
+  causeStatus: "confirmed" | "likely" | "undetermined" | "";
+  causes: CutCause[];
+  origin?: CutEvidence;
+  originConfidence?: string;
+  eventStart?: CutEvidence;
+  required: CutEvidence[];
+  optional: CutEvidence[];
+  boundaries: { name: CutBoundaryName; spans: TimelineSpan[]; issues?: string[] }[];
+  chosen: CutBoundaryName;
+  startReason: string;
+  endReason: string;
+  adjustments: { ref: string; fromMs: number; toMs: number; why: string }[];
+  ending: { state: "confirmed" | "pending" | "cut_off" | "insufficient" | "unresolved" | ""; eventKind: string; checks: string[] };
+  verification: {
+    clipPass?: boolean;
+    answers?: Partial<Record<"what" | "condition" | "result" | "references" | "why_reaction", string>>;
+    gaps: string[];
+    sourcePass?: boolean;
+    findings: string[];
+    notes: string[];
+    issues: string[];
+    evidenceMatch: string;
+  };
+  unresolved: string[];
+  searchRounds: number;
+  searchAdded: number;
+  notes: CutNoteEntry[];
+  notesApplied: CutNoteEntry[];
+}
+
+export interface CutNoteEntry {
+  at: string;
+  text: string;
+  appliesTo?: string;
 }
 
 /** One span of a cut plan. */
@@ -531,6 +604,9 @@ export interface AICutPreview {
   utteranceCount: number;
   chatCount: number;
   evidenceBytes: number;
+  /** Notes left on earlier versions, by candidate; the plan step reads them. */
+  notes: Record<string, CutNoteEntry[]>;
+  noteCount: number;
 }
 
 export interface AIPreview {
@@ -552,6 +628,7 @@ export interface CutPlanSummary {
   startMs: number;
   endMs: number;
   confirmed: boolean;
+  confirmedBoundary?: CutBoundaryName;
   createdAt: string;
 }
 

@@ -115,6 +115,8 @@ type timelineItemJSON struct {
 	SearchRounds  int    `json:"searchRounds,omitempty"`
 	SearchAdded   int    `json:"searchAdded,omitempty"`
 	StoryOriginMs *int64 `json:"storyOriginMs,omitempty"`
+	// Cut plans: what the result box shows.
+	Cut *app.CutDetail `json:"cut,omitempty"`
 }
 
 // timeline is the unified timeline: rule candidates, viewer and AI recommendations.
@@ -130,7 +132,7 @@ func (h *handler) timeline(w http.ResponseWriter, r *http.Request) {
 			ClipStartMs: it.ClipStartMs, ClipEndMs: it.ClipEndMs, Title: it.Title, CommentText: it.CommentText,
 			Rationale: it.Rationale, Uncertainty: it.Uncertainty, Priority: it.Priority, SourceCandidateIDs: it.SourceCandidateIDs,
 			WatchURL: it.WatchURL, Kind: it.Kind, Spans: it.Spans, CutPlanID: it.CutPlanID, Verified: it.Verified, Version: it.Version,
-			SearchRounds: it.SearchRounds, SearchAdded: it.SearchAdded}
+			SearchRounds: it.SearchRounds, SearchAdded: it.SearchAdded, Cut: it.Cut}
 		if it.HasOrigin {
 			origin := it.StoryOriginMs
 			items[i].StoryOriginMs = &origin

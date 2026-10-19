@@ -92,7 +92,7 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     expect(note).to_contain_text("검수 통과")
     expect(note.locator(".cut-search")).to_contain_text("검색 1단계로 근거 1건을 더 읽음")
     expect(note.locator(".cut-search")).to_contain_text("이야기 시작 01:05")
-    expect(note.locator(".cut-spans li").first).to_contain_text("01:05")  # the found promise is the setup span
+    expect(note.locator(".cut-spans li").first).to_contain_text("01:04")  # the found promise (01:05) is the setup span, from 0.3 s before
     note.screenshot(path=str(SHOTS / "cut-note-searched.png"))
 
     # The files tab has the caption files beside the chat.

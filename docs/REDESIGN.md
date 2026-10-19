@@ -393,7 +393,7 @@ type JobManager interface {
 | SDK | mcp-builder는 TypeScript를 권장하지만, 단일 실행파일 유지를 위해 공식 Go SDK(`modelcontextprotocol/go-sdk`) 사용 |
 | 전송 방식 | 로컬 전용이므로 stdio |
 | 도구 범위 | **읽기 전용**만 제공. 수집 시작·삭제 같은 쓰기 도구는 제공하지 않음 (`readOnlyHint: true`) |
-| 이름 | `mf_` 접두어 + 동작: `mf_list_sessions`, `mf_get_session`, `mf_search_chats`, `mf_get_chats_around`, `mf_list_candidates`, `mf_get_candidate_context`, `mf_get_timeline` |
+| 이름 | `mf_` 접두어 + 동작: `mf_list_sessions`, `mf_get_session`, `mf_search_chats`, `mf_get_chats_around`, `mf_list_candidates`, `mf_get_candidate_context`, `mf_get_timeline`, `mf_list_cut_plans`, `mf_get_cut_plan`(6-D) |
 | 응답 | 구조화 출력(`outputSchema`) + 사람이 읽을 텍스트. 채팅 조회는 `limit`·`cursor` 페이지네이션 필수 (긴 방송은 수만 건) |
 | 오류 | 다음 행동을 알려주는 문구 (예: "세션 ID가 없습니다. mf_list_sessions로 ID를 확인하세요") |
 | 개인정보 | 가명 작성자 키만 노출. 원문 응답(`raw_pages`)은 제공하지 않음 |
@@ -410,6 +410,8 @@ type JobManager interface {
 | `mf_list_candidates` | `source`(all·rule·viewer_comment·ai), `limit`(50/200) | 편집 구간, 규칙·최고점 통계·근거 수, AI 실행 ID, 겹치는 다른 출처 후보 |
 | `mf_get_candidate_context` | `candidate_id`, `limit`(100/200) | 후보와 편집 구간 채팅 (근거 표시) |
 | `mf_get_timeline` | `bucket_seconds`(60), `start`, `end`, `limit`(100/500) | 구간별 채팅·작성자 수, 가장 많은 5구간, 공백 |
+| `mf_list_cut_plans` (6-D) | `session_id`, `all_versions`, `limit`(20/100), `cursor` | AI 컷 분석 결과: 후보마다 확정본과 그보다 새 버전(또는 모든 버전), 검수 상태, 확정 경계 후보, 반응 대상·원인, 편집 구간 |
+| `mf_get_cut_plan` (6-D) | `plan_id` | 원인 후보와 지지·반대 근거(시각·앞부분 글), 이야기 기원·사건 시작·필수 맥락, 경계 후보 3개의 구간, 결말, 검수 답·실패 이유, 미확정 질문, 사용자 메모 |
 
 평가: 데모 데이터에 붙여넣은 시청자 댓글 3개와 결정적인 가짜 AI 검토를 더한 데이터(`cmd/momentforge/mcp_test.go`의 `buildEvalData`)로 질문 10개를 만들고, `TestMCPEvalAnswers`가 도구 호출만으로 답을 다시 구해 확인합니다(`make test`에 포함). 모델로 푸는 평가는 15절 기록 참고.
 
@@ -490,6 +492,9 @@ type JobManager interface {
 | `POST /api/ai/preview/count` `{previewId, fingerprint}` | 정확한 입력 토큰과 최대 비용. 미리보기의 채팅을 제공자 토큰 계산 API로 보냄(사용자가 누를 때만) | 5 |
 | `GET /api/sessions/{id}/ai/runs`, `GET /api/ai/compare?a=&b=` | 세션의 AI 실행 목록, 두 실행 비교(겹침·한쪽에만 있는 추천) | 5 |
 | `GET /api/settings`, `POST /api/settings` `{aiProvider, aiModels, sensitive, includeComments, viewerAdaptive}` | 설정 화면의 기본값과 두 파일 위치. 저장은 모든 값을 함께 보내야 함(빠지면 `INPUT`) | 설정 |
+| `GET /api/sessions/{id}/cuts`, `GET /api/cuts/{id}` | 컷 계획 목록, 한 계획 전체(`summary`·결과 상자용 `detail`·`plan`) | 6-A, 6-D |
+| `POST /api/cuts/{id}/confirm` `{confirmed?, boundary?}` | 컷 확정(경계 후보 short·context·full_event, 비우면 AI 선택)·취소. 같은 후보의 다른 버전 확정은 풀리고 `cuts/confirmed.*`를 다시 씀 | 6-D |
+| `POST /api/cuts/{id}/notes` `{text, appliesTo?}` | 메모 저장(500자, 계획당 20개). 다음 컷 분석의 계획 단계 `user_notes`로 들어감 | 6-D |
 | `POST /api/ai/key` `{provider, key, persist}` | `persist`면 키를 데이터 폴더 `.env`에도 씀. 빈 키는 메모리와 `.env`에서 지움. 응답과 `GET /api/ai`는 키 대신 `keySource`(env·file·memory)와 `keyName`만 | 설정 |
 
 보안: 127.0.0.1 바인딩, 실행 시 생성한 로컬 접근 키, Host·Origin 검사 (기존 동작 유지). 접근 키는 `.momentforge/runtime/access-key`에도 기록해 E2E 스크립트가 읽을 수 있게 함.
@@ -580,7 +585,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | **3. LIVE** ✅ | 치지직 LIVE WSS, 재접속·공백 기록, 증분 분석, checkpoint, 웹 시청자 수 보정, SSE | webapp-testing | 실제 생방송 30분 이상 수집, 중단·이어 기록 확인 |
 | **4. 부가 기능** (구현 완료, 실제 확인 대기) | 영상 댓글 추천, 통합 타임라인, 숨김/복원, 선택형 AI (기존과 같은 OpenAI) | webapp-testing | 기존 README 기능표 전 항목 동작 |
 | **5. AI 강화 (확장 1순위)** (구현 완료, 실제 확인 대기) | Claude 제공자(6.3절)를 기본으로 전환, 비용 미리보기, 배치 자동 분석·비용 한도, 결과 비교 UI, MCP 서버(6.5절) | claude-api, mcp-builder | 두 제공자로 같은 후보 검토, 캐시 적중 확인, MCP 평가 질문 10개 통과 |
-| **6. AI 2세대: 컷 분석** (설계 확정 2026-10-17, [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md) 8절) | 6-A 근거·계획 구조 + 데모 사례 ✅(2026-10-18) → 6-B 방송 내용 인식 ✅(2026-10-18: 한국어 인식 측정, Apple 음성 인식 도우미, whisper.cpp 선택 엔진, **NAS 백업 불러오기**(m4a+chat.jsonl, 후원·구독 포함), 대본 탭, SRT·VTT 내보내기·자막 파일 넣기, 치지직 HLS 음성 받기, 설정의 엔진 상태; 실제 치지직 음성 받기는 사용자와 확인 대기) → 6-C 원인·맥락 검색 ✅(2026-10-18: 서버 실행 도구 4종+보류 2종, 설정의 예산, `sent_log`의 `new_refs`, 검색마다 확인 옵션) → 6-D 컷 결정·검수(경계 후보 3개, 발언 경계 보정, 이중 검수, 결과 상자, editnest용 EDL, 백업 묶음) → 6-E 로컬 관측(소리·화면 글자 가능성 확인)·이야기 색인 → 6-F LIVE 잠정 컷 | claude-api, webapp-testing, skill-creator | 각 하위 단계의 완료 기준은 상세 설계 8절. 실제 다시보기 검증은 6-B·6-C·6-D 끝에 사용자와 함께 |
+| **6. AI 2세대: 컷 분석** (설계 확정 2026-10-17, [AI-CUT-ANALYSIS.md](AI-CUT-ANALYSIS.md) 8절) | 6-A 근거·계획 구조 + 데모 사례 ✅(2026-10-18) → 6-B 방송 내용 인식 ✅(2026-10-18: 한국어 인식 측정, Apple 음성 인식 도우미, whisper.cpp 선택 엔진, **NAS 백업 불러오기**(m4a+chat.jsonl, 후원·구독 포함), 대본 탭, SRT·VTT 내보내기·자막 파일 넣기, 치지직 HLS 음성 받기, 설정의 엔진 상태; 실제 치지직 음성 받기는 사용자와 확인 대기) → 6-C 원인·맥락 검색 ✅(2026-10-18: 서버 실행 도구 4종+보류 2종, 설정의 예산, `sent_log`의 `new_refs`, 검색마다 확인 옵션) → 6-D 컷 결정·검수 ✅(2026-10-18: 후보 아래 결과 상자(원인 대안·근거 재생 버튼, 이야기 기원·사건 시작·필수 맥락, 경계 후보 짧게|맥락|전체 전환과 타임라인 띠, 결말·검수 답·실패 이유), 발언 경계 보정(−0.3초/+0.5초, 채팅 경계는 발언 경계로 당김)과 `adjustments` 기록, 확정·메모(`0010` 마이그레이션, 메모 → 다시 분석 = 새 버전, 확정본 유지), 확정본 내보내기 `cuts/confirmed.edl·csv·editnest.json`, MCP `mf_list_cut_plans`·`mf_get_cut_plan`; 세션 백업 묶음 쓰기는 남음) → 6-E 로컬 관측(소리·화면 글자 가능성 확인)·이야기 색인 → 6-F LIVE 잠정 컷 | claude-api, webapp-testing, skill-creator | 각 하위 단계의 완료 기준은 상세 설계 8절. 실제 다시보기 검증은 6-B·6-C·6-D 끝에 사용자와 함께 |
 | 7+. 이후 확장 | 탐지 파라미터 UI·규칙 추가 → LIVE 다채널·LIVE→VOD 연결 → 다른 플랫폼(SOOP·유튜브) | `add-detection-rule`, `add-platform` | 단계별 별도 계획 |
 
 ## 13. 기능 동등 체크리스트 (legacy 기준)
@@ -599,6 +604,7 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 - [x] 웹 시청자 수 기록·10% 감소 시 기준 재학습 (3단계, 기존 LIVE 분석기와 후보 필드 단위 일치)
 - [x] 저장 목록 숨김·복원 (4단계)
 - [x] 선택형 AI(미리보기 확인 후 실행) (4단계, OpenAI 응답 형식은 가짜 서버로 확인, 실제 키로 확인 대기)
+- [x] (legacy에 없던 기능) AI 컷 분석의 결과 상자·확정·메모·확정본 EDL/CSV/editnest JSON 내보내기 (6-D, 가짜 제공자로 확인, 실제 제공자·editnest 불러오기는 사용자와 확인 대기)
 - [x] 127.0.0.1 바인딩·로컬 접근 키·Host·Origin 검사, 보안 헤더·CSP (0단계)
 - [x] 작성자 가명화 (2~3단계, 세션별 HMAC. LIVE 재전송 판별 키도 HMAC으로만 저장)
 
@@ -714,5 +720,6 @@ python e2e/with_server.py --server "./bin/momentforge-e2e serve --no-browser --p
 | 2026-10-18 | 6-B 측정과 1차 구현 (Apple 음성 인식 확정, NAS 백업 불러오기) | 이 Mac에서 macOS 내장 음성 인식의 한국어 지원·설치를 확인하고 NAS 실제 백업 음성으로 쟀더니 실시간의 140~190배(7시간 44분 ≈ 4~5분), 발언 시각이 채팅과 맞아 **Apple 음성 인식을 기본 엔진으로 확정**. Swift 도우미는 Apple 프레임워크만 쓰고 `make speech-helper`로 빌드해 darwin 빌드에 embed(Go는 CGO 없이 유지, 다른 OS는 빈 자리). 백업 채팅은 플랫폼 ID·닉네임을 가명 키로 바꾸고 원본은 복사하지 않으며, 후원·구독은 `kind`·`amount`로 저장(사용자 결정). 영상 파일은 복사하지 않고 경로만 기억해 이 서버가 같은 컴퓨터의 브라우저에 스트리밍: `<video>`가 접근 키 헤더를 못 보내므로 그 경로만 Host·동일 출처 검사(`Sec-Fetch-Site`·Origin)로 지킴(세션 ID 32자리 난수, 경로는 DB에서만). 구조 규칙에 `internal/asr`·`internal/backup`(domain만)과 `app` → `asr`·`backup`을 추가. 자세한 것은 `docs/AI-CUT-ANALYSIS.md` 8절 6-B 기록 |
 | 2026-10-18 | 6-B 완료 (자막 파일, 치지직 음성 받기, whisper.cpp, 설정) | 자막 파일은 `internal/asr`의 엔진이 아니라 변환 라이브러리 `internal/asr/caption`으로 두고 `app`이 직접 import하도록 구조 규칙에 예외(`ai/cut`과 같은 이유)를 추가. 음성 받기는 플랫폼 선택 인터페이스 `platform.AudioSource`로 두어 `app`은 플랫폼을 모르고, 받은 파일은 `runtime/audio/`에서 전사 뒤 항상 삭제·시작 시 폴더 비움. whisper.cpp는 자동 탐색·자동 다운로드 없이 설정의 전체 경로만 쓰고, WAV가 아니면 ffmpeg 또는 macOS `afconvert`로 변환(둘 다 없으면 WAV만 가능하다고 안내). 설정은 `ASR_ENGINE`·`ASR_<엔진>_<키>`로 `settings.env`에 저장하고 `asr.Configurable`로 엔진에 적용. 작업 단계 `downloading`을 추가. 치지직 실제 다시보기의 렌디션·컨테이너는 사용자와 함께 확인해야 함(TS 조각이면 Apple 도우미가 못 읽을 수 있음). 자세한 것은 `docs/AI-CUT-ANALYSIS.md` 8절 6-B 기록 |
 | 2026-10-18 | 6-C 검색 예산과 확인 방식 | 후보당 요청 상한을 설계 초안의 8회 대신 **기본 4단계 + 재계획 3회 + 검색 단계 수(기본 4) = 11회**로 정함(8회면 검색 뒤 재계획 여유가 없음). 검색은 같은 세션 안에서만, 발언 먼저 채팅 다음, 새 근거가 없으면 즉시 종료. 사용자 결정(5번) "상한에 한 번 동의"가 기본이고 "검색마다 확인"은 미리보기 옵션으로 두어 실행이 `pending`으로 멈추고 `continue` API로 이어짐. 예산은 `settings.env`(`AI_CUT_SEARCH_ROUNDS`·`AI_CUT_SEARCH_KB`)에서 바꿈. `events`·`list_threads`는 6-E 전까지 "없음"으로 답함 |
+| 2026-10-18 | 6-D 확정·메모·경계 보정·editnest 연결 (구현 중 정함, 사용자 확인 필요 항목 포함) | **확정**: 후보 묶음마다 확정 버전은 하나(다른 버전을 확정하면 앞 확정이 풀림). 확정할 때 고른 경계 후보(짧게·맥락·전체)를 함께 저장하고 확정본 내보내기와 타임라인 띠가 그 구간을 씀. 검수 실패 결과도 사용자가 확정할 수 있고(사용자 판단 우선), 구간이 없는 결과는 확정할 수 없음. **현재 결과 규칙**: 확정본이 있으면 확정본과 그보다 새 버전을 함께 보여 주고(새 버전에 "확정본 vN 유지"), 없으면 최신 하나. **메모**: 그 후보 묶음의 모든 버전에 남긴 메모를 모아 다음 계획 단계에 보내며, 미리보기 요약과 "보낼 내용 전체"에 메모가 보임(전송 전 확인 원칙). 메모는 DB(`ai_cut_plans.user_notes_json`)와 그 계획의 `plan.json`에만 저장. **경계 보정**: 발언 시작 −0.3초·끝 +0.5초, 채팅 시작 −6초·끝 +3초이고 그 시각이 발언 중간이면 그 발언의 경계로 옮김(최대 10초), 20초 미만 간격 합침과 영상 끝 맞춤까지 모두 `adjustments`에 기록. 근거 버튼의 시각은 발언 시작 그대로(채팅은 −6초). 파이프라인 버전 3. **editnest**: 참고 사본을 확인하니 "구간 받기" 화면에는 EDL·CSV 불러오기가 없고, "타임라인 메모"의 **JSON 불러오기** → "구간 받기"의 **타임라인 메모에서 가져오기**가 파일로 구간을 넣는 유일한 길이라 `confirmed.edl`·`confirmed.csv`(편집 프로그램용)에 더해 타임라인 메모 형식의 `confirmed.editnest.json`을 씀. editnest를 고쳐 EDL을 직접 읽게 할지는 사용자 결정 대기 |
 
 새로 결정이 필요한 사항이 생기면 이 표에 추가합니다.

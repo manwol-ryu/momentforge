@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { Candidate, TimelineItem, TimelineSource, TimelineSpan } from "../../api/types";
+import type { Candidate, CutBoundaryName, TimelineItem, TimelineSource, TimelineSpan } from "../../api/types";
 import { CandidateItem } from "./CandidateList";
+import { CutBox, startBoundary } from "./CutBox";
 import { timecode } from "../format";
 
 export const sourceLabel: Record<TimelineSource, string> = {
@@ -27,6 +28,11 @@ interface Props {
   onSeek?: (ms: number, itemId: string) => void;
   /** Play a cut plan's spans one after another. */
   onPlaySpans?: (spans: TimelineSpan[], itemId: string) => void;
+  /** The boundary candidate shown per cut plan ID (absent: the confirmed one, else the analysis' choice). */
+  cutChoice?: Record<string, CutBoundaryName>;
+  onCutChoice?: (planId: string, name: CutBoundaryName, itemId: string) => void;
+  /** Ask for a new cut analysis of a candidate (its notes go along). */
+  onReanalyzeCut?: (itemId: string) => void;
   /** Timeline item IDs ticked for an AI review. */
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
@@ -51,6 +57,9 @@ export function UnifiedList({
   platformName,
   onSeek,
   onPlaySpans,
+  cutChoice,
+  onCutChoice,
+  onReanalyzeCut,
   aiSelection,
   onToggleAI,
   canPick,
@@ -85,12 +94,15 @@ export function UnifiedList({
       <div className="ai-notes">
         {notes.map((n) =>
           n.kind === "cut" ? (
-            <CutNote
+            <CutBox
               key={n.id}
               it={n}
               longForm={longForm}
-              onPlay={canPlay && onSeek ? (ms) => onSeek(ms, it.id) : undefined}
-              onPlayAll={canPlay && onPlaySpans && n.spans ? () => onPlaySpans(n.spans!, it.id) : undefined}
+              choice={(n.cut && (cutChoice?.[n.cut.planId] ?? startBoundary(n.cut))) || "context"}
+              onChoose={n.cut && onCutChoice ? (name) => onCutChoice(n.cut!.planId, name, it.id) : undefined}
+              onPlay={onSeek ? (ms) => onSeek(ms, it.id) : undefined}
+              onPlaySpans={canPlay && onPlaySpans ? (spans) => onPlaySpans(spans, it.id) : undefined}
+              onReanalyze={onReanalyzeCut && it.source !== "ai" ? () => onReanalyzeCut(it.id) : undefined}
             />
           ) : (
             <AINote key={n.id} it={n} longForm={longForm} onPlay={canPlay && onSeek ? () => onSeek(n.clipStartMs, it.id) : undefined} />
@@ -185,83 +197,6 @@ function AINote({ it, longForm, onPlay }: { it: TimelineItem; longForm: boolean;
           <summary>판단 한계</summary>
           <p className="candidate-note">{it.uncertainty}</p>
         </details>
-      )}
-    </div>
-  );
-}
-
-const roleLabel = { setup: "앞선 맥락", main: "본 장면", payoff: "마무리" } as const;
-
-/**
- * A cut plan under its candidate (phase 6-A: the spans, the cause, whether
- * both checks passed; the full result box comes in 6-D).
- */
-function CutNote({ it, longForm, onPlay, onPlayAll }: { it: TimelineItem; longForm: boolean; onPlay?: (ms: number) => void; onPlayAll?: () => void }) {
-  const spans = it.spans ?? [];
-  return (
-    <div className="ai-note cut-note" data-verified={it.verified || undefined}>
-      <p className="ai-note-head">
-        <span className="candidate-source" data-source="ai">
-          AI 컷 분석
-        </span>
-        {it.version && it.version > 1 && <span className="ai-note-priority">v{it.version}</span>}
-        <span className="cut-state" data-ok={it.verified || undefined}>
-          {it.verified ? "검수 통과" : "검수 실패"}
-        </span>
-        <strong className="ai-note-title">{it.title}</strong>
-      </p>
-      {it.rationale && <p className="ai-note-text">원인: {it.rationale}</p>}
-      {(it.searchRounds ?? 0) > 0 && (
-        <p className="ai-note-text cut-search">
-          검색 {it.searchRounds}단계로 근거 {it.searchAdded ?? 0}건을 더 읽음
-          {it.storyOriginMs !== undefined && (
-            <>
-              {" · "}이야기 시작{" "}
-              {onPlay ? (
-                <button type="button" className="link-button timecode" onClick={() => onPlay(it.storyOriginMs!)}>
-                  {timecode(it.storyOriginMs, longForm)}
-                </button>
-              ) : (
-                <span className="timecode">{timecode(it.storyOriginMs, longForm)}</span>
-              )}
-            </>
-          )}
-        </p>
-      )}
-      <ol className="cut-spans">
-        {spans.map((sp, i) => (
-          <li key={i}>
-            <span className="cut-role">{roleLabel[sp.role] ?? sp.role}</span>{" "}
-            <span className="timecode">
-              {timecode(sp.startMs, longForm)}–{timecode(sp.endMs, longForm)}
-            </span>
-            {onPlay && (
-              <>
-                {" "}
-                <button type="button" className="link-button" onClick={() => onPlay(sp.startMs)}>
-                  재생
-                </button>
-              </>
-            )}
-          </li>
-        ))}
-      </ol>
-      <p className="ai-note-foot">
-        <span>
-          구간 {spans.length}개, 합계{" "}
-          <span className="timecode">{timecode(spans.reduce((t, sp) => t + sp.endMs - sp.startMs, 0))}</span>
-        </span>
-        {onPlayAll && spans.length > 1 && (
-          <button type="button" className="link-button" onClick={onPlayAll}>
-            구간 이어 재생
-          </button>
-        )}
-      </p>
-      {it.uncertainty && (
-        <p className={it.verified ? "candidate-note" : "cut-issues"}>
-          {it.verified ? "미확정: " : "검수에서 걸린 이유: "}
-          {it.uncertainty}
-        </p>
       )}
     </div>
   );

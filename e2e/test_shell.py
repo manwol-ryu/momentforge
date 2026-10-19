@@ -98,7 +98,8 @@ def test_next_candidate_keys_and_timeline_zoom(page: Page, base_url: str) -> Non
     expect(page.locator(".timeline-overview")).to_be_visible()
     assert page.locator(".timeline-marker").count() < 3
     page.locator(".stage-timeline").screenshot(path=str(SHOTS / "timeline-zoom.png"))
-    page.get_by_role("radio", name="전체").check()
+    # Scoped: a cut plan's boundary switch has a "전체" choice too.
+    page.get_by_role("group", name="타임라인 확대").get_by_role("radio", name="전체").check()
     expect(page.locator(".timeline-overview")).to_have_count(0)
     expect(page.locator(".timeline-marker")).to_have_count(3)
 

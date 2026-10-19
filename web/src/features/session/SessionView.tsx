@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { Analysis, Candidate, ExportFile, Session, TimelineItem, TimelineSource, TimelineSpan, UnifiedTimeline } from "../../api/types";
+import type {
+  Analysis,
+  Candidate,
+  CutBoundaryName,
+  ExportFile,
+  Session,
+  TimelineItem,
+  TimelineSource,
+  TimelineSpan,
+  UnifiedTimeline,
+} from "../../api/types";
 import { AIComparePanel } from "../../shared/ai/AIComparePanel";
 import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
+import { boundarySpans, startBoundary } from "../../shared/candidates/CutBox";
 import { foldAI } from "../../shared/candidates/foldAI";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
@@ -64,9 +75,16 @@ export function SessionView({ id }: { id: string }) {
   const [tab, setTab] = useState<PanelTab>("candidates");
   // Counts the times the candidate list asked for an AI review; the AI tab previews the picked candidates each time.
   const [previewAsk, setPreviewAsk] = useState(0);
-  const askAI = () => {
+  const [askKind, setAskKind] = useState<"explain" | "cut" | undefined>(undefined);
+  const askAI = (kind?: "explain" | "cut") => {
+    setAskKind(kind);
     setTab("ai");
     setPreviewAsk((n) => n + 1);
+  };
+  // A cut box's "다시 분석": that candidate alone, as a cut analysis (its notes go along).
+  const reanalyzeCut = (itemId: string) => {
+    setAISelection(new Set([itemId]));
+    askAI("cut");
   };
   const job = useJob();
   // The job that was already there when the page opened (null: none); later jobs are news.
@@ -128,7 +146,13 @@ export function SessionView({ id }: { id: string }) {
       label: "AI 검토",
       content: hasResult ? (
         <>
-          <AIPanel s={s} selection={[...aiSelection]} previewAsk={previewAsk} onShowCandidates={() => setTab("candidates")} />
+          <AIPanel
+            s={s}
+            selection={[...aiSelection]}
+            previewAsk={previewAsk}
+            askKind={askKind}
+            onShowCandidates={() => setTab("candidates")}
+          />
           <AIComparePanel s={s} />
         </>
       ) : (
@@ -185,7 +209,8 @@ export function SessionView({ id }: { id: string }) {
         busy={busy}
         aiSelection={aiSelection}
         onToggleAI={toggleAI}
-        onAskAI={askAI}
+        onAskAI={() => askAI()}
+        onReanalyzeCut={reanalyzeCut}
         tab={tab}
         onTab={setTab}
         tools={tools}
@@ -240,14 +265,24 @@ interface ReviewProps {
   onToggleAI: (itemId: string) => void;
   /** Open the AI tab and preview a review of the picked candidates. */
   onAskAI: () => void;
+  /** Open the AI tab and preview a new cut analysis of one candidate. */
+  onReanalyzeCut: (itemId: string) => void;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
   /** The panel's other tabs, after the candidates. */
   tools: Tab<PanelTab>[];
 }
 
-function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAskAI, tab, onTab, tools }: ReviewProps) {
+function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAskAI, onReanalyzeCut, tab, onTab, tools }: ReviewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The boundary candidate shown per cut plan, and the plan whose spans the timeline draws.
+  const [cutChoice, setCutChoice] = useState<Record<string, CutBoundaryName>>({});
+  const [cutFocus, setCutFocus] = useState<string | null>(null);
+  const chooseCut = (planId: string, name: CutBoundaryName, itemId: string) => {
+    setCutChoice((cur) => ({ ...cur, [planId]: name }));
+    setCutFocus(planId);
+    setSelectedId(itemId);
+  };
   const [filter, setFilter] = useState<SourceFilter>("all");
   // The playhead: the video's time, or without a video, the moment last chosen on the timeline or in the list.
   const [nowMs, setNowMs] = useState(0);
@@ -383,6 +418,11 @@ function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAsk
       };
     });
   const showTimeline = (!!a || items.length > 0) && durationMs > 0;
+  // The chosen row's cut plan on the timeline: the one last switched, else the confirmed one, else the newest.
+  const cutsHere = (selectedId ? aiFor.get(selectedId) : undefined)?.filter((n) => n.kind === "cut" && n.cut) ?? [];
+  const cutShown =
+    cutsHere.find((n) => n.cut!.planId === cutFocus) ?? cutsHere.find((n) => n.cut!.confirmed) ?? cutsHere[cutsHere.length - 1];
+  const cutSpans = cutShown ? boundarySpans(cutShown, cutChoice[cutShown.cut!.planId] ?? startBoundary(cutShown.cut!)) : [];
   const noResult = s.state === "comments_only"
     ? "영상 댓글에서 시각을 찾지 못했습니다. 위의 채팅 수집을 누르면 채팅으로 편집 후보를 찾습니다."
     : "아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.";
@@ -431,6 +471,9 @@ function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAsk
             platformName={s.platformName}
             onSeek={seek}
             onPlaySpans={playSpans}
+            cutChoice={cutChoice}
+            onCutChoice={chooseCut}
+            onReanalyzeCut={onReanalyzeCut}
             aiSelection={aiSelection}
             onToggleAI={onToggleAI}
             renderRuleDetail={(c) => (a ? <CandidateContext analysisId={a.id} c={c} longForm={longForm} onPick={goTo} /> : null)}
@@ -538,6 +581,7 @@ function Review({ s, a, items, rows, aiFor, busy, aiSelection, onToggleAI, onAsk
                 windows={a?.windows ?? []}
                 candidates={a?.candidates ?? []}
                 extraMarkers={extraMarkers}
+                cutSpans={cutSpans}
                 selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
                 onSelect={(markerId) => select(markerId.includes(":") ? markerId : "rule:" + markerId)}
                 playheadMs={nowMs}
@@ -640,6 +684,9 @@ export const fileText: Record<string, string> = {
   "plan.json": "컷 계획 JSON",
   "cuts.csv": "컷 구간 CSV",
   "cuts.edl": "컷 구간 EDL",
+  "confirmed.edl": "컷 확정본 EDL (editnest·편집 프로그램)",
+  "confirmed.csv": "컷 확정본 CSV",
+  "confirmed.editnest.json": "컷 확정본 editnest 타임라인 메모 JSON",
   "manifest.json": "기록 JSON",
   "analysis-manifest.json": "분석 기록 JSON",
 };

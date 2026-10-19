@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { Candidate, DetectWindow, Gap } from "../../api/types";
+import type { Candidate, DetectWindow, Gap, TimelineSpan } from "../../api/types";
 import { tickStep, timecode } from "../format";
 
 interface Props {
@@ -22,6 +22,8 @@ interface Props {
   onScrub?: (ms: number) => void;
   /** Accessible name of that slider. */
   scrubLabel?: string;
+  /** The chosen moment's cut plan: the spans of the boundary candidate shown, drawn as their own bands. */
+  cutSpans?: TimelineSpan[];
   /** The part of the timeline drawn (zoomed in); the whole length when absent. */
   viewStartMs?: number;
   viewEndMs?: number;
@@ -48,6 +50,7 @@ export function Timeline({
   windowMs = 10_000,
   gaps = [],
   extraMarkers = [],
+  cutSpans = [],
   playheadMs,
   onScrub,
   scrubLabel = "재생 위치",
@@ -111,6 +114,17 @@ export function Timeline({
               className="timeline-band"
               data-selected={c.id === selectedId || undefined}
               style={{ left: pct(c.reactionStartMs), width: width(c.reactionStartMs, c.reactionEndMs) }}
+            />
+          ))}
+        {cutSpans
+          .filter((sp) => overlaps(sp.startMs, sp.endMs))
+          .map((sp) => (
+            <div
+              key={`${sp.startMs}-${sp.endMs}`}
+              className="timeline-cut"
+              data-role={sp.role}
+              title={`AI 컷 구간 ${timecode(sp.startMs, longForm)}–${timecode(sp.endMs, longForm)}`}
+              style={{ left: pct(sp.startMs), width: width(sp.startMs, sp.endMs) }}
             />
           ))}
         {playheadMs !== undefined && inView(playheadMs) && (

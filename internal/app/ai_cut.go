@@ -43,6 +43,10 @@ type CutPreview struct {
 	UtteranceCount       int         `json:"utteranceCount"`
 	ChatCount            int         `json:"chatCount"`
 	EvidenceBytes        int         `json:"evidenceBytes"`
+	// Notes the user left on earlier versions of each candidate's plan
+	// (by timeline item ID); the plan step reads them (6-D).
+	Notes     map[string][]cut.UserNote `json:"notes"`
+	NoteCount int                       `json:"noteCount"`
 	// What the searches read from, fixed at preview time: the transcript
 	// and, for a LIVE capture, the chat saved so far (nothing newer is sent).
 	TranscriptID string `json:"-"`
@@ -93,7 +97,8 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 	perCand := cut.MaxRequests(budget)
 	pv := &CutPreview{RequestsPerCandidate: perCand, PlannedPerCandidate: cutPlannedPerCand, HasTranscript: hasTranscript,
 		SearchExecuted: budget.MaxRounds > 0, SearchRounds: budget.MaxRounds, SearchMaxKB: budget.MaxBytes / 1024,
-		ConfirmSearches: req.ConfirmSearches && budget.MaxRounds > 0, TranscriptID: transcript.ID, MaxSeq: src.maxSeq, EndMs: src.endMs}
+		ConfirmSearches: req.ConfirmSearches && budget.MaxRounds > 0, TranscriptID: transcript.ID, MaxSeq: src.maxSeq, EndMs: src.endMs,
+		Notes: map[string][]cut.UserNote{}}
 	note := "입력 토큰은 UTF-8 바이트 수로 잡은 상한이며 실제 토큰 수는 보통 더 적습니다. 후보마다 분석·계획·검수 2회의 네 단계를 보내고, " +
 		"검수에 걸리면 계획과 검수를 한 번 더 보냅니다. "
 	if budget.MaxRounds > 0 {
@@ -127,6 +132,14 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 			return ai.Plan{}, nil, err
 		}
 		pv.Inputs = append(pv.Inputs, in)
+		notes, err := a.cutNotes(ctx, req.SessionID, []string{id})
+		if err != nil {
+			return ai.Plan{}, nil, err
+		}
+		if len(notes) > 0 {
+			pv.Notes[id] = notes
+			pv.NoteCount += len(notes)
+		}
 		plan.Ranges = append(plan.Ranges, ai.Range{StartMs: in.WindowStartMs, EndMs: in.WindowEndMs})
 		est := ai.StepInputEstimate(cut.AnalyzeStep(in))
 		for _, e := range in.Evidence {
@@ -152,6 +165,9 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 	if len(pv.Inputs) == 0 {
 		return ai.Plan{}, nil, domain.NewUserError("INPUT", "분석할 후보를 선택해 주세요.")
 	}
+	if pv.NoteCount > 0 {
+		plan.EstimateNote += fmt.Sprintf(" 앞선 결과에 남긴 메모 %d개를 계획 단계에 함께 보내고, 결과는 새 버전으로 저장합니다(확정한 버전은 그대로 둠).", pv.NoteCount)
+	}
 	plan.OutputTokenLimit = plan.RequestCount * cutMaxOutputStep
 	plan.AttemptLimit = plan.RequestCount + len(pv.Inputs)*2
 	if req.CostCapUSD > 0 && plan.CostUpperUSD > req.CostCapUSD {
@@ -159,9 +175,10 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 			fmt.Sprintf("컷 분석의 최대 비용(%.2f달러)이 한도를 넘습니다. 후보를 줄이거나 한도를 올려 주세요.", plan.CostUpperUSD))
 	}
 	plan.Fingerprint = ai.Digest(struct {
-		Plan   ai.Plan     `json:"plan"`
-		Inputs []cut.Input `json:"inputs"`
-	}{plan, pv.Inputs})
+		Plan   ai.Plan                   `json:"plan"`
+		Inputs []cut.Input               `json:"inputs"`
+		Notes  map[string][]cut.UserNote `json:"notes"`
+	}{plan, pv.Inputs, pv.Notes})
 	return plan, pv, nil
 }
 
@@ -304,7 +321,7 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPrevie
 		}
 		searcher := &cutSearcher{a: a, sid: run.SessionID, transcriptID: cp.TranscriptID, maxSeq: cp.MaxSeq, endMs: cp.EndMs,
 			budget: cut.Budget{MaxRounds: plan.SearchRounds, MaxRequestsPerRound: cut.DefaultSearchRequestsPerRound, MaxBytes: plan.SearchMaxBytes}}
-		cr := cutRun{act: act, run: run, plan: plan, searcher: searcher, round: &round}
+		cr := cutRun{act: act, run: run, plan: plan, searcher: searcher, round: &round, notes: cp.Notes[in.Candidates[0].ID]}
 		p, err := a.analyzeCandidate(ctx, cr, in, send)
 		if err != nil {
 			failure = err
@@ -378,7 +395,8 @@ type cutRun struct {
 	run      store.AIRun
 	plan     ai.Plan
 	searcher *cutSearcher
-	round    *int // the current analyze round, for the sent log
+	round    *int           // the current analyze round, for the sent log
+	notes    []cut.UserNote // the user's notes on earlier versions, for the plan step
 }
 
 // analyzeCandidate runs the steps for one input and builds its plan: the
@@ -391,7 +409,8 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 	known := cut.Known(in.Evidence)
 	out := cut.Plan{RunID: run.ID, SessionID: run.SessionID, State: cut.StateFailed, Sources: in.Sources,
 		SearchedRanges: []cut.SearchRequest{}, Searches: []cut.SearchResult{}, UnresolvedQuestions: []string{}, UserNotes: []cut.UserNote{},
-		AnalysisEvidenceRefs: []string{}, RequiredContextRefs: []string{}, OptionalContextRefs: []string{}, SelectedSpans: []cut.Span{}}
+		AnalysisEvidenceRefs: []string{}, RequiredContextRefs: []string{}, OptionalContextRefs: []string{}, SelectedSpans: []cut.Span{},
+		NotesApplied: append([]cut.UserNote{}, cr.notes...), Refs: map[string]cut.RefInfo{}}
 	for _, c := range in.Candidates {
 		out.CandidateIDs = append(out.CandidateIDs, c.ID)
 	}
@@ -467,7 +486,7 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 	var answer cut.PlanAnswer
 	var checked cut.Checked
 	for attempt := 0; attempt <= cutMaxReplans; attempt++ {
-		raw, err := send(cand, cut.PlanStep(in, an, issues, nil))
+		raw, err := send(cand, cut.PlanStep(in, an, issues, cr.notes))
 		if err != nil {
 			return out, err
 		}
@@ -507,7 +526,7 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 			break
 		}
 	}
-	fillPlan(&out, answer, checked, known, issues)
+	fillPlan(&out, answer, checked, known, issues, in.DurationMs)
 	return out, nil
 }
 
@@ -589,7 +608,7 @@ func (a *App) ContinueAI(id string, send bool) error {
 }
 
 // fillPlan copies the (last) answer into the plan and resolves its times.
-func fillPlan(out *cut.Plan, p cut.PlanAnswer, checked cut.Checked, known map[string]cut.Evidence, issues []string) {
+func fillPlan(out *cut.Plan, p cut.PlanAnswer, checked cut.Checked, known map[string]cut.Evidence, issues []string, durationMs int64) {
 	out.AnalysisEvidenceRefs = append(out.AnalysisEvidenceRefs, p.AnalysisEvidenceRefs...)
 	out.RequiredContextRefs = append(out.RequiredContextRefs, p.RequiredContextRefs...)
 	out.OptionalContextRefs = append(out.OptionalContextRefs, p.OptionalContextRefs...)
@@ -606,6 +625,14 @@ func fillPlan(out *cut.Plan, p cut.PlanAnswer, checked cut.Checked, known map[st
 	if out.Boundaries.Candidates == nil {
 		out.Boundaries.Candidates = []cut.BoundaryCandidate{}
 	}
+	// Every candidate gets its times, so the user can switch between them;
+	// the chosen one is exactly the checked spans.
+	out.Boundaries.Resolved = cut.ResolveBoundaries(out.Boundaries.Candidates, known, durationMs)
+	for i := range out.Boundaries.Resolved {
+		if out.Boundaries.Resolved[i].Name == p.Chosen && len(out.SelectedSpans) > 0 {
+			out.Boundaries.Resolved[i].Spans = out.SelectedSpans
+		}
+	}
 	out.Ending = p.Ending
 	if out.Ending.Checks == nil {
 		out.Ending.Checks = []string{}
@@ -613,15 +640,16 @@ func fillPlan(out *cut.Plan, p cut.PlanAnswer, checked cut.Checked, known map[st
 	out.UnresolvedQuestions = append(out.UnresolvedQuestions, p.UnresolvedQuestions...)
 	out.Times.StoryOriginRef, out.Times.OriginConfidence = p.StoryOriginRef, p.OriginConfidence
 	if e, ok := known[p.StoryOriginRef]; ok {
-		out.Times.StoryOriginMs = cut.StartOf(e)
+		out.Times.StoryOriginMs = cut.SeekOf(e)
 	}
 	out.Times.EventStartRef = p.EventStartRef
 	if e, ok := known[p.EventStartRef]; ok {
-		out.Times.EventStartMs = cut.StartOf(e)
+		out.Times.EventStartMs = cut.SeekOf(e)
 	}
 	if len(out.SelectedSpans) > 0 {
 		out.Times.CutStartRef = out.SelectedSpans[0].StartRef
 	}
+	cut.IndexRefs(out, known)
 	out.Verification.Issues = issues
 	if out.Verification.Issues == nil {
 		out.Verification.Issues = []string{}
@@ -659,8 +687,9 @@ func (a *App) saveCutPlan(ctx context.Context, run store.AIRun, p cut.Plan) (sto
 }
 
 func (a *App) writeCutPlan(sid string, p cut.Plan) {
-	spans := make([]export.CutSpan, len(p.SelectedSpans))
-	for i, s := range p.SelectedSpans {
+	eff := p.EffectiveSpans()
+	spans := make([]export.CutSpan, len(eff))
+	for i, s := range eff {
 		spans[i] = export.CutSpan{Order: i + 1, StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role, StartRef: s.StartRef, EndRef: s.EndRef}
 	}
 	reasons := strings.TrimSpace(p.Boundaries.StartReason + " / " + p.Boundaries.EndReason)
@@ -672,17 +701,19 @@ func (a *App) writeCutPlan(sid string, p cut.Plan) {
 
 // CutPlanView is a plan in lists.
 type CutPlanView struct {
-	ID           string    `json:"id"`
-	RunID        string    `json:"runId"`
-	SessionID    string    `json:"sessionId"`
-	CandidateIDs []string  `json:"candidateIds"`
-	Version      int       `json:"version"`
-	Supersedes   string    `json:"supersedes,omitempty"`
-	State        string    `json:"state"`
-	StartMs      int64     `json:"startMs"`
-	EndMs        int64     `json:"endMs"`
-	Confirmed    bool      `json:"confirmed"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID           string   `json:"id"`
+	RunID        string   `json:"runId"`
+	SessionID    string   `json:"sessionId"`
+	CandidateIDs []string `json:"candidateIds"`
+	Version      int      `json:"version"`
+	Supersedes   string   `json:"supersedes,omitempty"`
+	State        string   `json:"state"`
+	StartMs      int64    `json:"startMs"`
+	EndMs        int64    `json:"endMs"`
+	Confirmed    bool     `json:"confirmed"`
+	// The confirmed boundary candidate (short | context | full_event).
+	ConfirmedBoundary string    `json:"confirmedBoundary,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 func cutView(p store.CutPlan) CutPlanView {
@@ -691,7 +722,7 @@ func cutView(p store.CutPlan) CutPlanView {
 		ids = []string{}
 	}
 	return CutPlanView{ID: p.ID, RunID: p.RunID, SessionID: p.SessionID, CandidateIDs: ids, Version: p.Version, Supersedes: p.Supersedes,
-		State: p.State, StartMs: p.StartMs, EndMs: p.EndMs, Confirmed: p.Confirmed, CreatedAt: p.CreatedAt}
+		State: p.State, StartMs: p.StartMs, EndMs: p.EndMs, Confirmed: p.Confirmed, ConfirmedBoundary: p.ConfirmedBoundary, CreatedAt: p.CreatedAt}
 }
 
 // CutPlans lists a session's plans, newest first.
@@ -699,7 +730,7 @@ func (a *App) CutPlans(ctx context.Context, sid string) ([]CutPlanView, error) {
 	if _, err := a.cfg.Store.Session(ctx, sid); err != nil {
 		return nil, err
 	}
-	plans, err := a.cfg.Store.CutPlans(ctx, sid)
+	plans, err := a.cfg.Store.CutPlans(ctx, sid, false)
 	if err != nil {
 		return nil, err
 	}
@@ -719,29 +750,32 @@ func (a *App) CutPlan(ctx context.Context, id string) (CutPlanView, json.RawMess
 	return cutView(p), json.RawMessage(p.PlanJSON), nil
 }
 
-// cutTimelineItems are the current (newest) plans as timeline items, folded
-// under their candidates by the screen. A failed plan has no spans and is left out.
+// cutTimelineItems are the current plans as timeline items, folded under
+// their candidates by the screen: the confirmed version and, when there is
+// a later one, the newest too (CurrentCutPlans). A failed plan has no spans
+// and is left out.
 func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem, error) {
 	plans, err := a.cfg.Store.CurrentCutPlans(ctx, sid)
 	if err != nil {
 		return nil, err
 	}
+	kept := keptVersions(plans)
 	var out []TimelineItem
 	for _, rec := range plans {
-		var p cut.Plan
-		if json.Unmarshal(rec.PlanJSON, &p) != nil || len(p.SelectedSpans) == 0 {
+		p, ok := decodePlan(rec)
+		if !ok || len(p.SelectedSpans) == 0 {
 			continue
 		}
-		it := TimelineItem{ID: "cut:" + rec.ID, Source: SourceAI, Kind: "cut", OriginID: rec.ID, AnchorMs: rec.StartMs,
-			ClipStartMs: rec.StartMs, ClipEndMs: rec.EndMs, Title: p.Reaction.Target, SourceCandidateIDs: rec.CandidateIDs,
-			CutPlanID: rec.ID, Verified: rec.State == cut.StateOK, Version: rec.Version}
+		d := cutDetail(rec, p)
+		d.KeptVersion = kept.of(rec)
+		spans := p.EffectiveSpans()
+		it := TimelineItem{ID: "cut:" + rec.ID, Source: SourceAI, Kind: "cut", OriginID: rec.ID, AnchorMs: spans[0].StartMs,
+			ClipStartMs: spans[0].StartMs, ClipEndMs: spans[len(spans)-1].EndMs, Title: p.Reaction.Target, SourceCandidateIDs: rec.CandidateIDs,
+			CutPlanID: rec.ID, Verified: rec.State == cut.StateOK, Version: rec.Version, Cut: &d}
 		if len(p.Causes) > 0 {
 			it.Rationale = p.Causes[0].Summary
 		}
-		it.SearchRounds = p.SearchBudget.Rounds
-		for _, r := range p.Searches {
-			it.SearchAdded += len(r.FoundRefs)
-		}
+		it.SearchRounds, it.SearchAdded = d.SearchRounds, d.SearchAdded
 		if p.Times.StoryOriginRef != "" {
 			it.StoryOriginMs, it.HasOrigin = p.Times.StoryOriginMs, true
 		}
@@ -750,7 +784,7 @@ func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem,
 		} else if len(p.UnresolvedQuestions) > 0 {
 			it.Uncertainty = strings.Join(p.UnresolvedQuestions, " · ")
 		}
-		for _, s := range p.SelectedSpans {
+		for _, s := range spans {
 			it.Spans = append(it.Spans, TimelineSpan{StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role})
 		}
 		out = append(out, it)

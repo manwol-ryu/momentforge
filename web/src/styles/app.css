@@ -2035,6 +2035,24 @@ kbd {
     inset -2px 0 0 var(--marker);
 }
 
+/* The chosen moment's cut plan: its spans as an AI-colored strip along the bottom of the track. */
+.timeline-cut {
+  position: absolute;
+  bottom: 0;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--ai);
+  opacity: 0.85;
+  pointer-events: none;
+  transition:
+    left var(--dur-2) var(--ease-out),
+    width var(--dur-2) var(--ease-out);
+}
+
+.timeline-cut[data-role="setup"] {
+  opacity: 0.55;
+}
+
 .timeline-gap {
   position: absolute;
   top: 0;
@@ -2716,9 +2734,225 @@ button.chat-row:hover {
 }
 
 .cut-issues {
+  display: grid;
+  gap: 2px;
   margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
   color: var(--alert);
   font-size: var(--text-xs);
+}
+
+/* The result box (6.3): labelled rows, evidence as small play chips, then notes and decisions. */
+/* The result box (6.3): labelled rows, evidence as small play chips, then notes and decisions.
+   Positioned so the boundary switch's hidden legend stays inside the scrolling panel. */
+.cut-note {
+  position: relative;
+}
+
+.cut-confirmed,
+.cut-kept {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cut-confirmed {
+  background: var(--positive-text);
+  color: var(--surface);
+}
+
+.cut-kept {
+  background: var(--card);
+  color: var(--muted);
+}
+
+.cut-sources {
+  color: var(--muted);
+}
+
+.cut-facts {
+  display: grid;
+  grid-template-columns: minmax(4.5em, max-content) 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.cut-facts > dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.cut-facts > dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.cut-facts .seg {
+  margin-bottom: var(--space-1);
+}
+
+.cut-status {
+  color: var(--ai-text);
+}
+
+.cut-cause {
+  margin: 0;
+}
+
+.cut-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--space-1);
+  align-items: center;
+  margin: 2px 0 0;
+}
+
+.cut-refs-label {
+  color: var(--muted);
+}
+
+.cut-ref {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--ai) 35%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ai-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+button.cut-ref {
+  cursor: pointer;
+}
+
+button.cut-ref:hover {
+  border-color: var(--ai);
+}
+
+button.cut-ref:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.cut-none,
+.cut-subtle,
+.cut-quote {
+  color: var(--muted);
+}
+
+.cut-subtle {
+  margin: var(--space-1) 0 0;
+}
+
+.cut-story {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-right: var(--space-2);
+}
+
+.cut-alternatives {
+  display: grid;
+  gap: 2px;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cut-span-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  justify-content: space-between;
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+}
+
+.cut-check {
+  color: var(--alert);
+}
+
+.cut-check[data-ok] {
+  color: var(--positive-text);
+}
+
+.cut-answers {
+  display: grid;
+  gap: 2px;
+  margin: var(--space-1) 0 0;
+}
+
+.cut-answers div {
+  display: grid;
+  grid-template-columns: minmax(6em, max-content) 1fr;
+  gap: var(--space-2);
+}
+
+.cut-answers dt {
+  color: var(--muted);
+}
+
+.cut-answers dd {
+  margin: 0;
+}
+
+.cut-notes {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--ai) 20%, transparent);
+}
+
+.cut-note-list {
+  margin: 2px 0 0;
+  padding-left: 1.2em;
+}
+
+.cut-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--ai) 20%, transparent);
+}
+
+.cut-button {
+  min-height: 0;
+  padding: 2px var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.cut-note-form {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.cut-note-form textarea {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--input);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.cut-note-form .cut-button {
+  justify-self: start;
 }
 
 .file-name {

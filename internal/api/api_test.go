@@ -323,3 +323,42 @@ func TestLiveResponseShape(t *testing.T) {
 		t.Fatalf("negative cursor: %d", rec.Code)
 	}
 }
+
+func (f fakeCore) ConfirmCut(_ context.Context, id string, confirmed bool, boundary string) (app.CutPlanView, error) {
+	if id != "c1" {
+		return app.CutPlanView{}, domain.NewUserError("NOT_FOUND", "컷 분석 결과를 찾을 수 없습니다.")
+	}
+	return app.CutPlanView{ID: id, Confirmed: confirmed, ConfirmedBoundary: boundary}, nil
+}
+
+func (f fakeCore) AddCutNote(_ context.Context, id, text, appliesTo string) (app.CutPlanView, error) {
+	if text == "" {
+		return app.CutPlanView{}, domain.NewUserError("INPUT", "메모 내용을 적어 주세요.")
+	}
+	return app.CutPlanView{ID: id}, nil
+}
+
+func TestCutDecisionsValidateBody(t *testing.T) {
+	h := newTestHandler(fakeCore{}, nil, nil)
+	hdr := map[string]string{KeyHeader: testKey}
+	if rec := requestBody(h, "POST", "/api/cuts/c1/confirm", `{"boundary":"longest"}`, hdr); rec.Code != 400 || errorCode(t, rec) != "INPUT" {
+		t.Fatalf("unknown boundary: %d %s", rec.Code, rec.Body)
+	}
+	// No "confirmed" means confirm; false takes it back.
+	if rec := requestBody(h, "POST", "/api/cuts/c1/confirm", `{"boundary":"full_event"}`, hdr); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), `"confirmed":true`) || !strings.Contains(rec.Body.String(), `"confirmedBoundary":"full_event"`) {
+		t.Fatalf("confirm: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/cuts/c1/confirm", `{"confirmed":false}`, hdr); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"confirmed":false`) {
+		t.Fatalf("unconfirm: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/cuts/nope/confirm", `{}`, hdr); errorCode(t, rec) != "NOT_FOUND" {
+		t.Fatalf("unknown plan: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/cuts/c1/notes", `{"text":""}`, hdr); rec.Code != 400 || errorCode(t, rec) != "INPUT" {
+		t.Fatalf("empty note: %d %s", rec.Code, rec.Body)
+	}
+	if rec := requestBody(h, "POST", "/api/cuts/c1/notes", `{"text":"메모"}`, nil); rec.Code != 403 && rec.Code != 401 {
+		t.Fatalf("a note without the access key: %d", rec.Code)
+	}
+}

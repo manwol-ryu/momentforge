@@ -129,6 +129,7 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 		}
 	case "plan":
 		in := step.Input.(map[string]any)["input"].(cut.Input)
+		notes, _ := step.Input.(map[string]any)["user_notes"].([]cut.UserNote)
 		utts := ofKind(in.Evidence, cut.KindUtterance)
 		if len(utts) == 0 {
 			utts = ofKind(in.Evidence, cut.KindChat)
@@ -144,6 +145,14 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 			}
 		}
 		spans := []any{map[string]any{"start_ref": mainStart.Ref, "end_ref": mainEnd.Ref, "role": "main"}}
+		// The whole event starts with the first talk after the promise (or the
+		// first read), so it is longer than the context candidate.
+		fullStart := mainStart
+		for _, e := range utts {
+			if e.StartMs < fullStart.StartMs && (promise == nil || e.StartMs > promise.StartMs) {
+				fullStart = e
+			}
+		}
 		required := []string{mainStart.Ref}
 		origin := ""
 		if promise != nil {
@@ -152,6 +161,13 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 			if !f.last {
 				spans = append([]any{map[string]any{"start_ref": promise.Ref, "end_ref": promise.Ref, "role": "setup"}}, spans...)
 			}
+		}
+		full := append(append([]any{}, spans[:len(spans)-1]...),
+			map[string]any{"start_ref": fullStart.Ref, "end_ref": mainEnd.Ref, "role": "main"})
+		startReason := "약속이 처음 나온 발언부터"
+		if len(notes) > 0 {
+			// The user's note reaches the plan step (phase 6-D): say so where the screen shows it.
+			startReason = "메모 반영: " + notes[len(notes)-1].Text
 		}
 		analysis := append([]string{}, required...)
 		for _, e := range in.Evidence {
@@ -164,9 +180,9 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 			"boundary_candidates": []any{
 				map[string]any{"name": "short", "spans": spans[len(spans)-1:]},
 				map[string]any{"name": "context", "spans": spans},
-				map[string]any{"name": "full_event", "spans": spans},
+				map[string]any{"name": "full_event", "spans": full},
 			},
-			"chosen": "context", "start_reason": "약속이 처음 나온 발언부터", "end_reason": "반응이 끝나는 마지막 발언까지",
+			"chosen": "context", "start_reason": startReason, "end_reason": "반응이 끝나는 마지막 발언까지",
 			"ending":               map[string]any{"state": "confirmed", "event_kind": "promise_penalty", "checks": []string{"결과 확인됨"}},
 			"unresolved_questions": []string{},
 		}

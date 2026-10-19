@@ -56,22 +56,62 @@ func TestResolveSpansUsesEvidenceTimes(t *testing.T) {
 	if len(issues) != 0 || len(spans) != 2 {
 		t.Fatalf("spans %+v issues %v", spans, issues)
 	}
-	if spans[0].StartMs != 220_000 || spans[0].EndMs != 226_500 {
-		t.Errorf("utterance span = %+v (want its own start and end + tail)", spans[0])
+	if spans[0].StartMs != 220_000-UtteranceLeadMs || spans[0].EndMs != 226_000+UtteranceTailMs {
+		t.Errorf("utterance span = %+v (want its own start - lead and end + tail)", spans[0])
 	}
 	if spans[1].StartMs != 280_000-ChatLeadMs || spans[1].EndMs != 318_500 {
 		t.Errorf("chat-started span = %+v", spans[1])
 	}
-	if len(adj) != 1 || adj[0].Ref != "chat:a" {
-		t.Errorf("adjustments = %+v (want the chat lead)", adj)
+	whys := map[string]string{}
+	for _, a := range adj {
+		whys[a.Ref] += a.Why + ";"
 	}
-	// Touching spans merge; a reversed one is an issue; an unknown ref is an issue.
-	merged, _, _ := ResolveSpans([]SpanRefs{{StartRef: "utt:b", EndRef: "utt:d", Role: "main"}, {StartRef: "utt:d", EndRef: "utt:e", Role: "payoff"}}, known, 600_000)
-	if len(merged) != 1 || merged[0].EndMs != 318_500 {
-		t.Errorf("merged = %+v", merged)
+	if !strings.Contains(whys["utt:p"], "0.3초 전") || !strings.Contains(whys["utt:p"], "0.5초 뒤") ||
+		!strings.Contains(whys["chat:a"], "6초") || !strings.Contains(whys["utt:e"], "0.5초 뒤") {
+		t.Errorf("adjustments = %+v", adj)
+	}
+	// Touching spans merge (and say so); a reversed one is an issue; an unknown ref is an issue.
+	merged, madj, _ := ResolveSpans([]SpanRefs{{StartRef: "utt:b", EndRef: "utt:b", Role: "main"}, {StartRef: "utt:e", EndRef: "utt:e", Role: "payoff"}}, known, 600_000)
+	if len(merged) != 1 || merged[0].EndMs != 318_500 || merged[0].Role != "main" || !strings.Contains(madj[len(madj)-1].Why, "합침") {
+		t.Errorf("merged = %+v adj %+v", merged, madj)
 	}
 	if _, _, issues := ResolveSpans([]SpanRefs{{StartRef: "utt:e", EndRef: "utt:b"}, {StartRef: "utt:zz", EndRef: "utt:b"}}, known, 600_000); len(issues) != 2 {
 		t.Errorf("issues = %v", issues)
+	}
+}
+
+// A chat boundary that lands inside an utterance moves to that utterance's edge.
+func TestChatBoundariesSnapToUtterances(t *testing.T) {
+	ev := append(evidence(),
+		Evidence{Ref: "chat:s", Kind: KindChat, StartMs: 297_500, Text: "시작"}, // -6 s = 291.5 s, inside utt:b (290–294 s)
+		Evidence{Ref: "chat:x", Kind: KindChat, StartMs: 288_000, Text: "끝"},  // +3 s = 291 s, inside utt:b
+	)
+	known := Known(ev)
+	spans, adj, issues := ResolveSpans([]SpanRefs{{StartRef: "chat:s", EndRef: "chat:l", Role: "main"}}, known, 600_000)
+	if len(issues) != 0 || spans[0].StartMs != 290_000-UtteranceLeadMs {
+		t.Fatalf("snapped start %+v %v", spans, issues)
+	}
+	if adj[1].Ref != "utt:b" || !strings.Contains(adj[1].Why, "발언 시작") {
+		t.Errorf("snap adjustment %+v", adj)
+	}
+	spans, _, _ = ResolveSpans([]SpanRefs{{StartRef: "utt:p", EndRef: "chat:x", Role: "main"}}, known, 600_000)
+	if spans[0].EndMs != 294_000+UtteranceTailMs {
+		t.Errorf("snapped end %+v", spans)
+	}
+	// Every boundary candidate resolves on its own; a broken one keeps its issues.
+	res := ResolveBoundaries([]BoundaryCandidate{
+		{Name: "short", Spans: []SpanRefs{{StartRef: "utt:b", EndRef: "utt:d", Role: "main"}}},
+		{Name: "full_event", Spans: []SpanRefs{{StartRef: "utt:zz", EndRef: "utt:d", Role: "main"}}},
+	}, known, 600_000)
+	if len(res) != 2 || len(res[0].Spans) != 1 || res[0].Spans[0].EndMs != 300_500 || len(res[1].Spans) != 0 || len(res[1].Issues) != 1 {
+		t.Errorf("resolved %+v", res)
+	}
+	// The plan keeps the time and words of what it cites; a chat seeks a few seconds early.
+	p := Plan{Causes: []Cause{{Support: []string{"utt:b", "chat:l"}}}}
+	p.Times.StoryOriginRef = "utt:p"
+	IndexRefs(&p, known)
+	if p.Refs["utt:p"].AtMs != 220_000 || p.Refs["chat:l"].AtMs != 302_000-ChatLeadMs || p.Refs["utt:b"].Text != "안 죽는다" {
+		t.Errorf("refs %+v", p.Refs)
 	}
 }
 

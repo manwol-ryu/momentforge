@@ -26,8 +26,13 @@ type CutPlan struct {
 	EndMs        int64
 	PlanJSON     []byte // empty when listed
 	Confirmed    bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// The user's decisions: notes (JSON list, owned by the caller), the
+	// confirmed boundary candidate and when the plan was confirmed.
+	UserNotesJSON     []byte
+	ConfirmedBoundary string
+	ConfirmedAt       time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // CreateCutPlan stores a plan as the next version for its candidates and
@@ -55,15 +60,25 @@ func (s *Store) CreateCutPlan(ctx context.Context, p CutPlan) (CutPlan, error) {
 	return p, nil
 }
 
-// SaveCutPlan rewrites a plan's JSON and state (a user note, a confirmation).
+// SaveCutPlan rewrites a plan's JSON, state and the user's decisions (a
+// note, a confirmation).
 func (s *Store) SaveCutPlan(ctx context.Context, p CutPlan) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE ai_cut_plans SET state=?, start_ms=?, end_ms=?, plan_json=?, confirmed=?, updated_at=? WHERE id=?`,
-		p.State, p.StartMs, p.EndMs, string(p.PlanJSON), p.Confirmed, now(), p.ID)
+	notes := string(p.UserNotesJSON)
+	if notes == "" {
+		notes = "[]"
+	}
+	var confirmedAt any
+	if !p.ConfirmedAt.IsZero() {
+		confirmedAt = p.ConfirmedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE ai_cut_plans SET state=?, start_ms=?, end_ms=?, plan_json=?, confirmed=?, user_notes_json=?,
+		confirmed_boundary=?, confirmed_at=?, updated_at=? WHERE id=?`,
+		p.State, p.StartMs, p.EndMs, string(p.PlanJSON), p.Confirmed, notes, p.ConfirmedBoundary, confirmedAt, now(), p.ID)
 	return err
 }
 
 const cutColumns = `id, run_id, session_id, candidate_ids_json, version, COALESCE(supersedes,''), state, start_ms, end_ms,
-	plan_json, confirmed, created_at, updated_at`
+	plan_json, confirmed, user_notes_json, confirmed_boundary, COALESCE(confirmed_at,''), created_at, updated_at`
 
 var cutListColumns = replaceOnce(cutColumns, "plan_json", "''")
 
@@ -78,13 +93,15 @@ func replaceOnce(s, old, new string) string {
 
 func scanCutPlan(row interface{ Scan(...any) error }) (CutPlan, error) {
 	var p CutPlan
-	var ids, plan, created, updated string
+	var ids, plan, notes, confirmedAt, created, updated string
 	var confirmed int
 	err := row.Scan(&p.ID, &p.RunID, &p.SessionID, &ids, &p.Version, &p.Supersedes, &p.State, &p.StartMs, &p.EndMs,
-		&plan, &confirmed, &created, &updated)
+		&plan, &confirmed, &notes, &p.ConfirmedBoundary, &confirmedAt, &created, &updated)
 	json.Unmarshal([]byte(ids), &p.CandidateIDs)
 	p.PlanJSON = []byte(plan)
+	p.UserNotesJSON = []byte(notes)
 	p.Confirmed = confirmed != 0
+	p.ConfirmedAt, _ = time.Parse(time.RFC3339Nano, confirmedAt)
 	p.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	p.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	return p, err
@@ -99,30 +116,45 @@ func (s *Store) CutPlan(ctx context.Context, id string) (CutPlan, error) {
 	return p, err
 }
 
-// CutPlans lists a session's plans, newest first, without their JSON.
-func (s *Store) CutPlans(ctx context.Context, sid string) ([]CutPlan, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+cutListColumns+` FROM ai_cut_plans WHERE session_id=?
-		ORDER BY created_at DESC LIMIT 500`, sid)
-	if err != nil {
-		return nil, err
+// CutPlans lists a session's plans, newest first, with their JSON only
+// when asked (listing screens do not need it).
+func (s *Store) CutPlans(ctx context.Context, sid string, withJSON bool) ([]CutPlan, error) {
+	cols := cutListColumns
+	if withJSON {
+		cols = cutColumns
 	}
-	defer rows.Close()
-	var out []CutPlan
-	for rows.Next() {
-		p, err := scanCutPlan(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return s.cutPlanRows(ctx, "SELECT "+cols+` FROM ai_cut_plans WHERE session_id=? ORDER BY created_at DESC LIMIT 500`, sid)
 }
 
-// CurrentCutPlans are the newest plan of each candidate set, with JSON, in time order.
+// CurrentCutPlans are, for each candidate set, the confirmed plan (the
+// newest confirmed version) and the newest plan when it is a later version,
+// with JSON, in time order. Without a confirmation it is the newest alone.
 func (s *Store) CurrentCutPlans(ctx context.Context, sid string) ([]CutPlan, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans p WHERE session_id=? AND version =
-		(SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json)
+	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans p WHERE session_id=? AND (
+		version = (SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json)
+		OR id = (SELECT id FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json
+			AND q.confirmed=1 ORDER BY version DESC LIMIT 1))
+		ORDER BY start_ms, version`, sid)
+}
+
+// ConfirmedCutPlans are the session's confirmed plans, one per candidate
+// set (its newest confirmed version), with JSON, in time order.
+func (s *Store) ConfirmedCutPlans(ctx context.Context, sid string) ([]CutPlan, error) {
+	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans p WHERE session_id=? AND confirmed=1 AND version =
+		(SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json AND q.confirmed=1)
 		ORDER BY start_ms, created_at`, sid)
+}
+
+// CutPlanVersions are every version of the plans for one candidate set,
+// oldest first, with JSON.
+func (s *Store) CutPlanVersions(ctx context.Context, sid string, candidateIDs []string) ([]CutPlan, error) {
+	ids, _ := json.Marshal(candidateIDs)
+	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans WHERE session_id=? AND candidate_ids_json=? ORDER BY version`,
+		sid, string(ids))
+}
+
+func (s *Store) cutPlanRows(ctx context.Context, query string, args ...any) ([]CutPlan, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

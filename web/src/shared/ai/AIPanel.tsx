@@ -85,6 +85,8 @@ interface Props {
   liveEndMs?: number;
   /** Each change asks for a preview of the picked candidates (the candidate list's "AI 검토로 이동"). */
   previewAsk?: number;
+  /** The kind of analysis that ask is for (a cut box's "다시 분석" asks for a cut analysis). */
+  askKind?: "explain" | "cut";
   /** Back to the candidate list, where the explanations are shown. */
   onShowCandidates?: () => void;
 }
@@ -95,7 +97,7 @@ interface Props {
  * with its most possible cost. Nothing is sent until the user confirms that
  * exact plan; the answers appear under the candidates they explain.
  */
-export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandidates }: Props) {
+export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, askKind, onShowCandidates }: Props) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
@@ -218,9 +220,12 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
   const [pendingAsk, setPendingAsk] = useState(0);
   useEffect(() => {
     if (previewAsk > 0) {
+      if (askKind) setKind(askKind);
       setMode("candidates");
       setPendingAsk(previewAsk);
     }
+    // The kind belongs to this ask only; a later change of it alone asks nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewAsk]);
   useEffect(() => {
     if (!pendingAsk || mode !== "candidates" || !current) return;
@@ -448,6 +453,8 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
                       preview.cut.confirmSearches ? "(보내기 전에 매번 확인)" : ""
                     }. `
                   : "읽은 범위 밖은 검색하지 않습니다. "}
+                {preview.cut.noteCount > 0 &&
+                  `앞선 결과에 남긴 메모 ${preview.cut.noteCount}개를 계획 단계에 함께 보내고 새 버전으로 저장합니다(확정한 버전은 그대로). `}
                 10분 뒤 만료됩니다.
               </p>
             ) : (
@@ -495,7 +502,11 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, onShowCandida
               <pre className="ai-plan">
                 {JSON.stringify(
                   preview.cut
-                    ? { instructions: plan.prompt, candidates: preview.cut.inputs }
+                    ? {
+                        instructions: plan.prompt,
+                        candidates: preview.cut.inputs,
+                        ...(preview.cut.noteCount > 0 ? { user_notes: preview.cut.notes } : {}),
+                      }
                     : { instructions: plan.prompt, ranges: plan.ranges, chunks: plan.chunks, omitted: plan.omitted },
                   null,
                   2,

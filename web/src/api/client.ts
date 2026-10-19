@@ -18,6 +18,8 @@ import type {
   CandidateChats,
   Checkpoint,
   CommentsView,
+  CutBoundaryName,
+  CutDetail,
   CutPlanSummary,
   ExportFile,
   JobStatus,
@@ -133,7 +135,12 @@ export const api = {
     postJSON<{ id: string }>("/api/ai/runs", { previewId, fingerprint, regenerate }),
   aiRun: (id: string) => getJSON<AIRun>(`/api/ai/runs/${enc(id)}`),
   cutPlans: (sessionId: string) => getJSON<{ plans: CutPlanSummary[] }>(`/api/sessions/${enc(sessionId)}/cuts`),
-  cutPlan: (id: string) => getJSON<{ summary: CutPlanSummary; plan: unknown }>(`/api/cuts/${enc(id)}`),
+  cutPlan: (id: string) => getJSON<{ summary: CutPlanSummary; detail: CutDetail; plan: unknown }>(`/api/cuts/${enc(id)}`),
+  /** Confirm a cut plan with a boundary candidate (none: the analysis' choice), or take it back. */
+  confirmCut: (id: string, confirmed: boolean, boundary?: CutBoundaryName) =>
+    postJSON<{ summary: CutPlanSummary }>(`/api/cuts/${enc(id)}/confirm`, { confirmed, boundary: boundary ?? "" }),
+  /** Leave a note on a cut plan; the next cut analysis of the candidate plans with it. */
+  addCutNote: (id: string, text: string) => postJSON<{ summary: CutPlanSummary }>(`/api/cuts/${enc(id)}/notes`, { text }),
   aiCancel: (id: string) => postJSON<{ cancelling: boolean }>(`/api/ai/runs/${enc(id)}/cancel`),
   /** Answer a cut run waiting at a search round: send what it found, or go on without it. */
   aiContinue: (id: string, send: boolean) => postJSON<{ continued: boolean }>(`/api/ai/runs/${enc(id)}/continue`, { send }),

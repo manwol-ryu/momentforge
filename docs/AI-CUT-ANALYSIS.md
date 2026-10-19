@@ -254,10 +254,14 @@ type StepProvider interface {
   },
   "analysis_version": { "pipeline": 1, "prompts": { "analyze": 1, "plan": 1, "verify_clip": 1, "verify_source": 1 },
                         "provider": "anthropic", "model": "…", "transcript_id": "…", "asr": "apple-speech/…" },
-  "user_notes": [ { "at": "…", "text": "두 번째 시도라 앞선 약속과 연결하면 안 됨", "applies_to": "causes[0]" } ],
-  "confirmed_by_user": false
+  "refs": { "utt:…": { "kind": "utterance", "at_ms": 730000, "start_ms": 730000, "end_ms": 733000, "text": "지면 벌칙…" } },  // 인용한 근거의 시각·앞부분 120자 (6-D)
+  "user_notes": [ { "at": "…", "text": "두 번째 시도라 앞선 약속과 연결하면 안 됨", "applies_to": "causes[0]" } ],  // 이 버전에 남긴 메모
+  "notes_applied": [ … ],                             // 이 버전을 만들 때 계획 단계에 보낸 앞선 메모 (6-D)
+  "confirmed_by_user": false, "confirmed_boundary": "context", "confirmed_at": "…"   // 확정한 경계 후보 (6-D)
 }
 ```
+
+`boundary_decisions.resolved`(6-D)는 경계 후보 세 개를 모두 서버가 시각으로 푼 것(`[{ name, spans, issues }]`)이며, 고른 후보의 구간은 `selected_spans`와 같습니다. 확정·메모는 `ai_cut_plans`의 열(`confirmed`, `confirmed_boundary`, `confirmed_at`, `user_notes_json`, 마이그레이션 `0010_cut_decisions.sql`)이 원본이고 JSON은 그 사본입니다.
 
 저장: 새 테이블 `ai_cut_plans`, 실행 기록은 `ai_runs`에 `kind='cut'`과 `sent_log`(5절)를 더해 공유합니다.
 
@@ -278,8 +282,10 @@ type StepProvider interface {
 
 ### 4.4 시각 보정 (서버)
 
-- 발언 ref면 **발언의 시작·끝 시각**을 그대로 씁니다(문장 중간을 피함). 끝은 발언 끝 + 0.5초.
-- 채팅 ref면 채팅 시각 − 반응 지연(기본 6초), 끝은 + 3초. 발언이 있는 세션에서는 가장 가까운 발언 경계로 당깁니다(앞으로 최대 10초).
+- 발언 ref면 **발언의 시작·끝 시각**을 씁니다(문장 중간을 피함). 시작은 발언 시작 − 0.3초, 끝은 발언 끝 + 0.5초(첫·끝 음절이 잘리지 않게).
+- 채팅 ref면 채팅 시각 − 반응 지연(6초), 끝은 + 3초. 그 시각이 발언 중간이면 그 발언의 경계로 옮깁니다(시작은 그 발언 시작 − 0.3초, 끝은 그 발언 끝 + 0.5초, 최대 10초).
+- 근거 버튼(▶)의 시각은 따로 셉니다: 발언은 발언 시작 그대로, 채팅·댓글은 − 6초.
+- 옮긴 모든 시각(발언 앞뒤 여유, 채팅 지연, 발언 경계로 당김, 구간 합침, 영상 끝 맞춤)은 `boundary_decisions.adjustments`에 `{ref, from_ms, to_ms, why}`로 남깁니다.
 - 소리 이벤트(웃음)가 끝 근처에 있으면 그 끝까지 포함합니다(웃음 중간에서 끊지 않음).
 - 연속 구간 사이 20초 미만이면 합치고, 영상 밖·수집 공백은 잘라 `adjustments`에 적습니다.
 - 무음 다듬기는 editnest의 무음 분석을 쓰거나 뒤에 같은 방식을 넣습니다.
@@ -289,6 +295,7 @@ type StepProvider interface {
 - `TimelineItem`에 `spans[]`, `cutPlanId`, `kind: "cut"`을 더합니다.
 - 내보내기 `exports/<세션>/cuts/<계획 ID>/`: `plan.json`(위 구조), `cuts.csv`(계획 ID, 순서, 시작, 끝, 역할, 이유), **`cuts.edl`**(editnest·편집 프로그램용). 전사는 `exports/<세션>/transcript/<id>.srt`·`.vtt`.
 - 사용자 결정(5번): **분리 구간을 1차에 포함**(데이터 구조, 타임라인 표시, 이어 재생, 내보내기).
+- 확정본(6-D): `exports/<세션>/cuts/confirmed.edl`(CMX 3600, 확정한 계획의 구간을 시간순으로 이어 붙인 가편집, `* FROM CLIP NAME`은 영상 파일 이름 또는 작업 제목, `* COMMENT`는 반응 대상과 역할), `confirmed.csv`(계획 ID, 버전, 경계 후보, 순서, 역할, 시작, 끝, 반응 대상, 상태), `confirmed.editnest.json`(editnest "타임라인 메모"의 JSON 형식: `segments[{id, start, end, title, note, tag}]` 초 단위, 영상 파일이 있으면 `videoName`). 확정이 하나도 없으면 세 파일을 지웁니다. 각 계획 폴더의 `cuts.csv`·`cuts.edl`도 확정한 경계 후보로 다시 씁니다.
 
 ## 5. 미리보기와 전송 범위
 
@@ -341,6 +348,8 @@ type StepProvider interface {
 
 ▶는 그 근거 시각으로 영상 이동(발언 근거면 발언 시작). 짧게|맥락|전체는 경계 후보 전환, 타임라인 띠가 함께 바뀜. 메모 → 다시 분석 → 새 버전, 확정본은 유지. 검수 실패는 구체적 이유를 빨간 줄로.
 
+구현(2026-10-18, 6-D, `web/src/shared/candidates/CutBox.tsx`): 머리 줄(배지·버전·검수 알약·"확정 · 맥락"·"확정본 vN 유지"·자료), 반응 대상, 이름표 목록(원인과 확인 정도, 지지·반대 근거 칩, 대안 원인들 / 이야기 기원·사건 시작 칩과 발언 앞부분 / 필수 맥락 칩 / 검색 / 구간: 경계 후보 알약, 구간 목록, "맥락 (AI 선택) · 구간 N개, 합계", 구간 이어 재생 / 종료 이유와 결말, 시작 이유 / 검수: 클립만 보기·원본 비교 통과·실패(걸린 항목)와 접힌 "검수 답 보기"(무엇을·조건·결과·'아까'가 가리키는 것·왜 반응) / 미확정), 빨간 "검수에서 걸린 이유" 줄, 메모(이 버전에 반영한 메모, 다음 분석에 들어갈 메모), 행동 줄(메모 추가, 컷 확정/확정 취소, 다시 분석). 근거 칩은 영상이 없어도 재생 위치(채팅 보기)를 옮깁니다. "다시 분석"은 그 후보 하나만 골라 AI 검토 탭에서 컷 분석 미리보기를 바로 만들고, 미리보기 요약과 "보낼 내용 전체"에 메모가 들어갑니다. 확정하면 지금 보는 경계 후보로 확정되고 파일 탭의 "컷 확정본"에 들어갑니다. "editnest용 내보내기" 버튼 대신 파일 탭의 확정본 세 파일을 씁니다.
+
 ## 7. LIVE
 
 생방송은 수집 중 10분 단위로 음성을 받아 전사하고(엔진이 준비된 경우), 컷 분석은 `ending.state = pending`인 잠정 컷을 냅니다. 분석이 사건 끝 추정 지점을 10분 넘게 지나면 같은 후보를 다시 분석해 새 버전을 제안하고 확정본은 건드리지 않습니다. 미리보기를 만든 순간까지 저장된 발언·채팅만 씁니다.
@@ -354,11 +363,13 @@ type StepProvider interface {
 | **6-A. 근거·계획 구조 + 데모 사례** ✅ 2026-10-18 | `ai/cut`(지시문·스키마·검증), `ai_cut_plans`·`utterances`·`transcripts` 마이그레이션, `StepProvider`(모든 제공자 + E2E 가짜), `TimelineItem.spans`, `cuts/` 내보내기, 데모 데이터에 "아까 약속" 사례와 가짜 발언 심기 | 가짜 제공자로 후보 하나의 컷 계획이 저장되고 타임라인·파일에 나옴. 근거 ID 검증 단위 테스트 |
 | **6-B. 방송 내용 인식** ✅ 2026-10-18 (①~⑥; 치지직 실제 다시보기 음성 받기는 사용자와 함께 확인 대기) | ① **이 Mac에서 `ko-KR` 지원과 품질 측정**(Apple 음성 인식, 안 되면 whisper-cpp로 기본 변경) → ② `internal/asr` + `apple-speech` Swift 도우미(embed) + `whisper-cpp` 외부 엔진 → ③ **NAS 백업 불러오기**(2.5a절: `.chat.jsonl` → 가명화된 세션 + 후원·구독 `kind`·`amount`, `.m4a` → 전사, `.mp4` 경로 기억) → ④ 채팅 카드의 후원·구독 표시, 컷 분석 근거 `donation:`·`subscription:` → ⑤ 자막 파일 넣기, 대본 탭, SRT·VTT 내보내기 → ⑥ 치지직 HLS 음성 받기(백업 없는 영상용) | NAS의 실제 백업 한 편(7시간 43분)을 불러와 전사하고, 발언이 영상 시각과 맞으며(±1초), 후원 줄이 채팅 카드에 보이고, 컷 분석 미리보기에 발언·후원이 근거로 들어감. 음성 임시 파일은 지워짐 |
 | **6-C. 원인·맥락 검색** ✅ 2026-10-18 | ②③ 단계, 검색 도구 6종(발언 우선), 예산, `sent_log`, 미리보기 예산 표시, 검색마다 확인 옵션 | 데모 사례에서 20분 전 발언을 찾아 `story_origin_ref`로 연결하는 E2E. 예산 초과 시 "확인하지 못함" |
-| **6-D. 컷 결정·검수** | ④⑤⑥⑦, 경계 후보 3개, 발언 경계 보정, 결말 상태, 재계획 1회, 결과 상자, 이어 재생, 확정·메모, editnest용 EDL | 검수 실패 이유가 구체적 문장으로 보임. 메모 뒤 재분석이 새 버전을 만들고 확정본 유지. EDL을 editnest 구간 받기에서 읽음 |
+| **6-D. 컷 결정·검수** ✅ 2026-10-18 (실제 제공자·editnest 불러오기는 사용자와 함께 확인 대기) | ④⑤⑥⑦, 경계 후보 3개, 발언 경계 보정, 결말 상태, 재계획 1회, 결과 상자, 이어 재생, 확정·메모, editnest용 EDL | 검수 실패 이유가 구체적 문장으로 보임. 메모 뒤 재분석이 새 버전을 만들고 확정본 유지. EDL을 editnest 구간 받기에서 읽음 |
 | **6-E. 로컬 관측·색인** | 소리 이벤트(SoundAnalysis)·화면 글자(Vision) 가능성 확인 → 되면 `observations`와 `events` 도구, 이야기 색인, 채널별 표현 사전 | 2.4절 기준 충족 시 포함. 색인이 있을 때 검색 단계가 줄어드는지 측정 |
 | **6-F. LIVE** | 수집 중 10분 단위 전사, 잠정 컷과 새 버전 제안 | 생방송 E2E에서 결말 대기 → 확정 버전 제안 |
 
 실제 방송 검증(치지직 다시보기, 실제 제공자)은 6-B·6-C·6-D 끝에 사용자와 함께 합니다.
+
+6-D 구현 기록(2026-10-18): **시각 보정**(`internal/ai/cut/resolve.go`) — 발언 시작 −0.3초·끝 +0.5초, 채팅 −6초/+3초에 그 시각이 발언 중간이면 그 발언 경계로(최대 10초), 20초 미만 간격 합침, 영상 끝 맞춤을 모두 `adjustments`에 기록. `SeekOf`(근거 버튼 시각)와 `StartOf`(구간 시작)를 나눔. `ResolveBoundaries`가 경계 후보 세 개를 모두 풀어 `boundary_decisions.resolved`에, `IndexRefs`가 인용 근거의 시각·앞부분 120자를 `refs`에 저장. 파이프라인 버전 3. **확정·메모** — 마이그레이션 `0010_cut_decisions.sql`(`user_notes_json`, `confirmed_boundary`, `confirmed_at`, 후보 묶음 색인), `store.CurrentCutPlans`는 확정본(가장 새 확정 버전)과 그보다 새 버전을 함께, 확정이 없으면 최신만. `app.ConfirmCut`(같은 후보 묶음의 다른 확정을 풀고 경계 후보 검증, 구간 없는 결과는 거절) · `AddCutNote`(500자, 계획당 20개) · 미리보기가 그 후보 묶음의 모든 버전 메모를 모아 `CutPreview.notes`로 보여 주고 지문(fingerprint)에 넣으며, 실행은 그 메모를 계획 단계 `user_notes`로 보내고 새 계획의 `notes_applied`에 남김. API `POST /api/cuts/{id}/confirm`·`/notes`, `GET /api/cuts/{id}`에 결과 상자용 `detail`. 통합 타임라인의 컷 항목에 `cut`(결과 상자 전체: 원인과 근거 시각, 경계 후보별 구간, 검수 답, 메모, `keptVersion`). **내보내기** — 확정할 때마다 `cuts/confirmed.edl·csv·editnest.json`(4.5절). editnest 참고 사본을 확인하니 "구간 받기"에는 EDL·CSV 불러오기가 없어(파일로 구간을 넣는 길은 "타임라인 메모"의 JSON 불러오기 → "구간 받기"의 "타임라인 메모에서 가져오기"뿐) 타임라인 메모 JSON을 함께 씀(REDESIGN.md 15절). **MCP** — `mf_list_cut_plans`(확정본과 새 버전 또는 모든 버전, 페이지), `mf_get_cut_plan`(원인·근거 시각과 글, 경계 후보, 검수 답·실패 이유, 메모). **화면** — 6.3절의 결과 상자, 타임라인 트랙 아래쪽의 보라 컷 띠(고른 후보의 지금 보는 경계 후보, 앞선 맥락은 옅게), "다시 분석"은 그 후보만 골라 컷 분석 미리보기. **E2E 가짜 제공자** — `full_event`가 본 장면을 읽은 범위의 마지막 근거까지 늘리고, 메모를 받으면 시작 이유를 "메모 반영: …"으로. **검증** — Go 테스트(`TestResolveSpansUsesEvidenceTimes`·`TestChatBoundariesSnapToUtterances`, 메모 → v2 · 확정본 유지 · 확정 전환·취소와 확정본 파일, API 본문 검사, MCP 두 도구), E2E `test_phase6.py`(경계 후보 전환과 타임라인 띠, 근거 버튼 이동, 검수 답, 메모, "전체"로 확정, 확정본 EDL·editnest JSON 다운로드, 다시 분석 → 메모가 미리보기와 계획 단계에 들어가 새 버전이 생기고 확정본과 EDL이 그대로). **남은 것** — 세션 백업 묶음 쓰기(2.5절), 실제 제공자로 검수 실패 이유 문장 품질 확인, editnest에서 확정본 JSON을 실제로 불러와 보기, 소리 이벤트 끝까지 늘리기(6-E 관측이 생기면).
 
 6-C 구현 기록(2026-10-18): `internal/ai/cut/search.go`(도구 이름·한도, `Budget`·`BudgetUse`, `Clamp`(기본값·상한 적용, `events`·`list_threads`는 6-E 전까지 "없음"), `Merge`(검색 근거를 `found_by_search`로 표시해 입력에 합침), `SearchResult`), `Input.searched`, 분석 지시문 v2(검색 결과 설명, 같은 요청 반복 금지, 못 찾으면 표현을 바꾸거나 activity→read_around), `Plan.searches`·`search_budget`, 파이프라인 버전 2. `internal/app/ai_tools.go`가 서버에서 실행: `search`는 발언(`store.SearchUtterances`, LIKE) 먼저 채팅(`SearchChats`) 다음, `read_around`·`read_range`는 발언 60건+채팅 200건, `activity`는 `ChatActivity`. LIVE는 미리보기 때의 seq까지만 읽음. `analyzeCandidate`가 분석 → 검색 → 분석을 예산 안에서 반복하고, 새 근거가 없으면 멈춤. **검색마다 확인**(미리보기 옵션 `confirmSearches`): 실행이 `AIRunView.pending`(후보, 단계, 찾은 발언·채팅 전체)으로 멈추고 `POST /api/ai/runs/{id}/continue {send}`로 "보내고 계속" 또는 "보내지 않고 계속"(그 근거를 입력에서 빼고 미리보기 범위로 계획, `search_budget.declined`). `sent_log`에 단계마다 `round`와 처음 보내는 `new_refs`를 기록. 예산은 설정(`AI_CUT_SEARCH_ROUNDS`·`AI_CUT_SEARCH_KB`)에서 바꾸며 0이면 검색 없음. 화면: 컷 분석 선택 시 "검색 결과를 보내기 전에 매번 확인" 체크, 미리보기 요약에 "최대 N단계·MKB", 실행 중 확인 상자(`.ai-pending`), 후보 아래 컷 상자에 "검색 N단계로 근거 M건을 더 읽음 · 이야기 시작 mm:ss". E2E: 가짜 음성 인식의 약속 발언을 1:05(첫 후보 창 밖)로 옮겨 `test_phase6b.py`가 검색 → 확인 상자 → 보내기 → 이야기 시작 01:05·setup 구간을 확인(데모는 10분이라 "20분 전" 대신 백업 픽스처 20분의 3분 30초 전 발언으로 검증). 단위 테스트: `Clamp`·`Merge`, 검색으로 기원 찾기, 확인 대기·승인·거절, 예산 0.
 

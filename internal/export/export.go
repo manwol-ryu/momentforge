@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
@@ -725,6 +726,112 @@ func WriteCutPlan(dir string, f CutPlanFile) error {
 		}
 	}
 	return nil
+}
+
+// ConfirmedCut is one confirmed cut plan in the confirmed exports.
+type ConfirmedCut struct {
+	PlanID   string
+	Version  int
+	Boundary string // short | context | full_event
+	Target   string
+	State    string
+	Spans    []CutSpan
+}
+
+// ConfirmedCutsFile is every confirmed cut of a session, for an editor:
+// ClipName names the source in the EDL (the video file's name when the
+// session has one), VideoName is set only from a real file name so
+// editnest's 타임라인 메모 can match it.
+type ConfirmedCutsFile struct {
+	SessionID  string
+	ClipName   string
+	VideoName  string
+	DurationMs int64
+	Cuts       []ConfirmedCut
+}
+
+var confirmedNames = []string{"confirmed.edl", "confirmed.csv", "confirmed.editnest.json"}
+
+var roleLabel = map[string]string{"setup": "앞선 맥락", "main": "본 장면", "payoff": "마무리"}
+
+// WriteConfirmedCuts writes confirmed.edl (CMX 3600, one event per span,
+// laid end to end), confirmed.csv and confirmed.editnest.json (editnest's
+// 타임라인 메모 JSON: segments in seconds) under dir. With no confirmed cut
+// the files are removed, so a stale list is never left behind.
+func WriteConfirmedCuts(dir string, f ConfirmedCutsFile) error {
+	if len(f.Cuts) == 0 {
+		for _, name := range confirmedNames {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	}
+	clip := strings.Join(strings.Fields(f.ClipName), " ")
+	if clip == "" {
+		clip = f.SessionID
+	}
+	var csvb, edl strings.Builder
+	csvb.WriteString("plan_id,version,boundary,order,role,start_ms,end_ms,start,end,target,state\n")
+	fmt.Fprintf(&edl, "TITLE: MomentForge confirmed cuts\nFCM: NON-DROP FRAME\n\n")
+	type segment struct {
+		ID    string  `json:"id"`
+		Start float64 `json:"start"`
+		End   float64 `json:"end"`
+		Title string  `json:"title"`
+		Note  string  `json:"note"`
+		Tag   string  `json:"tag"`
+	}
+	segments := []segment{}
+	var record int64
+	event := 0
+	for _, c := range f.Cuts {
+		target := strings.Join(strings.Fields(c.Target), " ")
+		for i, s := range c.Spans {
+			event++
+			fmt.Fprintf(&csvb, "%s,%d,%s,%d,%s,%d,%d,%s,%s,%s,%s\n", c.PlanID, c.Version, c.Boundary, i+1, s.Role, s.StartMs, s.EndMs,
+				Stamp(s.StartMs), Stamp(s.EndMs), csvField(target), c.State)
+			length := s.EndMs - s.StartMs
+			fmt.Fprintf(&edl, "%03d  AX       V     C        %s %s %s %s\n* FROM CLIP NAME: %s\n* COMMENT: %s | %s\n\n", event,
+				edlTimecode(s.StartMs), edlTimecode(s.EndMs), edlTimecode(record), edlTimecode(record+length), clip,
+				truncate(target, 60), roleLabel[s.Role])
+			record += length
+			title := []rune(target)
+			if len(title) > 80 {
+				title = title[:80]
+			}
+			segments = append(segments, segment{ID: fmt.Sprintf("mf-%s-%d", c.PlanID, i+1), Start: float64(s.StartMs) / 1000,
+				End: float64(s.EndMs) / 1000, Title: string(title), Tag: "MomentForge",
+				Note: fmt.Sprintf("%s · %s · v%d", roleLabel[s.Role], boundaryLabel[c.Boundary], c.Version)})
+		}
+	}
+	memo := map[string]any{"exportedAt": time.Now().UTC().Format(time.RFC3339), "duration": float64(f.DurationMs) / 1000, "segments": segments}
+	if f.VideoName != "" {
+		memo["videoName"] = f.VideoName
+	}
+	js, err := jsonBytes(memo)
+	if err != nil {
+		return err
+	}
+	for _, w := range []struct {
+		name string
+		data []byte
+	}{{"confirmed.edl", []byte(edl.String())}, {"confirmed.csv", []byte(csvb.String())}, {"confirmed.editnest.json", js}} {
+		if err := writeAtomic(filepath.Join(dir, w.name), w.data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var boundaryLabel = map[string]string{"short": "짧게", "context": "맥락", "full_event": "전체"}
+
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func csvField(s string) string {

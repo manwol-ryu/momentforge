@@ -22,6 +22,7 @@ type stepAI struct {
 	fakeAI
 	dropSetup bool
 	steps     []string
+	notes     []cut.UserNote // what the last plan step was given
 }
 
 func (f *stepAI) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
@@ -39,6 +40,9 @@ func (f *stepAI) Step(ctx context.Context, key, model string, step ai.StepReques
 				"against": []string{}, "direction": "broadcast_to_viewers"}}}
 	case "plan":
 		in := step.Input.(map[string]any)["input"].(cut.Input)
+		f.mu.Lock()
+		f.notes, _ = step.Input.(map[string]any)["user_notes"].([]cut.UserNote)
+		f.mu.Unlock()
 		var promise, first, last cut.Evidence
 		for _, e := range in.Evidence {
 			if e.Kind != cut.KindUtterance {
@@ -146,7 +150,7 @@ func TestCutAnalysisSavesAPlanWithSpans(t *testing.T) {
 	if err != nil || !strings.Contains(string(csv), ",setup,") {
 		t.Fatalf("cuts.csv %q %v", csv, err)
 	}
-	if edl, _ := os.ReadFile(filepath.Join(dir, "cuts.edl")); !strings.Contains(string(edl), "TITLE: MomentForge") || !strings.Contains(string(edl), "00:03:40:00") {
+	if edl, _ := os.ReadFile(filepath.Join(dir, "cuts.edl")); !strings.Contains(string(edl), "TITLE: MomentForge") || !strings.Contains(string(edl), "00:03:39:21") { // 0.3 s before the promise utterance
 		t.Fatalf("cuts.edl %q", edl)
 	}
 	run, _ := a.cfg.Store.AIRun(ctx, id)
@@ -280,7 +284,7 @@ func TestCutAnalysisSearchesForTheStoryOrigin(t *testing.T) {
 		len(p.Searches) != 2 || !p.Searches[0].Ran || len(p.Searches[0].FoundRefs) == 0 || p.Searches[0].Request.BeforeMs == 0 ||
 		p.Searches[1].Ran || p.Searches[1].Note == "" ||
 		p.SearchBudget.Rounds != 1 || p.SearchBudget.Requests != 1 || p.SearchBudget.Bytes == 0 || p.SearchBudget.Exhausted ||
-		len(p.SearchedRanges) != 1 || p.SelectedSpans[0].Role != "setup" || p.SelectedSpans[0].StartMs != 30000 {
+		len(p.SearchedRanges) != 1 || p.SelectedSpans[0].Role != "setup" || p.SelectedSpans[0].StartMs != 30000-cut.UtteranceLeadMs {
 		t.Fatalf("plan %+v", p)
 	}
 	// The second analyze step sent what the search found, and the log says so.
@@ -404,5 +408,126 @@ func TestCutAnalysisWithoutSearchBudgetSendsNoSearch(t *testing.T) {
 		if _, err := a.SaveSettings(st); !isCode(err, "INPUT") {
 			t.Fatalf("rounds 99: %v", err)
 		}
+	}
+}
+
+// A note on a plan goes into the next analysis, which saves a new version;
+// the confirmed version stays current beside it and is what the confirmed
+// exports for editnest hold.
+func TestCutNotesMakeANewVersionAndTheConfirmedOneStays(t *testing.T) {
+	f := &stepAI{}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl, _ := a.Timeline(ctx, demo.ID)
+	item := tl.Items[0].ID
+	a.SetAIKey("fakeai", "k", false)
+	analyse := func() AIPreview {
+		t.Helper()
+		pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{item}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v := waitAI(t, a, id); v.State != store.AICompleted {
+			t.Fatalf("run %+v", v)
+		}
+		waitIdle(t, a)
+		return pv
+	}
+	if pv := analyse(); pv.Cut.NoteCount != 0 || len(f.notes) != 0 {
+		t.Fatalf("no notes yet: %+v %v", pv.Cut, f.notes)
+	}
+	v1 := lastPlan(t, a, demo.ID)
+
+	for _, bad := range []string{"", "   ", strings.Repeat("가", maxNoteRunes+1)} {
+		if _, err := a.AddCutNote(ctx, v1.ID, bad, ""); !isCode(err, "INPUT") {
+			t.Fatalf("note %q: %v", bad, err)
+		}
+	}
+	if _, err := a.AddCutNote(ctx, v1.ID, "두 번째 시도라 앞선 약속과 연결하면 안 됨", "causes[0]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ConfirmCut(ctx, v1.ID, true, "full_event"); !isCode(err, "INPUT") {
+		t.Fatalf("a boundary the plan does not have: %v", err)
+	}
+	view, err := a.ConfirmCut(ctx, v1.ID, true, "")
+	if err != nil || !view.Confirmed || view.ConfirmedBoundary != "context" {
+		t.Fatalf("confirm %+v %v", view, err)
+	}
+	cuts := filepath.Join(a.exportDir(demo.ID), "cuts")
+	edl, err := os.ReadFile(filepath.Join(cuts, "confirmed.edl"))
+	if err != nil || !strings.Contains(string(edl), "00:03:39:21") || !strings.Contains(string(edl), "* COMMENT: 약속과 실패의 대비") {
+		t.Fatalf("confirmed.edl %q %v", edl, err)
+	}
+	if csv, _ := os.ReadFile(filepath.Join(cuts, "confirmed.csv")); !strings.HasPrefix(string(csv), "plan_id,version,boundary,") ||
+		!strings.Contains(string(csv), v1.ID+",1,context,1,setup,219700,") {
+		t.Fatalf("confirmed.csv %q", csv)
+	}
+	var memo struct {
+		Segments []struct {
+			Start float64 `json:"start"`
+			End   float64 `json:"end"`
+			Title string  `json:"title"`
+		} `json:"segments"`
+	}
+	raw, _ := os.ReadFile(filepath.Join(cuts, "confirmed.editnest.json"))
+	if json.Unmarshal(raw, &memo) != nil || len(memo.Segments) != 2 || memo.Segments[0].Start != 219.7 || memo.Segments[0].Title == "" {
+		t.Fatalf("editnest json %s", raw)
+	}
+
+	// The next analysis plans with the note and becomes v2; v1 stays confirmed and current.
+	if pv := analyse(); pv.Cut.NoteCount != 1 || !strings.Contains(pv.Plan.EstimateNote, "메모 1개") {
+		t.Fatalf("preview %+v %q", pv.Cut, pv.Plan.EstimateNote)
+	}
+	if len(f.notes) != 1 || f.notes[0].Text != "두 번째 시도라 앞선 약속과 연결하면 안 됨" || f.notes[0].AppliesTo != "causes[0]" {
+		t.Fatalf("plan step notes %+v", f.notes)
+	}
+	v2 := lastPlan(t, a, demo.ID)
+	if v2.Version != 2 || v2.ConfirmedByUser || len(v2.NotesApplied) != 1 || len(v2.UserNotes) != 0 {
+		t.Fatalf("v2 %+v", v2)
+	}
+	tl, _ = a.Timeline(ctx, demo.ID)
+	var shown []*CutDetail
+	for _, it := range tl.Items {
+		if it.Kind == "cut" {
+			shown = append(shown, it.Cut)
+		}
+	}
+	if len(shown) != 2 || !shown[0].Confirmed || shown[0].Version != 1 || shown[1].Version != 2 || shown[1].KeptVersion != 1 ||
+		len(shown[0].Notes) != 1 || len(shown[1].NotesApplied) != 1 || len(shown[0].Boundaries) != 1 || shown[0].Origin == nil || shown[0].Origin.AtMs == nil {
+		t.Fatalf("timeline cut details %+v", shown)
+	}
+	// Confirming v2 releases v1; taking it back leaves nothing confirmed and removes the confirmed files.
+	if _, err := a.ConfirmCut(ctx, v2.ID, true, "context"); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, _ := a.cfg.Store.ConfirmedCutPlans(ctx, demo.ID)
+	if len(confirmed) != 1 || confirmed[0].ID != v2.ID {
+		t.Fatalf("confirmed %+v", confirmed)
+	}
+	if _, err := a.ConfirmCut(ctx, v2.ID, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cuts, "confirmed.edl")); !os.IsNotExist(err) {
+		t.Fatalf("confirmed.edl left behind: %v", err)
+	}
+	tl, _ = a.Timeline(ctx, demo.ID)
+	n := 0
+	for _, it := range tl.Items {
+		if it.Kind == "cut" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("without a confirmation the newest alone is shown, got %d", n)
 	}
 }

@@ -238,6 +238,9 @@ type Plan struct {
 		StartReason string              `json:"start_reason"`
 		EndReason   string              `json:"end_reason"`
 		Adjustments []Adjustment        `json:"adjustments"`
+		// Resolved holds every candidate with its times (ResolveBoundaries);
+		// the chosen one equals SelectedSpans.
+		Resolved []ResolvedBoundary `json:"resolved"`
 	} `json:"boundary_decisions"`
 	Ending Ending `json:"ending"`
 
@@ -247,13 +250,36 @@ type Plan struct {
 	UnresolvedQuestions []string        `json:"unresolved_questions"`
 	Verification        Verification    `json:"verification"`
 	AnalysisVersion     Version         `json:"analysis_version"`
-	UserNotes           []UserNote      `json:"user_notes"`
-	ConfirmedByUser     bool            `json:"confirmed_by_user"`
+	// Refs keeps the time and first words of every cited ref (IndexRefs).
+	Refs map[string]RefInfo `json:"refs"`
+	// UserNotes are the notes left on this version; NotesApplied are the
+	// notes (left on earlier versions) this version was planned with.
+	UserNotes    []UserNote `json:"user_notes"`
+	NotesApplied []UserNote `json:"notes_applied"`
+	// ConfirmedByUser marks the version the user settled on; the boundary is
+	// the candidate they confirmed (short | context | full_event), which the
+	// confirmed exports cut by.
+	ConfirmedByUser   bool   `json:"confirmed_by_user"`
+	ConfirmedBoundary string `json:"confirmed_boundary,omitempty"`
+	ConfirmedAt       string `json:"confirmed_at,omitempty"`
+}
+
+// EffectiveSpans are the spans the plan stands for: the confirmed boundary
+// candidate when the user picked one, else the chosen spans.
+func (p *Plan) EffectiveSpans() []Span {
+	if p.ConfirmedBoundary != "" && p.ConfirmedBoundary != p.Boundaries.Chosen {
+		for _, b := range p.Boundaries.Resolved {
+			if b.Name == p.ConfirmedBoundary && len(b.Spans) > 0 {
+				return b.Spans
+			}
+		}
+	}
+	return p.SelectedSpans
 }
 
 // Limits of a plan.
 const (
 	MaxSpans        = 4
 	MaxTotalSpanMs  = 10 * 60 * 1000
-	PipelineVersion = 2 // 2: searches run (6-C)
+	PipelineVersion = 3 // 2: searches run (6-C); 3: speech-edge padding, every boundary resolved, user notes (6-D)
 )

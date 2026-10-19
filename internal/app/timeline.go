@@ -47,6 +47,8 @@ type TimelineItem struct {
 	SearchAdded   int
 	StoryOriginMs int64
 	HasOrigin     bool
+	// Cut plans: everything the result box shows (6-D).
+	Cut *CutDetail
 }
 
 // TimelineSpan is one span of a cut plan.
