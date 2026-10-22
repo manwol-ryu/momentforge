@@ -27,7 +27,7 @@
   </qa_pair>
   <qa_pair>
     <question>샘플 세션의 AI 검토 기록에서 프롬프트 캐시에서 읽은 입력 토큰은 모두 몇 개인가요? 숫자만 답하세요.</question>
-    <answer>10000</answer>
+    <answer>12000</answer>
   </qa_pair>
   <qa_pair>
     <question>샘플 세션에서 0:07:25부터 0:07:35 전까지 올라온 채팅 가운데 놀람을 나타내는 한 글자 반응이 아닌 메시지는 몇 개인가요? 숫자만 답하세요.</question>
@@ -47,6 +47,6 @@
   </qa_pair>
   <qa_pair>
     <question>샘플 세션에서 여러 사람이 같은 문장을 반복한 것으로 판정된 자동 탐지 후보가 있습니다. 그 후보의 편집 구간 안에 시작과 끝이 모두 들어가는 AI 추천은 몇 개인가요? 숫자만 답하세요.</question>
-    <answer>3</answer>
+    <answer>2</answer>
   </qa_pair>
 </evaluation>

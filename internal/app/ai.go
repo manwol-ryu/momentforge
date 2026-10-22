@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -423,13 +424,13 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 		}
 	}
 	add := func(it TimelineItem) {
-		in.Candidates = append(in.Candidates, ai.Candidate{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs,
-			Title: it.Title, Statistics: explainStats(it)})
 		start := it.ClipStartMs
 		if it.Source == SourceViewer {
 			start = max(0, it.AnchorMs-30000)
 			in.Comments[it.ID] = ai.Evidence{Ref: "comment:" + it.OriginID, TimeMs: it.AnchorMs, Content: it.CommentText}
 		}
+		in.Candidates = append(in.Candidates, ai.Candidate{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs,
+			Title: it.Title, Statistics: explainStats(it), StartMs: start, EndMs: it.ClipEndMs})
 		in.Ranges = append(in.Ranges, ai.Range{StartMs: start, EndMs: it.ClipEndMs})
 	}
 	switch {
@@ -751,11 +752,51 @@ func (a *App) stopAI(ctx context.Context) {
 // and they are never re-sent automatically. Submitted batches are resumed
 // (their results are fetched) once the provider's key is in memory.
 func (a *App) RecoverAI(ctx context.Context) error {
-	if _, err := a.cfg.Store.MarkAIRunsInterrupted(ctx, "앱이 종료되어 전송 결과가 불명확합니다. 자동 재실행하지 않습니다."); err != nil {
+	ids, err := a.cfg.Store.MarkAIRunsInterrupted(ctx, "앱이 종료되어 전송 결과가 불명확합니다. 자동 재실행하지 않습니다.")
+	if err != nil {
 		return err
+	}
+	for _, id := range ids {
+		a.writeInterrupted(ctx, id)
 	}
 	a.resumeBatches(ctx)
 	return nil
+}
+
+// writeInterrupted writes the files a run closed by a restart did not get
+// to write: an explanation run's results so far (and the unified timeline
+// with them), a transcript fix's transcript with the lines it fixed.
+func (a *App) writeInterrupted(ctx context.Context, id string) {
+	run, err := a.cfg.Store.AIRun(ctx, id)
+	if err != nil {
+		a.logError("read interrupted AI run", err)
+		return
+	}
+	switch run.Kind {
+	case store.AIKindExplain:
+		var plan ai.Plan
+		var recs []ai.Recommendation
+		if json.Unmarshal(run.PlanJSON, &plan) != nil {
+			return
+		}
+		json.Unmarshal(run.RecommendationsJSON, &recs)
+		var unprocessed []ai.Range
+		for _, c := range plan.Chunks[min(run.CompletedRequests, len(plan.Chunks)):] {
+			unprocessed = append(unprocessed, ai.Range{StartMs: c.StartMs, EndMs: c.EndMs})
+		}
+		a.writeAIRun(run, plan, dedupeRecs(recs), nil, unprocessed)
+		a.writeUnified(ctx, run.SessionID)
+	case store.AIKindTranscript:
+		t, ok, err := a.cfg.Store.LatestTranscript(ctx, run.SessionID)
+		if err != nil || !ok {
+			return
+		}
+		if utts, err := a.cfg.Store.UtterancesBetween(ctx, t.ID, 0, math.MaxInt64, 1_000_000); err == nil {
+			if err := export.WriteTranscript(filepath.Join(a.exportDir(run.SessionID), "transcript"), t.ID, utts); err != nil {
+				a.logError("write transcript", err)
+			}
+		}
+	}
 }
 
 var (
@@ -842,7 +883,7 @@ func (a *App) runAI(act *aiActive, run store.AIRun, plan ai.Plan, provider ai.Pr
 		} else if run.CompletedRequests > 0 {
 			run.State = store.AIPartial
 		}
-	case len(plan.Omitted) > 0 || len(extraOmitted) > 0 || run.CompletedRequests < len(plan.Chunks):
+	case plan.Missing() || len(extraOmitted) > 0 || run.CompletedRequests < len(plan.Chunks):
 		run.State = store.AIPartial
 	default:
 		run.State = store.AICompleted

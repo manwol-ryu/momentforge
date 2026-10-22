@@ -11,8 +11,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -215,6 +217,11 @@ type Candidate struct {
 	AnchorMs   int64          `json:"anchor_ms"`
 	Title      string         `json:"title"`
 	Statistics map[string]any `json:"statistics"` // the rule candidate's peak numbers; null otherwise
+	// StartMs and EndMs are the span its explanation needs most (its clip),
+	// not sent: when a request cannot hold a window's chat and speech, what
+	// is there goes first (0, 0: the anchor alone).
+	StartMs int64 `json:"-"`
+	EndMs   int64 `json:"-"`
 }
 
 // Evidence is one thing the model may cite: a chat message, a comment or
@@ -239,7 +246,18 @@ type Chunk struct {
 type Omitted struct {
 	StartMs int64  `json:"start_ms"`
 	EndMs   int64  `json:"end_ms"`
-	Reason  string `json:"reason"` // comment_input_too_large | message_too_large | input_budget | request_budget | cost_cap
+	Reason  string `json:"reason"` // comment_input_too_large | message_too_large | input_budget | request_budget | cost_cap | context_trimmed
+}
+
+// ContextTrimmed is chat and speech farther from a candidate than one
+// request could hold: the candidate is still reviewed with what is nearest.
+const ContextTrimmed = "context_trimmed"
+
+// Missing reports whether a plan leaves out part of what was chosen (a
+// window, a candidate or chat in a range review), as opposed to the far
+// context a candidate's request had no room for.
+func (p Plan) Missing() bool {
+	return slices.ContainsFunc(p.Omitted, func(o Omitted) bool { return o.Reason != ContextTrimmed })
 }
 
 // Range is a span of the video.
@@ -340,6 +358,12 @@ func ChunkInputEstimate(c Chunk) int { return len(Encode(c)) + requestOverhead }
 // Prepare splits the selected ranges into ≤ 10 KB requests of 10-minute
 // windows (30 s overlap), at most 20 (CzzEdit ai.prepare), or 100 for a
 // batch. With a cost cap, requests that would pass it are left out.
+//
+// With candidates to explain, every request holds candidates: a window is
+// one request with the chat and speech nearest its candidates' spans, and
+// what does not fit is left out (context_trimmed) instead of going alone in a
+// request without a candidate. A range review cuts a window into as many
+// requests as its chat needs.
 func Prepare(in PlanInput) (Plan, error) {
 	delivery, budget := DeliverySingle, MaxRequests
 	if in.Delivery == DeliveryBatch {
@@ -391,6 +415,9 @@ func Prepare(in PlanInput) (Plan, error) {
 					}
 				}
 			}
+			if len(in.Candidates) > 0 && len(cands) == 0 {
+				continue // between the chosen candidates: nothing to explain
+			}
 			// The size of every candidate is counted in each piece, so a piece never grows past the limit.
 			baseBytes := len(Encode(base))
 			if baseBytes > maxBaseBytes {
@@ -400,6 +427,16 @@ func Prepare(in PlanInput) (Plan, error) {
 			evs, err := windowEvidence(in, lo, hi)
 			if err != nil {
 				return p, err
+			}
+			if len(cands) > 0 {
+				kept, omitted := focus(evs, cands, maxChunkBytes-baseBytes)
+				p.Omitted = append(p.Omitted, omitted...)
+				c := cloneChunk(base)
+				c.Evidence = append(c.Evidence, kept...)
+				if len(c.Evidence) > 0 {
+					chunks = append(chunks, c)
+				}
+				continue
 			}
 			// The window's chat and speech, cut into pieces of at most maxChunkBytes.
 			empty := Chunk{StartMs: lo, EndMs: hi, Candidates: []Candidate{}, Evidence: []Evidence{}}
@@ -474,6 +511,74 @@ func Prepare(in PlanInput) (Plan, error) {
 	p.OutputTokenLimit = p.RequestCount * outLimit
 	p.Fingerprint = digest(p)
 	return p, nil
+}
+
+// focus picks, of a window's chat and speech, what fits in room bytes for
+// its candidates: what falls in a candidate's span first (speech before
+// chat, then nearest the span's middle), then the nearest outside. kept is
+// in time order; what is left out is reported as the spans it covers.
+func focus(evs []Evidence, cands []Candidate, room int) (kept []Evidence, omitted []Omitted) {
+	type ranked struct {
+		i           int
+		gap, offMid int64
+		speech      bool
+	}
+	order := make([]ranked, len(evs))
+	for i, ev := range evs {
+		r := ranked{i: i, gap: math.MaxInt64, speech: strings.HasPrefix(ev.Ref, "utt:")}
+		for _, c := range cands {
+			lo, hi := c.StartMs, c.EndMs
+			if hi <= lo {
+				lo, hi = c.AnchorMs, c.AnchorMs
+			}
+			gap := max(lo-ev.TimeMs, ev.TimeMs-hi, 0)
+			off := ev.TimeMs - (lo+hi)/2
+			if off < 0 {
+				off = -off
+			}
+			if gap < r.gap || (gap == r.gap && off < r.offMid) {
+				r.gap, r.offMid = gap, off
+			}
+		}
+		order[i] = r
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		x, y := order[a], order[b]
+		if x.gap != y.gap {
+			return x.gap < y.gap
+		}
+		if x.speech != y.speech {
+			return x.speech
+		}
+		return x.offMid < y.offMid
+	})
+	take := make([]bool, len(evs))
+	size := 0
+	for _, r := range order {
+		n := len(Encode(evs[r.i])) + 1
+		if n > maxMessageBytes+1 {
+			omitted = append(omitted, Omitted{evs[r.i].TimeMs, evs[r.i].TimeMs + 1, "message_too_large"})
+			continue
+		}
+		if size+n <= room {
+			take[r.i], size = true, size+n
+		}
+	}
+	left := -1 // the span left out so far (its index in omitted), closed by the next kept message
+	for i, ev := range evs {
+		switch {
+		case take[i]:
+			kept = append(kept, ev)
+			left = -1
+		case len(Encode(ev)) > maxMessageBytes:
+		case left >= 0:
+			omitted[left].EndMs = ev.TimeMs + 1
+		default:
+			omitted = append(omitted, Omitted{ev.TimeMs, ev.TimeMs + 1, ContextTrimmed})
+			left = len(omitted) - 1
+		}
+	}
+	return kept, omitted
 }
 
 // windowEvidence is a window's chat and, when there is a transcript, what

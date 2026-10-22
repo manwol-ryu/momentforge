@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -481,5 +482,56 @@ func TestPreviewAsksTheProviderAboutTheModel(t *testing.T) {
 	req.Model = "m"
 	if _, err := a.PreviewAI(ctx, req); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A run cut off by a restart is closed as partial with the results it got,
+// and its files are written then: the recommendations so far, the windows
+// it did not reach and the unified timeline with them.
+func TestRestartWritesInterruptedRunFiles(t *testing.T) {
+	a := newAIApp(t, &fakeAI{})
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl, _ := a.Timeline(ctx, demo.ID)
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m-1", ItemIDs: []string{tl.Items[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := pv.Plan
+	plan.Chunks = append(plan.Chunks, ai.Chunk{StartMs: 500_000, EndMs: 560_000, Candidates: []ai.Candidate{}, Evidence: []ai.Evidence{}})
+	run, err := a.cfg.Store.CreateAIRun(ctx, store.AIRun{SessionID: demo.ID, Provider: "fakeai", Model: "m-1", RequestCount: 2,
+		PlanJSON: ai.Encode(plan)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.CompletedRequests, run.Attempts = 1, 1
+	run.RecommendationsJSON, _ = json.Marshal([]ai.Recommendation{{ID: "r1", SourceCandidateIDs: []string{tl.Items[0].ID},
+		StartMs: tl.Items[0].ClipStartMs, EndMs: tl.Items[0].ClipStartMs + 5000, Title: "남은 결과", Priority: "high"}})
+	if err := a.cfg.Store.SaveAIRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.RecoverAI(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := a.cfg.Store.AIRun(ctx, run.ID)
+	if got.State != store.AIPartial || got.ErrorCode != "PROCESS_RESTART" {
+		t.Fatalf("run %s %s", got.State, got.ErrorCode)
+	}
+	dir := filepath.Join(a.exportDir(demo.ID), "ai", run.ID)
+	recs, err := os.ReadFile(filepath.Join(dir, "recommendations.json"))
+	if err != nil || !strings.Contains(string(recs), "남은 결과") {
+		t.Fatalf("recommendations %s %v", recs, err)
+	}
+	manifest, _ := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if !strings.Contains(string(manifest), `"state": "partial"`) || !strings.Contains(string(manifest), "500000") {
+		t.Errorf("manifest %s", manifest)
+	}
+	timeline, err := os.ReadFile(filepath.Join(a.exportDir(demo.ID), "timeline", "timeline.json"))
+	if err != nil || !strings.Contains(string(timeline), "남은 결과") {
+		t.Errorf("unified timeline %v", err)
 	}
 }

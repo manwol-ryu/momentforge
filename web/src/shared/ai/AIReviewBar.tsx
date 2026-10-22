@@ -8,20 +8,23 @@ import { RunStatus } from "./RunStatus";
 
 interface Props {
   s: Session;
-  /** The session has candidates to explain. */
-  hasCandidates: boolean;
+  /** Candidates that can be sent and have no explanation yet. */
+  unexplained: number;
   /** A job runs (one at a time), so the review cannot start now. */
   busy: boolean;
+  /** The automatic work will still take them (a running LIVE capture): no button for the rest. */
+  autoPending?: boolean;
 }
 
 /**
  * The AI review of a session, now that it needs no tab of its own: whether
  * it runs by itself (일반 설정) or, when it does not, the way to ask for this
- * session's scene explanations (asked once more with what it sends), and
- * the runs going on with their progress and a way to stop them. The
- * results appear under the candidates they explain.
+ * session's scene explanations (asked once more with what it sends); with
+ * it on, the way to send what an interruption or the limit left (the user
+ * agreed already); and the runs going on with their progress and a way to
+ * stop them. The results appear under the candidates they explain.
  */
-export function AIReviewBar({ s, hasCandidates, busy }: Props) {
+export function AIReviewBar({ s, unexplained, busy, autoPending = false }: Props) {
   const settings = useSettings();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
   const runs = useQuery({ queryKey: ["aiRuns", s.id], queryFn: () => api.aiRuns(s.id) });
@@ -52,12 +55,22 @@ export function AIReviewBar({ s, hasCandidates, busy }: Props) {
         )}{" "}
         <Link href="/settings">일반 설정</Link>
       </p>
-      {!auto && hasCandidates && (
+      {auto && unexplained > 0 && !autoPending && running.length === 0 && (
+        <div className="actions">
+          <span className="field-help">
+            설명이 없는 후보가 {unexplained}개 있습니다. 보내다 중단됐거나 이 작업의 한도({limits})에 닿았을 수 있습니다.
+          </span>
+          <button type="button" className="button button-quiet" onClick={() => review.mutate()} disabled={busy || review.isPending || !ready}>
+            남은 후보 설명 받기
+          </button>
+        </div>
+      )}
+      {!auto && unexplained > 0 && (
         <div className="actions">
           {ready ? (
             <ConfirmAction
               label="AI 장면 설명 받기"
-              question={`후보 앞뒤의 채팅(가명)과 대본을 ${provider!.name}로 보내 후보마다 장면 설명을 받습니다. 이 작업의 한도는 ${limits}입니다.`}
+              question={`설명이 없는 후보 ${unexplained}개의 앞뒤 채팅(가명)과 대본을 ${provider!.name}로 보내 후보마다 장면 설명을 받습니다. 이 작업의 한도는 ${limits}입니다.`}
               keepLabel="보내지 않기"
               onConfirm={() => review.mutate()}
               disabled={busy || review.isPending}

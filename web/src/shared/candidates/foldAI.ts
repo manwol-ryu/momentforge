@@ -7,6 +7,11 @@ export interface FoldedItems {
   aiFor: Map<string, TimelineItem[]>;
 }
 
+/** How many candidates (rows that are not AI results, those ok keeps) no AI explanation sits under yet. */
+export function unexplained(f: FoldedItems, ok: (it: TimelineItem) => boolean = () => true): number {
+  return f.rows.filter((it) => it.source !== "ai" && ok(it) && !f.aiFor.get(it.id)?.some((n) => n.kind !== "cut")).length;
+}
+
 /**
  * An AI recommendation that explains a listed candidate (its
  * sourceCandidateIds name it) is shown under that candidate instead of as a

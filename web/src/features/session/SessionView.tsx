@@ -16,7 +16,7 @@ import type {
 import { AIReviewBar } from "../../shared/ai/AIReviewBar";
 import { useAIEvents } from "../../shared/ai/useAIEvents";
 import { useAppState } from "../../shared/appState";
-import { foldAI } from "../../shared/candidates/foldAI";
+import { foldAI, unexplained } from "../../shared/candidates/foldAI";
 import { ListTools } from "../../shared/candidates/ListTools";
 import {
   candidateNumbers,
@@ -436,7 +436,7 @@ function Review({
           )}
         </div>
         {ranked && <ListTools counts={counts} sort={sort} onSort={setSort} filter={strength} onFilter={setStrength} />}
-        {isVOD && <AIReviewBar s={s} hasCandidates={rows.some((i) => i.source !== "ai")} busy={busy} />}
+        {isVOD && <AIReviewBar s={s} unexplained={unexplained({ rows, aiFor })} busy={busy} />}
         {shown.length > 0 && (
           <p className="section-hint">
             {s.canPlay ? "후보를 고르면 영상이 그 구간부터 재생되고 근거 채팅이 펼쳐집니다." : "후보를 고르면 그 구간의 채팅과 근거가 펼쳐집니다."}

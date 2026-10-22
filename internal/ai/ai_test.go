@@ -85,27 +85,41 @@ func TestPrepareAddsSelectedCandidatesAndComments(t *testing.T) {
 	}
 }
 
-// A window cut into pieces by size lists a candidate in one piece only (the
-// one whose chat holds its anchor), so the model explains it once.
-func TestPrepareListsACandidateOnce(t *testing.T) {
-	cands := []Candidate{{ID: "rule:m0001", SourceType: "rule", AnchorMs: 150000, Title: "웃음 증가"},
+// Candidates to explain are never left without one another's request: a
+// window too big for one request is one request with the chat nearest its
+// candidates' spans, and the rest is reported as trimmed context, which
+// does not make the plan miss anything. A range review still cuts a window
+// into as many requests as its chat needs.
+func TestPrepareKeepsCandidateWindowsWhole(t *testing.T) {
+	cands := []Candidate{{ID: "rule:m0001", SourceType: "rule", AnchorMs: 150000, Title: "웃음 증가", StartMs: 140000, EndMs: 170000},
 		{ID: "rule:m0002", SourceType: "rule", AnchorMs: 5000, Title: "채팅 급증"}}
-	p, err := Prepare(PlanInput{Model: "m", Ranges: []Range{{0, 240000}}, Candidates: cands, Chats: chats(strings.Repeat("가", 200))})
-	if err != nil || len(p.Chunks) < 3 {
-		t.Fatalf("chunks %d, err %v", len(p.Chunks), err)
+	in := PlanInput{Model: "m", Ranges: []Range{{0, 240000}}, Candidates: cands, Chats: chats(strings.Repeat("가", 200))}
+	p, err := Prepare(in)
+	if err != nil || len(p.Chunks) != 1 || len(p.Chunks[0].Candidates) != 2 {
+		t.Fatalf("chunks %+v, err %v", p.Chunks, err)
 	}
-	seen := map[string]int{}
-	for _, c := range p.Chunks {
-		for _, cand := range c.Candidates {
-			seen[cand.ID]++
-			first, last := c.Evidence[0].TimeMs, c.Evidence[len(c.Evidence)-1].TimeMs
-			if cand.AnchorMs < first || cand.AnchorMs > last {
-				t.Fatalf("%s (anchor %d) listed in a piece spanning %d–%d", cand.ID, cand.AnchorMs, first, last)
+	c := p.Chunks[0]
+	if n := len(Encode(c)); n > maxChunkBytes {
+		t.Errorf("request is %d bytes", n)
+	}
+	near := func(ms int64) bool {
+		for _, ev := range c.Evidence {
+			if ev.TimeMs == ms {
+				return true
 			}
 		}
+		return false
 	}
-	if seen["rule:m0001"] != 1 || seen["rule:m0002"] != 1 {
-		t.Fatalf("candidates listed %v times", seen)
+	if !near(150000) || !near(5000) || near(80000) {
+		t.Errorf("kept %d messages: the spans and anchors first, the middle of the window last", len(c.Evidence))
+	}
+	if len(p.Omitted) == 0 || p.Omitted[0].Reason != ContextTrimmed || p.Missing() {
+		t.Errorf("omitted %+v", p.Omitted)
+	}
+
+	in.Candidates = nil
+	if p, err := Prepare(in); err != nil || len(p.Chunks) < 3 {
+		t.Fatalf("range review: chunks %d, err %v", len(p.Chunks), err)
 	}
 }
 

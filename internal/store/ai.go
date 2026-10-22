@@ -240,13 +240,35 @@ func (s *Store) CompletedAIRun(ctx context.Context, sid, fingerprint string) (AI
 }
 
 // MarkAIRunsInterrupted closes runs left running by a crash or quit as
-// partial. Submitted batches keep running at the provider and are not touched.
-func (s *Store) MarkAIRunsInterrupted(ctx context.Context, message string) (int, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE ai_runs SET state=?, error_code='PROCESS_RESTART', error_message=?, updated_at=?
-		WHERE state=? AND (delivery<>? OR batch_id IS NULL)`, AIPartial, message, now(), AIRunning, AIBatch)
+// partial and returns their IDs. Submitted batches keep running at the
+// provider and are not touched.
+func (s *Store) MarkAIRunsInterrupted(ctx context.Context, message string) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	defer tx.Rollback()
+	const where = `state=? AND (delivery<>? OR batch_id IS NULL)`
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM ai_runs WHERE `+where+` ORDER BY created_at`, AIRunning, AIBatch)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ai_runs SET state=?, error_code='PROCESS_RESTART', error_message=?, updated_at=?
+		WHERE `+where, AIPartial, message, now(), AIRunning, AIBatch); err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit()
 }

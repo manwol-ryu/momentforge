@@ -167,7 +167,7 @@ func (a *App) finishBatch(run store.AIRun, plan ai.Plan, results []ai.BatchResul
 		if run.CompletedRequests > 0 {
 			run.State = store.AIPartial
 		}
-	case run.CompletedRequests < len(plan.Chunks) || len(plan.Omitted) > 0:
+	case run.CompletedRequests < len(plan.Chunks) || plan.Missing():
 		run.State = store.AIPartial
 		if ue, ok := domain.AsUserError(firstErr); ok {
 			run.ErrorCode, run.ErrorMessage = ue.Code, ue.Message

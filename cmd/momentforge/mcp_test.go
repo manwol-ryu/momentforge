@@ -57,7 +57,8 @@ const evalComments = "5:05 다들 웃음 터진 장면\n7:35 놀란 반응\n2:00
 
 // buildEvalData writes the MCP evaluation data set into dir: the built-in
 // sample analyzed with the default rules, pasted viewer comments, and one
-// review by evalAI. Everything is synthetic.
+// review of the whole sample's chat by evalAI (a range review: requests cut
+// by size, as many as the chat needs). Everything is synthetic.
 func buildEvalData(t *testing.T, dir string) {
 	t.Helper()
 	ctx := context.Background()
@@ -83,16 +84,8 @@ func buildEvalData(t *testing.T, dir string) {
 			t.Fatal("comments job did not finish")
 		}
 	}
-	tl, err := core.Timeline(ctx, demo.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ids []string
-	for _, it := range tl.Items {
-		ids = append(ids, it.ID)
-	}
 	core.SetAIKey("evalai", "k", false)
-	pv, err := core.PreviewAI(ctx, app.AIPreviewRequest{SessionID: demo.ID, Provider: "evalai", Model: "eval-model", ItemIDs: ids})
+	pv, err := core.PreviewAI(ctx, app.AIPreviewRequest{SessionID: demo.ID, Provider: "evalai", Model: "eval-model", ToEnd: true})
 	if err != nil {
 		t.Fatal(err)
 	}

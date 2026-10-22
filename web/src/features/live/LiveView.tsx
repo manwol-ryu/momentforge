@@ -5,7 +5,7 @@ import type { Candidate, CutBoundaryName, ExportFile, LiveState, LiveStatus, Tim
 import { AIReviewBar } from "../../shared/ai/AIReviewBar";
 import { useAIEvents } from "../../shared/ai/useAIEvents";
 import { useAppState } from "../../shared/appState";
-import { foldAI, type FoldedItems } from "../../shared/candidates/foldAI";
+import { foldAI, unexplained, type FoldedItems } from "../../shared/candidates/foldAI";
 import { candidateNumbers } from "../../shared/candidates/strength";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { CutRequest } from "../../shared/candidates/CutRequest";
@@ -248,6 +248,11 @@ function Workspace({ v, feed, items, aiItems, folded, aiRunId, tab, onTab }: Wor
     placeholderData: (prev) => prev,
   });
   const candidates = useMemo(() => new Map(feed.candidates.map((c) => [c.id, c])), [feed.candidates]);
+  // What AI may explain: a candidate once judged (or settled, in older captures); AI results' own rows are not counted.
+  const sendable = (it: TimelineItem) => {
+    const c = it.source === "rule" ? candidates.get(it.originId) : undefined;
+    return it.source !== "rule" || (!!c && settled(c));
+  };
   const numbers = useMemo(() => candidateNumbers(feed.candidates), [feed.candidates]);
   const sources = [...new Set(folded.rows.map((i) => i.source))];
   const shown = filter === "all" ? folded.rows : folded.rows.filter((i) => i.source === filter);
@@ -393,7 +398,7 @@ function Workspace({ v, feed, items, aiItems, folded, aiRunId, tab, onTab }: Wor
                         사라집니다.
                       </p>
                     )}
-                    <AIReviewBar s={v.session} hasCandidates={feed.candidates.some(settled)} busy={false} />
+                    <AIReviewBar s={v.session} unexplained={unexplained(folded, sendable)} busy={false} autoPending={v.running} />
                     {shown.length === 0 ? (
                       <p className="empty">
                         {folded.rows.length > 0
