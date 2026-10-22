@@ -7,7 +7,6 @@ import type {
   Chat,
   CutBoundaryName,
   DetectWindow,
-  ExportFile,
   Session,
   TimelineItem,
   TimelineSource,
@@ -16,8 +15,8 @@ import type {
 } from "../../api/types";
 import { AIComparePanel } from "../../shared/ai/AIComparePanel";
 import { AIPanel } from "../../shared/ai/AIPanel";
+import { useAIReview } from "../../shared/ai/useAIReview";
 import { useAppState } from "../../shared/appState";
-import { boundarySpans, startBoundary } from "../../shared/candidates/CutBox";
 import { foldAI } from "../../shared/candidates/foldAI";
 import { ListTools } from "../../shared/candidates/ListTools";
 import {
@@ -30,8 +29,10 @@ import {
   type StrengthFilter,
 } from "../../shared/candidates/strength";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
+import { useCutView } from "../../shared/candidates/useCutView";
 import { ChatList, currentChat } from "../../shared/chat/ChatList";
-import { formatSize, timecode } from "../../shared/format";
+import { aiGroup, cutGroups, entriesIn, ExportFiles, fileName, olderCutFolders, type FileGroup } from "../../shared/files/ExportFiles";
+import { timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
 import { Segmented } from "../../shared/motion/Segmented";
@@ -80,42 +81,17 @@ export function SessionView({ id }: { id: string }) {
   });
   const isVOD = session.data?.kind === "vod";
   const timeline = useQuery({ queryKey: ["timeline", id, analysisId], queryFn: () => api.timeline(id), enabled: isVOD });
-  const [aiSelection, setAISelection] = useState<Set<string>>(() => new Set());
-  const toggleAI = (itemId: string) => {
-    setAISelection((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(itemId)) next.add(itemId);
-      return next;
-    });
-    setContinuePlans((cur) => {
-      if (!(itemId in cur)) return cur;
-      const next = { ...cur };
-      delete next[itemId];
-      return next;
-    });
-  };
-  const pickAI = (itemIds: string[]) => setAISelection((cur) => new Set([...cur, ...itemIds]));
-  // A cut box's "다시 분석" names the plan the new analysis continues (its versions and notes).
-  const [continuePlans, setContinuePlans] = useState<Record<string, string>>({});
-  // Candidate IDs follow time, so a new analysis gives the picked IDs to other moments.
-  useEffect(() => {
-    setAISelection(new Set());
-    setContinuePlans({});
-  }, [analysisId]);
+  // Candidate IDs follow time, so a new analysis starts the picks over.
+  const review = useAIReview(analysisId);
   const [tab, setTab] = useState<PanelTab>("candidates");
-  // Counts the times the candidate list asked for an AI review; the AI tab previews the picked candidates each time.
-  const [previewAsk, setPreviewAsk] = useState(0);
-  const [askKind, setAskKind] = useState<"explain" | "cut" | undefined>(undefined);
-  const askAI = (kind?: "explain" | "cut") => {
-    setAskKind(kind);
+  const askPicks = () => {
+    review.askPicks();
     setTab("ai");
-    setPreviewAsk((n) => n + 1);
   };
-  // A cut box's "다시 분석": that candidate alone, as a cut analysis (its notes go along).
-  const reanalyzeCut = (itemId: string, planId?: string) => {
-    setAISelection(new Set([itemId]));
-    setContinuePlans(planId ? { [itemId]: planId } : {});
-    askAI("cut");
+  // A cut box's "다시 분석": that candidate alone, as a cut analysis (its notes go along); the picks stay.
+  const reanalyzeCut = (itemId: string, label: string, planId?: string) => {
+    review.askReanalysis({ itemId, planId, label });
+    setTab("ai");
   };
   const job = useJob();
   // The job that was already there when the page opened (null: none); later jobs are news.
@@ -182,10 +158,10 @@ export function SessionView({ id }: { id: string }) {
         <>
           <AIPanel
             s={s}
-            selection={[...aiSelection]}
-            continuePlans={continuePlans}
-            previewAsk={previewAsk}
-            askKind={askKind}
+            selection={review.picked}
+            reanalysis={review.reanalysis}
+            onEndReanalysis={review.endReanalysis}
+            previewAsk={review.asked}
             onShowCandidates={() => setTab("candidates")}
           />
           <AIComparePanel s={s} />
@@ -202,7 +178,7 @@ export function SessionView({ id }: { id: string }) {
     label: "파일",
     content: (
       <>
-        <Files sessionId={s.id} analysisId={analysisId} timeline={tl} updatedAt={s.updatedAt} />
+        <Files sessionId={s.id} analysisId={analysisId} timeline={tl} updatedAt={s.updatedAt} longForm={s.durationMs >= 3_600_000} />
         {isVOD && <BundlePanel s={s} busy={busy} />}
       </>
     ),
@@ -249,14 +225,11 @@ export function SessionView({ id }: { id: string }) {
         rows={folded.rows}
         aiFor={folded.aiFor}
         busy={busy}
-        aiSelection={aiSelection}
-        onToggleAI={toggleAI}
-        onPickAI={pickAI}
-        onClearAI={() => {
-          setAISelection(new Set());
-          setContinuePlans({});
-        }}
-        onAskAI={() => askAI()}
+        aiSelection={review.selection}
+        onToggleAI={review.toggle}
+        onPickAI={review.pick}
+        onClearAI={review.clear}
+        onAskAI={askPicks}
         onReanalyzeCut={reanalyzeCut}
         tab={tab}
         onTab={setTab}
@@ -330,7 +303,7 @@ interface ReviewProps {
   /** Open the AI tab and preview a review of the picked candidates. */
   onAskAI: () => void;
   /** Open the AI tab and preview a new cut analysis of one candidate. */
-  onReanalyzeCut: (itemId: string, planId?: string) => void;
+  onReanalyzeCut: (itemId: string, label: string, planId?: string) => void;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
   /** The panel's other tabs, after the candidates. */
@@ -355,12 +328,10 @@ function Review({
   tools,
 }: ReviewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // The boundary candidate shown per cut plan, and the plan whose spans the timeline draws.
-  const [cutChoice, setCutChoice] = useState<Record<string, CutBoundaryName>>({});
-  const [cutFocus, setCutFocus] = useState<string | null>(null);
+  // The boundary candidate shown per cut plan, and the spans the timeline draws for the chosen row.
+  const cut = useCutView(items, aiFor, selectedId);
   const chooseCut = (planId: string, name: CutBoundaryName, itemId: string) => {
-    setCutChoice((cur) => ({ ...cur, [planId]: name }));
-    setCutFocus(planId);
+    cut.choose(planId, name);
     setSelectedId(itemId);
   };
   const [filter, setFilter] = useState<SourceFilter>("all");
@@ -488,17 +459,6 @@ function Review({
   );
 
   const showTimeline = (!!a || items.length > 0) && durationMs > 0;
-  // The chosen row's cut plan on the timeline: the one last switched, else the confirmed one, else the newest.
-  const selectedRow = selectedId ? items.find((i) => i.id === selectedId) : undefined;
-  const cutsHere = [...((selectedId && aiFor.get(selectedId)) || []), ...(selectedRow?.kind === "cut" ? [selectedRow] : [])].filter(
-    (n) => n.kind === "cut" && n.cut,
-  );
-  const cutShown =
-    cutsHere.find((n) => n.cut!.planId === cutFocus) ?? cutsHere.find((n) => n.cut!.confirmed) ?? cutsHere[cutsHere.length - 1];
-  const cutSpans = useMemo(
-    () => (cutShown ? boundarySpans(cutShown, cutChoice[cutShown.cut!.planId] ?? startBoundary(cutShown.cut!)) : []),
-    [cutShown, cutChoice],
-  );
   const noResult = s.state === "comments_only"
     ? "영상 댓글에서 시각을 찾지 못했습니다. 위의 채팅 수집을 누르면 채팅으로 편집 후보를 찾습니다."
     : "아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.";
@@ -570,7 +530,7 @@ function Review({
             platformName={s.platformName}
             onSeek={seek}
             onPlaySpans={playSpans}
-            cutChoice={cutChoice}
+            cutChoice={cut.choice}
             onCutChoice={chooseCut}
             onReanalyzeCut={onReanalyzeCut}
             aiSelection={aiSelection}
@@ -611,6 +571,7 @@ function Review({
                   ref={player}
                   sessionId={s.id}
                   transport
+                  fallback={s.watchUrl ? `위의 ‘${s.platformName}에서 열기’로 볼 수 있습니다.` : undefined}
                   onTime={(ms) => {
                     if (Math.abs(playhead.get() - ms) >= 250) playhead.set(ms);
                   }}
@@ -657,7 +618,7 @@ function Review({
             candidates={markerCandidates}
             numbers={numbers}
             extraMarkers={extraMarkers}
-            cutSpans={cutSpans}
+            cutSpans={cut.spans}
             selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
             onSelect={(markerId) => select(markerId.includes(":") ? markerId : "rule:" + markerId)}
             onScrub={scrub}
@@ -914,85 +875,98 @@ function Reanalyze({ s, a, busy }: { s: Session; a: Analysis; busy: boolean }) {
   );
 }
 
-/** What each export file holds, by its name. */
-export const fileText: Record<string, string> = {
+/** What each file of a VOD's own folders holds, by its name. */
+const chatText: Record<string, string> = {
   "chat.txt": "시간순 채팅 TXT",
-  "chat.jsonl": "채팅 JSONL",
   "chat.received.txt": "받은 순서대로 채팅 TXT",
-  "timeline.txt": "편집 후보 TXT",
-  "timeline.csv": "편집 후보 CSV",
-  "timeline.json": "편집 후보 JSON",
-  "candidates.txt": "편집 후보 TXT",
-  "candidates.csv": "편집 후보 CSV",
-  "candidates.json": "편집 후보 JSON",
-  "comments.jsonl": "댓글 JSONL",
-  "recommendations.txt": "AI 추천 TXT",
-  "recommendations.json": "AI 추천 JSON",
-  "plan.json": "컷 계획 JSON",
-  "cuts.csv": "컷 구간 CSV",
-  "cuts.edl": "컷 구간 EDL",
-  "confirmed.edl": "컷 확정본 EDL (editnest·편집 프로그램)",
-  "confirmed.csv": "컷 확정본 CSV",
-  "confirmed.editnest.json": "컷 확정본 editnest 타임라인 메모 JSON",
-  "manifest.json": "기록 JSON",
+  "chat.jsonl": "채팅 JSONL",
+};
+const allSourcesText: Record<string, string> = {
+  "timeline.txt": "모든 출처 편집 후보 TXT",
+  "timeline.csv": "모든 출처 편집 후보 CSV",
+  "timeline.json": "모든 출처 편집 후보 JSON",
+};
+const ruleText: Record<string, string> = {
+  "timeline.txt": "자동 탐지 편집 후보 TXT",
+  "timeline.csv": "자동 탐지 편집 후보 CSV",
+  "timeline.json": "자동 탐지 편집 후보 JSON",
+  "candidates.txt": "자동 탐지 편집 후보 TXT",
+  "candidates.csv": "자동 탐지 편집 후보 CSV",
+  "candidates.json": "자동 탐지 편집 후보 JSON",
   "analysis-manifest.json": "분석 기록 JSON",
 };
+const commentText: Record<string, string> = {
+  "recommendations.json": "시청자 추천 JSON",
+  "comments.jsonl": "영상 댓글 JSONL",
+  "manifest.json": "댓글 수집 기록 JSON",
+};
+const transcriptText: Record<string, string> = { srt: "대본 SRT", vtt: "대본 VTT", json: "대본 JSON" };
 
-function Files({ sessionId, analysisId, timeline, updatedAt }: { sessionId: string; analysisId?: string; timeline?: UnifiedTimeline; updatedAt: string }) {
+interface FilesProps {
+  sessionId: string;
+  analysisId?: string;
+  timeline?: UnifiedTimeline;
+  updatedAt: string;
+  longForm: boolean;
+}
+
+/**
+ * The files of a VOD in groups, the ones for editing first: the confirmed
+ * cuts, the candidates (all sources, then the automatic ones), the chat,
+ * the viewers' picks, the AI review, each cut analysis, the transcript and
+ * the collection record. Only the newest analysis, comment capture and AI
+ * review are listed; older ones stay in the data folder.
+ */
+function Files({ sessionId, analysisId, timeline, updatedAt, longForm }: FilesProps) {
   const files = useQuery({
     queryKey: ["files", sessionId, analysisId, timeline?.captureId, timeline?.aiRunId, timeline?.items.filter((i) => i.kind === "cut").length, updatedAt],
     queryFn: () => api.files(sessionId),
   });
-  const download = useMutation({ mutationFn: (f: ExportFile) => api.download(sessionId, f.path) });
-  // Top-level chat files and the newest analysis, timeline, comment capture and AI run.
-  const folders: [string | undefined, string][] = [
-    ["timeline/", "통합"],
-    [analysisId && analysisId + "/", "분석"],
-    [timeline?.captureId && `comments/${timeline.captureId}/`, "댓글"],
-    [timeline?.aiRunId && `ai/${timeline.aiRunId}/`, "AI"],
-    ["cuts/", "컷"], // every cut plan folder: each is a result of its own
-    ["transcript/", "대본"],
+  const all = files.data ?? [];
+  const items = timeline?.items ?? [];
+  // Replaced cut analyses are named from the saved plans, asked for only when there are any.
+  const older = olderCutFolders(all, items);
+  const saved = useQuery({
+    queryKey: ["cutPlans", sessionId, older.join(",")],
+    queryFn: () => api.cutPlans(sessionId),
+    enabled: older.length > 0,
+  });
+  const [confirmed, ...plans] = cutGroups(all, items, longForm, saved.data?.plans);
+  const transcripts = all
+    .filter((f) => /^transcript\/[^/]+$/.test(f.path) && transcriptText[fileName(f).split(".").pop() ?? ""])
+    .map((f) => ({ file: f, label: transcriptText[fileName(f).split(".").pop()!]! }));
+  const groups: FileGroup[] = [
+    confirmed!,
+    {
+      id: "candidates",
+      title: "편집 후보",
+      help: "모든 출처는 자동 탐지·시청자 추천·AI 추천을 시각순으로 합친 목록이고, 자동 탐지는 채팅 분석이 찾은 후보와 근거입니다.",
+      entries: [...entriesIn(all, "timeline/", allSourcesText), ...(analysisId ? entriesIn(all, analysisId + "/", ruleText) : [])],
+    },
+    { id: "chat", title: "채팅", entries: entriesIn(all, "", chatText) },
+    {
+      id: "comments",
+      title: "시청자 추천 (영상 댓글)",
+      entries: timeline?.captureId ? entriesIn(all, `comments/${timeline.captureId}/`, commentText) : [],
+    },
+    aiGroup(all, timeline?.aiRunId),
+    ...plans,
+    { id: "transcript", title: "대본", entries: transcripts },
+    { id: "record", title: "수집 기록", entries: entriesIn(all, "", { "manifest.json": "수집 기록 JSON" }) },
   ];
-  // Chat files first, then each folder in the order above.
-  const groupOf = (f: ExportFile) =>
-    f.path.includes("/") ? folders.findIndex(([prefix]) => prefix && f.path.startsWith(prefix)) + 1 : 0;
-  const name = (f: ExportFile) => f.path.split("/").pop() ?? f.path;
-  const labelOf = (f: ExportFile): string | null => {
-    let text = fileText[name(f)] ?? name(f);
-    if (f.path.startsWith("transcript/")) text = { srt: "대본 SRT", vtt: "대본 VTT", json: "대본 JSON" }[name(f).split(".").pop() ?? ""] ?? text;
-    if (!f.path.includes("/")) return text;
-    const hit = folders.find(([prefix]) => prefix && f.path.startsWith(prefix));
-    if (!hit || f.path.includes("/markers/")) return null;
-    return text.startsWith(hit[1]) ? text : `${hit[1]} ${text}`;
-  };
-  const shown = (files.data ?? [])
-    .filter((f) => labelOf(f) !== null)
-    .sort((x, y) => groupOf(x) - groupOf(y) || x.path.localeCompare(y.path));
   return (
     <section className="panel-section" aria-labelledby="files-title">
       <h2 id="files-title" className="section-title">
-        내보내기
+        내보낸 파일
       </h2>
-      {shown.length === 0 ? (
-        <p className="empty">아직 만든 파일이 없습니다.</p>
+      {files.isError ? (
+        <p className="error" role="alert">
+          {files.error.message}
+        </p>
       ) : (
-        <ul className="files">
-          {shown.map((f) => (
-            <li key={f.path}>
-              <button type="button" className="link-button" onClick={() => download.mutate(f)}>
-                {labelOf(f)} <span className="file-name">{name(f)}</span>
-              </button>{" "}
-              <span className="file-size">{formatSize(f.size)}</span>
-            </li>
-          ))}
-        </ul>
+        <ExportFiles sessionId={sessionId} groups={groups} empty={files.isPending ? "파일 목록을 불러오는 중" : "아직 만든 파일이 없습니다."} />
       )}
       <p className="field-help">후보별 앞뒤 채팅(markers 폴더)은 데이터 폴더의 exports에서 볼 수 있습니다.</p>
-      {download.isError && (
-        <p className="error" role="alert">
-          {download.error.message}
-        </p>
-      )}
     </section>
   );
 }

@@ -470,6 +470,31 @@ textarea {
   margin: 0;
 }
 
+/* An action asked once more in place (ConfirmAction): the question, then "keep" before the action. */
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  max-width: 34rem;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--tint-rose);
+  color: var(--ink);
+  font-size: var(--text-xs);
+  animation: mf-page var(--dur-2) var(--ease-out) backwards;
+}
+
+.confirm-question {
+  flex: 1 1 14rem;
+}
+
+.confirm-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .notice .actions {
   margin-top: var(--space-2);
 }
@@ -1431,6 +1456,39 @@ textarea {
   max-width: 32rem;
 }
 
+/* Whether the AI review starts with this provider; another one is made the default here, not by viewing it. */
+.provider-default {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  margin: 0 0 var(--space-3);
+}
+
+.provider-default[data-default] {
+  color: var(--positive-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.provider-default .field-help {
+  margin: 0;
+}
+
+/* The default provider's mark inside its segment. */
+.seg-mark {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--positive-soft);
+  color: var(--positive-text);
+  font-size: 11px;
+}
+
+.field-invalid {
+  color: var(--alert);
+}
+
 .provider-auth {
   margin-top: var(--space-3);
 }
@@ -1772,76 +1830,86 @@ textarea {
   text-decoration: none;
 }
 
-@media (min-width: 1100px) and (min-height: 600px) {
-  .ws {
-    grid-template-areas:
-      "head head"
-      "stage panel";
-    grid-template-columns: minmax(0, 1fr) var(--panel-w);
-    grid-template-rows: auto minmax(0, 1fr);
-    height: 100dvh;
-  }
+/* The page's own width decides, not the window's: folding the work list on a small laptop
+   (1024px) makes room for the tools beside the stage. 862px is the page beside an open list
+   in a 1100px window, where this layout began; narrower, the stage is too cramped for the
+   monitor and the chat. */
+.shell-main {
+  container: main / inline-size;
+}
 
-  .ws-notices {
-    max-height: 30dvh;
-    overflow-y: auto;
-  }
-
-  .ws-panel {
-    border-top: 0;
-    border-left: 1px solid var(--rule);
-  }
-
-  .panel-tabs .tab-panel {
-    /* The containing block of the absolute pieces inside (segmented-control pills, visually hidden labels), so they scroll with it instead of lengthening the page. */
-    position: relative;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  /* The video is a monitor: it fills its card and letterboxes the picture. */
-  .stage-video .player {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  .stage-video .player-video {
-    flex: 1;
-    min-height: 0;
-    height: 100%;
-    aspect-ratio: auto;
-    object-fit: contain;
-  }
-
-  .stage-video .player-off {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .stage-chat .chatlog,
-  .stage-chat .chatlog-live {
-    flex: 1;
-    height: auto;
-    min-height: 0;
-  }
-
-  .stage-timeline .timeline-track {
-    height: 88px;
-  }
-
-  /* A narrow stage (the list open on a small laptop): the monitor above, the chat below it. */
-  @container stage (max-width: 43.99rem) {
-    .stage-media[data-video] {
-      grid-template-rows: minmax(0, 1.2fr) minmax(7rem, 1fr);
+@media (min-width: 860px) and (min-height: 600px) {
+  @container main (min-width: 862px) {
+    .ws {
+      grid-template-areas:
+        "head head"
+        "stage panel";
+      grid-template-columns: minmax(0, 1fr) var(--panel-w);
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100dvh;
     }
 
-    /* LIVE: the chat is the work; the broadcast, seconds behind it, is for reference. */
-    .ws-live .stage-media[data-video] {
-      grid-template-rows: minmax(0, 1fr) minmax(11rem, 1.4fr);
+    .ws-notices {
+      max-height: 30dvh;
+      overflow-y: auto;
+    }
+
+    .ws-panel {
+      border-top: 0;
+      border-left: 1px solid var(--rule);
+    }
+
+    .panel-tabs .tab-panel {
+      /* The containing block of the absolute pieces inside (segmented-control pills, visually hidden labels), so they scroll with it instead of lengthening the page. */
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    /* The video is a monitor: it fills its card and letterboxes the picture. */
+    .stage-video .player {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .stage-video .player-video {
+      flex: 1;
+      min-height: 0;
+      height: 100%;
+      aspect-ratio: auto;
+      object-fit: contain;
+    }
+
+    .stage-video .player-off {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .stage-chat .chatlog,
+    .stage-chat .chatlog-live {
+      flex: 1;
+      height: auto;
+      min-height: 0;
+    }
+
+    .stage-timeline .timeline-track {
+      height: 88px;
+    }
+
+    /* A narrow stage (the list open on a small laptop): the monitor above, the chat below it. */
+    @container stage (max-width: 43.99rem) {
+      .stage-media[data-video] {
+        grid-template-rows: minmax(0, 1.2fr) minmax(7rem, 1fr);
+      }
+
+      /* LIVE: the chat is the work; the broadcast, seconds behind it, is for reference. */
+      .ws-live .stage-media[data-video] {
+        grid-template-rows: minmax(0, 1fr) minmax(11rem, 1.4fr);
+      }
     }
   }
 }
@@ -1897,11 +1965,6 @@ textarea {
 
   .panel-tabs .tab-panel {
     padding: var(--space-3) var(--space-3) var(--space-6);
-  }
-
-  /* Every other time label, so they do not overlap on phones. */
-  .timeline-axis span:nth-child(even):not([data-edge]) {
-    display: none;
   }
 }
 
@@ -3343,6 +3406,35 @@ button.cut-ref:focus-visible {
   background: var(--sunken);
 }
 
+.files .link-button {
+  text-align: left; /* a long name wraps under itself, not centred */
+}
+
+/* Exported files in groups (the confirmed cuts, the candidates, the chat …): a small title, a line of help, the files. */
+.file-groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.file-group-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.file-group > .field-help {
+  margin: 2px 0 var(--space-1);
+}
+
+details.file-group > summary {
+  color: var(--link);
+  cursor: pointer;
+}
+
+details.file-group[open] > summary {
+  margin-bottom: var(--space-1);
+}
+
 /* Session backup bundle (Files tab): a folder path is long and must wrap anywhere. */
 .bundle-path {
   font-size: var(--text-xs);
@@ -3517,8 +3609,21 @@ button.cut-ref:focus-visible {
   border: 0;
 }
 
-.ai-range input {
-  width: 8em;
+.ai-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: end;
+  margin-top: var(--space-3);
+}
+
+.ai-range .field {
+  width: 9.5em;
+}
+
+.ai-range-dash {
+  padding-bottom: 0.6rem;
+  color: var(--muted);
 }
 
 .ai-cap input {
@@ -3560,6 +3665,29 @@ button.cut-ref:focus-visible {
 
 .ai-status[data-state="failed"] {
   color: var(--alert);
+}
+
+.ai-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  align-items: baseline;
+}
+
+.ai-status-line {
+  margin: 0;
+}
+
+/* A cut box's "다시 분석" names the one candidate it sends; the ticked ones stay. */
+.ai-target {
+  max-width: none;
+  margin-bottom: var(--space-3);
+  background: var(--ai-soft);
+  font-size: var(--text-xs);
+}
+
+.ai-target .actions {
+  margin-top: var(--space-1);
 }
 
 /* A search round's results waiting for the user (컷 분석, "검색마다 확인"). */

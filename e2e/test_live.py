@@ -26,6 +26,12 @@ def select_row(row) -> None:
     expect(head).to_have_attribute("aria-pressed", "true")
 
 
+def stop_capture(page: Page) -> None:
+    """Stopping is asked once more (the chat while stopped is lost): the button, then the same action in its question."""
+    page.get_by_role("button", name="수집 중단").click()
+    page.get_by_role("group", name="수집 중단 확인").get_by_role("button", name="수집 중단").click()
+
+
 def live_form(page: Page):
     page.get_by_role("tab", name="생방송").click()
     return page.get_by_role("form", name="생방송 수집")
@@ -67,6 +73,9 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     expect(cand.locator(".evidence li").first).to_contain_text("ㅋㅋㅋㅋㅋ")
     expect(cand.get_by_role("list", name="편집 구간 채팅").locator("li[data-evidence]").first).to_be_visible()
     expect(page.locator(".timeline-gap")).to_have_count(1)
+    # The capture joined the broadcast late: the timeline starts where the chat does, the whole broadcast a click away.
+    expect(page.get_by_role("radio", name="수집한 구간")).to_be_checked()
+    expect(timeline).to_have_attribute("aria-label", re.compile("확대해 보는 중"))
     page.screenshot(path=str(SHOTS / "live-running.png"), full_page=True)
 
     # New chat keeps arriving over SSE.
@@ -81,9 +90,17 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     text = Path(info.value.path()).read_text(encoding="utf-8")
     assert text.startswith("MomentForge 편집 후보") and "방송 시작 후 경과" in text, text[:200]
 
+    # Stopping is asked once more; keeping on leaves the capture running.
     page.get_by_role("button", name="수집 중단").click()
+    question = page.get_by_role("group", name="수집 중단 확인")
+    expect(question).to_contain_text("멈춘 동안의 채팅은 받을 수 없습니다")
+    question.get_by_role("button", name="계속 수집").click()
+    expect(question).to_have_count(0)
+    expect(page.locator(".live-state")).to_have_text("채팅 수신 중")
+    stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
     expect(page.get_by_text("수집을 중단했습니다.")).to_be_visible()
+    expect(page.get_by_role("button", name="현재까지 저장")).to_have_count(0)  # a stopped capture has saved everything
     expect(screen.get_by_label("생방송 영상")).to_have_count(0)
     expect(screen).to_contain_text("생방송 영상은 수집하는 동안에만 보여 줍니다. 이어 기록하면 다시 불러옵니다.")
     # Switched off, the video card is one line and the chat takes the room.
@@ -93,7 +110,7 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     page.get_by_role("tab", name="수집 상태").click()
     expect(page.locator(".facts")).to_contain_text("연결 복구 1회")
     expect(page.locator(".facts")).to_contain_text("2개")  # the stop became a second gap
-    page.get_by_role("button", name="수집 중단").click()
+    stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
 
     # The saved list follows the capture's state.
@@ -148,7 +165,7 @@ def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
     page.get_by_label("AI 제공자").select_option(label="E2E 가짜 AI")
     page.get_by_label(re.compile("E2E 가짜 AI API 키")).fill("test-key")
     page.get_by_role("button", name="키 저장").click()
-    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(있음\\)"))).to_be_visible()
     expect(page.get_by_role("textbox", name=re.compile("^비용 한도"))).to_be_visible()
 
     # A range with no end runs up to the analysed point; previewing sends nothing.
@@ -187,7 +204,7 @@ def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
     page.get_by_role("tab", name="파일").click()
     expect(page.get_by_role("button", name="AI 추천 TXT")).to_be_visible()
 
-    page.get_by_role("button", name="수집 중단").click()
+    stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
 
 
@@ -208,7 +225,7 @@ def test_live_view_dark_and_mobile(page: Page, base_url: str) -> None:
     assert overflow <= 0, f"horizontal overflow {overflow}px"
     page.screenshot(path=str(SHOTS / "live-mobile-dark.png"), full_page=True)
     if page.get_by_role("button", name="수집 중단").count():
-        page.get_by_role("button", name="수집 중단").click()
+        stop_capture(page)
         expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
 
 
@@ -226,7 +243,7 @@ def test_live_without_stream_keeps_chat_and_platform_link(page: Page, base_url: 
     expect(page.get_by_role("link", name="E2E 가짜 방송에서 열기")).to_be_visible()
     expect(page.get_by_role("list", name="실시간 채팅").locator("li").first).to_be_visible()
     page.screenshot(path=str(SHOTS / "live-no-stream.png"), full_page=True)
-    page.get_by_role("button", name="수집 중단").click()
+    stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
 
 

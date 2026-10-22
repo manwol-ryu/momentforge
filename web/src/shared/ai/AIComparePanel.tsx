@@ -61,7 +61,7 @@ export function AIComparePanel({ s }: { s: Session }) {
         <span className="timecode">
           {timecode(rec.startMs, true)}–{timecode(rec.endMs, true)}
         </span>{" "}
-        {rec.title} <span className="file-size">우선순위 {priorityText[rec.priority]}</span>
+        {rec.title} <span className="file-size">중요도 {priorityText[rec.priority]}</span>
       </>
     ) : (
       <span className="empty-cell">추천 없음</span>

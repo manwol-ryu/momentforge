@@ -63,18 +63,22 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     page.get_by_role("radio", name=FAKE, exact=True).check()
     expect(page.locator("section.provider")).to_have_count(1)
     expect(page.get_by_role("region", name="Claude (Anthropic)", exact=True)).to_have_count(0)
+    # Looking at a provider does not make it the default: nothing to save yet, and its card offers it.
+    expect(fake_provider(page).get_by_role("button", name="기본 제공자로 쓰기")).to_be_visible()
+    expect(page.get_by_role("button", name="기본값 저장")).to_be_disabled()
 
     # A key kept on this computer: in memory now, and in the data folder's .env for the next run.
     fake = fake_provider(page)
     clear = fake.get_by_role("button", name="키 지우기")
     if clear.count():  # earlier tests in this run keep a key in memory
-        clear.click()
+        clear.click()  # asked once more: the key goes from memory (and .env)
+        fake.get_by_role("group", name="키 지우기 확인").get_by_role("button", name="키 지우기").click()
     expect(fake.locator(".provider-state")).to_have_text("키 없음")
     fake.get_by_label(re.compile(f"^{FAKE} API 키")).fill(FAKE_KEY)
     fake.get_by_label("이 컴퓨터에도 저장", exact=False).check()
     expect(fake.get_by_text("평문으로 저장합니다", exact=False)).to_be_visible()
     fake.get_by_role("button", name="키 저장").click()
-    expect(fake.get_by_label(re.compile(f"^{FAKE} API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(fake.get_by_label(re.compile(f"^{FAKE} API 키 \\(있음\\)"))).to_be_visible()
     expect(fake.locator(".provider-state")).to_have_text("키 있음")
     expect(fake.get_by_text("이 컴퓨터(데이터 폴더의 .env)에 저장한 키를 씁니다", exact=False)).to_be_visible()
     expect(fake.get_by_label(re.compile(f"^{FAKE} API 키"))).to_have_value("")  # never shown again
@@ -83,6 +87,8 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     fake.screenshot(path=str(SHOTS / "settings-provider.png"))
 
     # Defaults: this provider and model for the AI review, and the forms' options.
+    fake.get_by_role("button", name="기본 제공자로 쓰기").click()
+    expect(fake.locator(".provider-default")).to_contain_text("기본 제공자입니다")
     fake.get_by_label("기본 모델 ID").fill("e2e-model-b")
     page.get_by_role("tab", name="새 작업 기본값").click()
     page.get_by_label("항상 가장 민감하게", exact=False).check()
@@ -116,9 +122,12 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     open_destination(page)
     expect(page.get_by_label("AI 제공자").locator("option:checked")).to_have_text(FAKE)
     expect(page.get_by_label("모델 ID", exact=True)).to_have_value("e2e-model-b")
-    expect(page.get_by_label(re.compile(f"^{FAKE} API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(page.get_by_label(re.compile(f"^{FAKE} API 키 \\(있음\\)"))).to_be_visible()
     expect(page.get_by_label("이 컴퓨터에도 저장", exact=False)).to_be_checked()
     page.get_by_role("button", name="키 지우기").click()
+    clearing = page.get_by_role("group", name="키 지우기 확인")
+    expect(clearing).to_contain_text("이 컴퓨터(.env)에서 키를 지웁니다")
+    clearing.get_by_role("button", name="키 지우기").click()
     expect(page.get_by_label(re.compile(f"^{FAKE} API 키 \\(없음\\)"))).to_be_visible()
     assert not (DATA / ".env").exists(), "the last kept key gone, the key file goes too"
 
@@ -131,6 +140,7 @@ def test_settings_keep_a_key_and_prefill_new_tasks(page: Page, base_url: str) ->
     # Back to the built-in defaults so later tests start as before.
     fake.get_by_label("기본 모델 ID").fill("")
     page.get_by_role("radio", name="Claude (Anthropic)").check()
+    page.get_by_role("region", name="Claude (Anthropic)", exact=True).get_by_role("button", name="기본 제공자로 쓰기").click()
     page.get_by_role("tab", name="새 작업 기본값").click()
     page.get_by_label("항상 가장 민감하게", exact=False).uncheck()
     page.get_by_label("영상 댓글의 시청자 추천도 수집", exact=False).check()

@@ -41,7 +41,7 @@ def save_key(page: Page, provider: str) -> None:
     page.get_by_label("AI 제공자").select_option(label=provider)
     page.get_by_label(re.compile(f"^{re.escape(provider)} API 키")).fill("test-key")
     page.get_by_role("button", name="키 저장").click()
-    expect(page.get_by_label(re.compile(f"^{re.escape(provider)} API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(page.get_by_label(re.compile(f"^{re.escape(provider)} API 키 \\(있음\\)"))).to_be_visible()
 
 
 def test_batch_review_with_cost_cap_then_compare(page: Page, base_url: str) -> None:
@@ -149,6 +149,8 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.get_by_role("button", name="샘플로 먼저 체험").click()
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="AI 검토").click()
+    # Setting CLIProxyAPI up did not make it the default: the review still starts with Claude.
+    expect(page.locator(".ai-dest-state")).to_contain_text("Claude (Anthropic)")
     open_destination(page)
     page.get_by_label("AI 제공자").select_option(label="CLIProxyAPI")
     expect(page.locator(".ai-endpoint")).to_contain_text("http://127.0.0.1:9/v1")
@@ -159,11 +161,11 @@ def test_cliproxy_sends_to_the_address_in_settings(page: Page, base_url: str) ->
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     expect(page.locator(".ai-status")).to_contain_text("CLIProxyAPI(http://127.0.0.1:9/v1)에 연결하지 못했습니다", timeout=15_000)
 
-    # Back to the default address and provider for the rest of the run.
+    # Back to the default address for the rest of the run (the default provider never changed).
     page.goto(base_url + "/settings")
     page.wait_for_selector(READY, timeout=10_000)
+    page.get_by_role("radio", name="CLIProxyAPI").check()
     page.locator("section.provider", has=page.get_by_role("heading", name="CLIProxyAPI")).get_by_label("CLIProxyAPI 주소").fill("")
-    page.get_by_role("radio", name="Claude (Anthropic)").check()
     page.get_by_role("button", name="기본값 저장").click()
     expect(page.get_by_role("status").filter(has_text="기본값을 저장했습니다")).to_be_visible()
 

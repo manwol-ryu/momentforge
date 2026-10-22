@@ -31,8 +31,8 @@ interface Props {
   /** The boundary candidate shown per cut plan ID (absent: the confirmed one, else the analysis' choice). */
   cutChoice?: Record<string, CutBoundaryName>;
   onCutChoice?: (planId: string, name: CutBoundaryName, itemId: string) => void;
-  /** Ask for a new cut analysis of a candidate (its notes go along). */
-  onReanalyzeCut?: (itemId: string, planId?: string) => void;
+  /** Ask for a new cut analysis of a candidate (its notes go along); label is how the list names the row. */
+  onReanalyzeCut?: (itemId: string, label: string, planId?: string) => void;
   /** Timeline item IDs ticked for an AI review. */
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
@@ -73,6 +73,11 @@ export function UnifiedList({
   renderRuleDetail,
 }: Props) {
   const headHint = canPlay ? "고르면 영상이 이 구간부터 재생됩니다" : undefined;
+  // Each row's checkbox says which row it is, so a screen reader's list of them is not "AI 검토에 포함" over and over.
+  const rowName = (it: TimelineItem) =>
+    it.source === "rule" && numbers.has(it.originId)
+      ? `후보 ${numbers.get(it.originId)}`
+      : `${sourceLabel[it.source]} ${timecode(it.clipStartMs, longForm)}`;
   const actions = (it: TimelineItem) => (
     <>
       {it.watchUrl && (
@@ -84,12 +89,12 @@ export function UnifiedList({
         (canPick?.(it) ?? true ? (
           <label className="check check-inline">
             <input type="checkbox" checked={aiSelection.has(it.id)} onChange={() => onToggleAI(it.id)} />
-            AI 검토에 포함
+            <span className="visually-hidden">{rowName(it)} </span>AI 검토에 포함
           </label>
         ) : (
           <label className="check check-inline" data-disabled>
             <input type="checkbox" checked={false} disabled />
-            AI 검토에 포함 (확정 후)
+            <span className="visually-hidden">{rowName(it)} </span>AI 검토에 포함 (확정 후)
           </label>
         ))}
     </>
@@ -121,7 +126,7 @@ export function UnifiedList({
               onChoose={n.cut && onCutChoice ? (name) => onCutChoice(n.cut!.planId, name, it.id) : undefined}
               onPlay={onSeek ? (ms) => onSeek(ms, it.id) : undefined}
               onPlaySpans={canPlay && onPlaySpans ? (spans) => onPlaySpans(spans, it.id) : undefined}
-              onReanalyze={onReanalyzeCut && it.source !== "ai" ? () => onReanalyzeCut(it.id, n.cutPlanId) : undefined}
+              onReanalyze={onReanalyzeCut && it.source !== "ai" ? () => onReanalyzeCut(it.id, rowName(it), n.cutPlanId) : undefined}
             />
           ) : (
             <AINote key={n.id} it={n} longForm={longForm} onPlay={canPlay && onSeek ? () => onSeek(n.clipStartMs, it.id) : undefined} />
@@ -169,7 +174,7 @@ export function UnifiedList({
                 {timecode(it.clipStartMs, longForm)}–{timecode(it.clipEndMs, longForm)}
               </span>
               <span className="candidate-source" data-source={it.source}>
-                {it.kind === "cut" ? "AI 컷" : sourceLabel[it.source]}
+                {it.kind === "cut" ? "AI 컷 분석" : sourceLabel[it.source]}
               </span>
               <span className="candidate-reasons">{it.kind === "cut" ? "지금 분석에는 이 장면의 후보가 없습니다" : it.title}</span>
               {it.priority && <span className="candidate-state">중요도 {priorityLabel[it.priority]}</span>}
@@ -205,7 +210,7 @@ function AIBrief({ it, onOpen }: { it: TimelineItem; onOpen: () => void }) {
     return (
       <button type="button" className="ai-brief" title="후보를 고르면 컷 분석 전체가 펼쳐집니다" onClick={onOpen}>
         <span className="candidate-source" data-source="ai">
-          AI 컷{version ? ` v${version}` : ""}
+          AI 컷 분석{version ? ` v${version}` : ""}
         </span>
         <span className="cut-state" data-ok={passed || undefined}>
           {passed ? "검수 통과" : "검수 실패"}

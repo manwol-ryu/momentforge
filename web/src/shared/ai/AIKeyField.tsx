@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIProvider } from "../../api/types";
+import { ConfirmAction } from "../confirm/ConfirmAction";
 
 /** Where the key in use came from, and what clearing it does. */
 function sourceText(p: AIProvider): string {
@@ -16,6 +17,20 @@ function sourceText(p: AIProvider): string {
       return `${p.name} 설정 파일(${p.keyFoundIn ?? ""})에서 찾은 키를 메모리에서 씁니다. 다른 키를 저장하면 그 키를 씁니다.`;
     default:
       return "";
+  }
+}
+
+/** What clearing the key does, asked before it is cleared. */
+function clearText(p: AIProvider): string {
+  switch (p.keySource) {
+    case "file":
+      return "메모리와 이 컴퓨터(.env)에서 키를 지웁니다. 다시 쓰려면 키를 새로 넣어야 합니다.";
+    case "env":
+      return "이번 실행에서만 지웁니다. 다음 실행 때 환경변수에서 다시 읽습니다.";
+    case "tool":
+      return `이번 실행에서만 지웁니다. 다음 실행 때 ${p.name} 설정 파일에서 다시 찾습니다.`;
+    default:
+      return "이번 실행 동안 쓰던 키를 지웁니다. 다시 쓰려면 키를 새로 넣어야 합니다.";
   }
 }
 
@@ -50,7 +65,7 @@ export function AIKeyField({ provider: p, extra, onChanged }: Props) {
     <div className="key-field">
       <label className="field">
         <span className="field-label">
-          {p.name} API 키 {p.configured ? "(메모리에 있음)" : "(없음)"}
+          {p.name} API 키 {p.configured ? "(있음)" : "(없음)"}
         </span>
         <input
           type="password"
@@ -76,9 +91,14 @@ export function AIKeyField({ provider: p, extra, onChanged }: Props) {
           키 저장
         </button>
         {p.configured && (
-          <button type="button" className="link-button" onClick={() => save.mutate("")} disabled={save.isPending}>
-            키 지우기
-          </button>
+          <ConfirmAction
+            label="키 지우기"
+            question={clearText(p)}
+            keepLabel="키 유지"
+            onConfirm={() => save.mutate("")}
+            disabled={save.isPending}
+            className="link-button"
+          />
         )}
         {extra}
       </p>

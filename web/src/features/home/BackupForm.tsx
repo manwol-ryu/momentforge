@@ -47,8 +47,8 @@ export function BackupForm({ busy, defaults, onStarted }: Props) {
     mutationFn: (b: BackupBroadcast) => api.importBackup({ path: b.chatPath, transcribe: transcribe && b.hasAudio && !!ready, sensitive }),
     onSuccess: (job) => onStarted(job.id),
   });
-  // A remembered folder is listed at once.
-  const remembered = dir;
+  // A remembered folder is listed once, when the form opens; a typed one waits for "폴더 읽기".
+  const [remembered] = useState(dir);
   const scanOnce = scan.mutate;
   useEffect(() => {
     if (remembered) scanOnce(remembered);

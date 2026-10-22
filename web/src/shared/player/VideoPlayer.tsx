@@ -11,7 +11,7 @@ interface Props {
   sessionId: string;
   /** The channel's current broadcast (a LIVE capture) instead of a VOD. */
   live?: boolean;
-  /** Where else to watch, added when the stream stops loading (live only). */
+  /** Where else to watch, added when the stream does not load. */
   fallback?: string;
   onTime?: (ms: number) => void;
   /**
@@ -157,7 +157,7 @@ export const VideoPlayer = forwardRef<PlayerHandle, Props>(function VideoPlayer(
               kind: "error",
               message: live
                 ? `방송 영상을 불러오지 못했습니다. 방송이 끝났거나 연결이 끊겼을 수 있습니다.${fallback ? ` ${fallback}` : ""}`
-                : "영상을 불러오지 못했습니다. 치지직에서 보기 링크를 사용하세요.",
+                : `영상을 불러오지 못했습니다.${fallback ? ` ${fallback}` : ""}`,
             });
           });
           hls.loadSource(url);

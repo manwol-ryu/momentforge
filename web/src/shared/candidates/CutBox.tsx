@@ -380,9 +380,17 @@ export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, on
           메모 추가
         </button>
         {c.confirmed ? (
-          <button type="button" className="link-button" onClick={() => confirm.mutate(false)} disabled={confirm.isPending}>
-            확정 취소
-          </button>
+          <>
+            {/* Another boundary shown than the confirmed one: confirming it replaces the confirmed spans. */}
+            {choice !== startBoundary(c) && (
+              <button type="button" className="button cut-button" onClick={() => confirm.mutate(true)} disabled={confirm.isPending || spans.length === 0}>
+                ‘{boundaryLabel[choice]}’ 경계로 다시 확정
+              </button>
+            )}
+            <button type="button" className="link-button" onClick={() => confirm.mutate(false)} disabled={confirm.isPending}>
+              확정 취소
+            </button>
+          </>
         ) : (
           <button type="button" className="button cut-button" onClick={() => confirm.mutate(true)} disabled={confirm.isPending || spans.length === 0}>
             컷 확정

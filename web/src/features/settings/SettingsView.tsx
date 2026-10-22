@@ -159,8 +159,10 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
     setDraft((d) => ({ ...d, ...patch }));
   };
   const defaultProvider = providers.some((p) => p.id === draft.aiProvider) ? draft.aiProvider : (providers[0]?.id ?? "");
-  // The choice above is also which provider's model, key and address are set below.
-  const shown = providers.find((p) => p.id === defaultProvider);
+  // Which provider's address, model and key are shown: any of them, without making it the default.
+  const [viewing, setViewing] = useState(defaultProvider);
+  const shown = providers.find((p) => p.id === viewing) ?? providers.find((p) => p.id === defaultProvider);
+  const defaultName = providers.find((p) => p.id === defaultProvider)?.name ?? "";
 
   return (
     <div className="settings">
@@ -177,21 +179,33 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
               <div className="settings-ai">
                 {providers.length > 1 && (
                   <Segmented
-                    name="default-provider"
-                    legend="기본 AI 제공자"
-                    value={defaultProvider}
-                    onChange={(id) => change({ aiProvider: id })}
-                    options={providers.map((p) => ({ value: p.id, label: p.name }))}
+                    name="shown-provider"
+                    legend="설정할 AI 제공자"
+                    value={shown?.id ?? defaultProvider}
+                    onChange={setViewing}
+                    options={providers.map((p) => ({
+                      value: p.id,
+                      label: (
+                        <>
+                          {p.name}
+                          {p.id === defaultProvider && (
+                            <span className="seg-mark" aria-hidden="true">
+                              기본
+                            </span>
+                          )}
+                        </>
+                      ),
+                    }))}
                   />
                 )}
                 <p className="field-help">
-                  작업 화면의 AI 검토 탭이 이 제공자와 기본 모델로 시작합니다. 탭에서 바꾼 값은 그 검토에만 씁니다. 아래에서 고른
-                  제공자의 모델·키를 정합니다.
+                  제공자를 고르면 그 제공자의 주소·모델·키를 정합니다. 작업 화면의 AI 검토는 ‘기본’ 표시가 붙은 제공자와 그 기본
+                  모델로 시작하고, 탭에서 바꾼 값은 그 검토에만 씁니다.
                 </p>
-                {saved.aiProviderAuto && draft.aiProvider === saved.aiProvider && shown && (
+                {saved.aiProviderAuto && draft.aiProvider === saved.aiProvider && (
                   <p className="auto-note" role="note">
-                    이 컴퓨터에서 바로 쓸 수 있는 {shown.name}을(를) 자동으로 골랐습니다. 다른 제공자를 고르고 기본값을 저장하면 그것을
-                    씁니다.
+                    이 컴퓨터에서 바로 쓸 수 있는 {defaultName}을(를) 자동으로 골랐습니다. 다른 제공자의 ‘기본 제공자로 쓰기’를 누르고
+                    기본값을 저장하면 그것을 씁니다.
                   </p>
                 )}
                 <div className="providers">
@@ -199,6 +213,9 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                     <ProviderSettings
                       key={shown.id}
                       p={shown}
+                      isDefault={shown.id === defaultProvider}
+                      defaultName={defaultName}
+                      onMakeDefault={() => change({ aiProvider: shown.id })}
                       model={draft.aiModels[shown.id] ?? ""}
                       onModel={(m) => change({ aiModels: { ...draft.aiModels, [shown.id]: m } })}
                       endpoint={draft.aiEndpoints[shown.id] ?? ""}
@@ -213,29 +230,24 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                     보인 범위 밖에서 얼마나 더 보낼 수 있는지의 상한입니다. 검색 단계를 0으로 두면 검색하지 않습니다.
                   </p>
                   <div className="search-budget-fields">
-                    <label className="field">
-                      <span className="field-label">검색 단계</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        value={draft.cutSearchRounds}
-                        onChange={(e) => change({ cutSearchRounds: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
-                      />
-                      <span className="field-help">회 (0~10, 기본 4)</span>
-                    </label>
-                    <label className="field">
-                      <span className="field-label">검색으로 더 보내는 글</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={1024}
-                        step={10}
-                        value={draft.cutSearchKb}
-                        onChange={(e) => change({ cutSearchKb: Math.max(0, Math.min(1024, Number(e.target.value) || 0)) })}
-                      />
-                      <span className="field-help">KB (0~1024, 기본 80)</span>
-                    </label>
+                    <NumberField
+                      label="검색 단계"
+                      unit="회 (0~10, 기본 4)"
+                      min={0}
+                      max={10}
+                      step={1}
+                      value={draft.cutSearchRounds}
+                      onChange={(n) => change({ cutSearchRounds: n })}
+                    />
+                    <NumberField
+                      label="검색으로 더 보내는 글"
+                      unit="KB (0~1024, 기본 80)"
+                      min={0}
+                      max={1024}
+                      step={10}
+                      value={draft.cutSearchKb}
+                      onChange={(n) => change({ cutSearchKb: n })}
+                    />
                   </div>
                 </fieldset>
               </div>
@@ -376,6 +388,58 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
   );
 }
 
+interface NumberFieldProps {
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (value: number) => void;
+}
+
+/**
+ * A whole number in a range. What is typed stays as typed while it is
+ * being edited (a cleared field is not turned into 0 at once); each
+ * number in range is taken as it is typed, and leaving the field puts the
+ * value in use back in it.
+ */
+function NumberField({ label, unit, min, max, step, value, onChange }: NumberFieldProps) {
+  const [text, setText] = useState(String(value));
+  const [editing, setEditing] = useState(false);
+  const shownText = editing ? text : String(value);
+  const n = Number(text);
+  const invalid = editing && (text.trim() === "" || !Number.isInteger(n) || n < min || n > max);
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        step={step}
+        value={shownText}
+        aria-invalid={invalid || undefined}
+        onFocus={() => {
+          setText(String(value));
+          setEditing(true);
+        }}
+        onBlur={() => setEditing(false)}
+        onChange={(e) => {
+          const t = e.target.value;
+          setText(t);
+          const v = Number(t);
+          if (t.trim() !== "" && Number.isInteger(v) && v >= min && v <= max) onChange(v);
+        }}
+      />
+      <span className={invalid ? "field-help field-invalid" : "field-help"}>
+        {invalid ? `${min}~${max} 사이의 정수를 넣으세요. 지금 쓰는 값은 ${value}입니다.` : unit}
+      </span>
+    </label>
+  );
+}
+
 interface ASRProps {
   engine: string;
   onEngine: (id: string) => void;
@@ -493,6 +557,10 @@ function EngineCard({ e, paths, onPath }: { e: ASREngine; paths: Record<string, 
 
 interface ProviderProps {
   p: AIProvider;
+  /** Whether the AI review starts with this provider, and the way to make it so. */
+  isDefault: boolean;
+  defaultName: string;
+  onMakeDefault: () => void;
   model: string;
   onModel: (model: string) => void;
   endpoint: string;
@@ -503,7 +571,7 @@ interface ProviderProps {
  * One provider: where it sends (for a proxy), its default model and its key
  * (or, for a provider without one, whether it is ready).
  */
-function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderProps) {
+function ProviderSettings({ p, isDefault, defaultName, onMakeDefault, model, onModel, endpoint, onEndpoint }: ProviderProps) {
   const [models, setModels] = useState<AIModel[]>([]);
   const loadModels = useMutation({ mutationFn: () => api.aiModels(p.id), onSuccess: (r) => setModels(r.models) });
   const titleId = `provider-${p.id}`;
@@ -526,6 +594,18 @@ function ProviderSettings({ p, model, onModel, endpoint, onEndpoint }: ProviderP
         </span>
       </header>
       <div className="provider-body">
+        {isDefault ? (
+          <p className="provider-default" data-default>
+            기본 제공자입니다. 작업 화면의 AI 검토가 이 제공자로 시작합니다.
+          </p>
+        ) : (
+          <p className="provider-default">
+            <button type="button" className="button button-quiet" onClick={onMakeDefault}>
+              기본 제공자로 쓰기
+            </button>
+            <span className="field-help">지금 기본 제공자는 {defaultName}입니다. 누른 뒤 기본값을 저장하면 바뀝니다.</span>
+          </p>
+        )}
         {p.hasService && <ServiceRow p={p} />}
         {p.defaultEndpoint && (
           <>
@@ -602,7 +682,11 @@ function ServiceRow({ p }: { p: AIProvider }) {
   const control = useMutation({
     mutationFn: (action: "start" | "stop") => api.aiServiceControl(p.id, action),
     onSuccess: (s) => queryClient.setQueryData(["aiService", p.id], s),
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["aiService", p.id] }),
+    // Whether the provider can send follows its program: the provider cards and the AI review read it again.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aiService", p.id] });
+      void queryClient.invalidateQueries({ queryKey: ["aiProviders"] });
+    },
   });
   const s = status.data;
   const busy = control.isPending || status.isFetching;

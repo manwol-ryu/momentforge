@@ -41,7 +41,7 @@ def pick_provider(page: Page, provider: str) -> None:
     if key.count() and "없음" in (key.locator("xpath=..").inner_text()):
         key.fill("test-key")
         page.get_by_role("button", name="키 저장").click()
-        expect(page.get_by_label(re.compile(f"^{re.escape(provider)} API 키 \\(메모리에 있음\\)"))).to_be_visible()
+        expect(page.get_by_label(re.compile(f"^{re.escape(provider)} API 키 \\(있음\\)"))).to_be_visible()
 
 
 def test_cut_analysis_keeps_the_promise_as_setup(page: Page, base_url: str) -> None:
@@ -64,7 +64,7 @@ def test_cut_analysis_keeps_the_promise_as_setup(page: Page, base_url: str) -> N
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
     status = page.locator(".ai-status")
     expect(status).to_contain_text("AI 완료", timeout=15_000)
-    expect(status).to_contain_text("컷 계획 1개")
+    expect(status).to_contain_text("컷 분석 1개")
     expect(page.locator(".ai-done")).to_contain_text("AI 컷 분석")
     page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
 
@@ -135,16 +135,27 @@ def test_cut_result_box_notes_confirm_and_new_version(page: Page, base_url: str)
     # A note on that version, then "다시 분석": the note goes to the plan step and a new version replaces it.
     add_note(note, "두 번째 시도라 앞선 약속과 연결하면 안 됨")
     expect(note).to_contain_text("메모 1개")
+    # A candidate already picked for the review stays picked when one candidate's cut is analysed again.
+    page.locator("ol.candidates > li").nth(1).get_by_label("AI 검토에 포함").check()
     note.get_by_role("button", name="다시 분석").click()
     expect(page.get_by_role("radio", name="컷 분석")).to_be_checked()
+    target = page.locator(".ai-target")
+    expect(target).to_contain_text("후보 1의 컷 분석을 다시 합니다")
+    expect(target.get_by_role("button", name="고른 후보 1개 검토로 돌아가기")).to_be_visible()
     pick_provider(page, "E2E 가짜 AI")
     page.get_by_role("button", name="보낼 내용 미리보기").click()
     preview = page.locator(".ai-preview[data-kind='cut']")
+    expect(preview).to_contain_text("후보 1개, 후보당")  # the one candidate, not the picks
     expect(preview).to_contain_text("메모 1개를 계획 단계에 함께 보내고")
     preview.get_by_text("보낼 내용 전체").click()
     expect(preview.locator("pre")).to_contain_text('"user_notes"')
     page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
+    # Sent: the re-analysis is done asking, and the tab is back to the picks with the kind chosen for them.
+    expect(target).to_have_count(0)
+    expect(page.get_by_role("radio", name="장면 설명")).to_be_checked()
+    expect(page.get_by_role("radio", name="후보 목록에서 고른 1개")).to_be_checked()
     page.get_by_role("tab", name=re.compile("^후보")).click()
+    page.locator("ol.candidates > li").nth(1).get_by_label("AI 검토에 포함").uncheck()  # its pick bar would cover the pictures below
     expect(note).to_contain_text("검수 통과", timeout=15_000)
     expect(note).to_have_count(1)  # nothing confirmed yet: the newest version alone
     expect(note).to_contain_text("이 버전에 반영한 메모 1개")

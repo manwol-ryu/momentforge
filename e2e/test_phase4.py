@@ -66,7 +66,7 @@ def test_vod_comments_join_the_unified_timeline(page: Page, base_url: str) -> No
 
     page.get_by_role("tab", name="파일").click()
     with page.expect_download() as info:
-        page.get_by_role("button", name="통합 편집 후보 TXT").click()
+        page.get_by_role("button", name="모든 출처 편집 후보 TXT").click()
     text = Path(info.value.path()).read_text(encoding="utf-8")
     assert "[시청자 추천] 웃음 터짐" in text and "[자동 탐지]" in text, text[:300]
     with page.expect_download() as info:
@@ -88,7 +88,7 @@ def test_ai_review_is_previewed_then_confirmed(page: Page, base_url: str) -> Non
     page.get_by_label("모델 ID").fill("e2e-model")
     page.get_by_label(re.compile("E2E 가짜 AI API 키")).fill("test-key")
     page.get_by_role("button", name="키 저장").click()
-    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(메모리에 있음\\)"))).to_be_visible()
+    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(있음\\)"))).to_be_visible()
     expect(page.locator(".ai-dest-ready")).to_have_text("키 있음")
 
     page.get_by_role("button", name="보낼 내용 미리보기").click()

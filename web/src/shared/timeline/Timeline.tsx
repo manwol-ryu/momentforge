@@ -173,7 +173,7 @@ export function Timeline({
         to={to}
         longForm={longForm}
       />
-      <Axis from={from} to={to} longForm={longForm} />
+      <Axis from={from} to={to} longForm={longForm} width={width || 800} />
       {zoomed && (
         <div className="timeline-overview" aria-hidden="true">
           {candidates.map((c) => (
@@ -365,10 +365,10 @@ const Markers = memo(function Markers({ candidates, extraMarkers, numbers, selec
   );
 });
 
-/** Time labels at round steps across the drawn range. */
-const Axis = memo(function Axis({ from, to, longForm }: { from: number; to: number; longForm: boolean }) {
+/** Time labels at round steps across the drawn range, about one per 72 pixels so they never run into each other. */
+const Axis = memo(function Axis({ from, to, longForm, width }: { from: number; to: number; longForm: boolean; width: number }) {
   const span = to - from;
-  const tick = tickStep(span);
+  const tick = tickStep(span, Math.max(2, Math.min(12, Math.floor(width / 72))));
   const ticks: number[] = [];
   for (let t = Math.ceil(from / tick) * tick; t <= to; t += tick) ticks.push(t);
   return (

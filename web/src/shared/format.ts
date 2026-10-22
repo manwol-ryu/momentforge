@@ -9,10 +9,11 @@ export function timecode(ms: number, longForm = false): string {
   return `${String(m).padStart(2, "0")}:${ss}`;
 }
 
-/** Tick spacing so a timeline shows roughly 6–12 labels. */
-export function tickStep(durationMs: number): number {
-  const steps = [60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
-  return steps.find((s) => durationMs / s <= 12) ?? 3_600_000;
+/** Tick spacing so a timeline shows at most maxLabels labels (12 by default; fewer where the track is narrow). */
+export function tickStep(durationMs: number, maxLabels = 12): number {
+  const steps = [60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000, 7_200_000];
+  // Past two hours a step, whole hours that keep the count (a 12-hour broadcast on a phone: every 3 hours).
+  return steps.find((s) => durationMs / s <= maxLabels) ?? Math.ceil(durationMs / maxLabels / 3_600_000) * 3_600_000;
 }
 
 /** File size for download lists. */

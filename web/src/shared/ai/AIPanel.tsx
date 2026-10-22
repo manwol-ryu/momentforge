@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { AIDelivery, AIModel, AIPreview, AIRun, AITokenCount, Session } from "../../api/types";
 import { AIKeyField } from "./AIKeyField";
+import type { Reanalysis } from "./useAIReview";
+import { ConfirmAction } from "../confirm/ConfirmAction";
 import { useEvents } from "../events";
 import { timecode, tokens, usd } from "../format";
 import { Segmented } from "../motion/Segmented";
 import { Link } from "../navigation";
 import { startModel, useSettings } from "../settings";
+
+type Kind = "explain" | "cut";
+type Mode = "candidates" | "all" | "range";
 
 const runStateText: Record<AIRun["state"], string> = {
   running: "보내는 중",
@@ -19,7 +24,7 @@ const runStateText: Record<AIRun["state"], string> = {
 
 const kindHelp = {
   explain: "고른 후보마다 장면이 무엇인지 짧은 설명을 받습니다. 요청이 적고 빠릅니다.",
-  cut: "고른 후보마다 원인 분석 → 편집 구간 계획 → 검수 2회를 차례로 보내, 근거가 붙은 편집 구간(컷 계획)을 받습니다. 분석이 앞선 맥락(\"아까\", 약속)을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 다시 분석합니다(설정의 검색 예산까지).",
+  cut: "고른 후보마다 원인 분석 → 편집 구간 계획 → 검수 2회를 차례로 보내, 근거가 붙은 편집 구간을 받습니다. 분석이 앞선 맥락(\"아까\", 약속)을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 다시 분석합니다(설정의 검색 예산까지).",
 } as const;
 
 const modeHelp = {
@@ -62,7 +67,7 @@ export function runSummary(r: AIRun): string {
   const waiting = r.state === "running" && r.delivery === "batch";
   const parts = [
     waiting ? `배치 결과 기다리는 중: ${r.completedRequests}/${r.requestCount}회 처리` : `${r.completedRequests}/${r.requestCount}회 완료`,
-    r.kind === "cut" ? `컷 계획 ${r.recommendations}개` : `설명·추천 ${r.recommendations}개`,
+    r.kind === "cut" ? `컷 분석 ${r.recommendations}개` : `설명·추천 ${r.recommendations}개`,
   ];
   if (r.rejected > 0) parts.push(`검증에서 뺀 추천 ${r.rejected}개`);
   if (r.inputTokens > 0) {
@@ -77,18 +82,18 @@ interface Props {
   s: Session;
   /** Timeline item IDs ticked in the candidate list. */
   selection: string[];
-  /** Cut analysis: item ID → the plan a cut box's "다시 분석" continues. */
-  continuePlans?: Record<string, string>;
+  /** A cut box's "다시 분석": that candidate alone is sent instead of the ticked ones, which stay as they are. */
+  reanalysis?: Reanalysis | null;
+  /** Back to the ticked candidates. */
+  onEndReanalysis?: () => void;
   /**
    * A LIVE capture's analysed point: a range ends by it (an empty end asks
    * the server for its own), and the help says a plan holds only the chat
    * stored when it was previewed.
    */
   liveEndMs?: number;
-  /** Each change asks for a preview of the picked candidates (the candidate list's "AI 검토로 이동"). */
+  /** Each change asks for a preview: of the ticked candidates, or of the re-analysis. */
   previewAsk?: number;
-  /** The kind of analysis that ask is for (a cut box's "다시 분석" asks for a cut analysis). */
-  askKind?: "explain" | "cut";
   /** Back to the candidate list, where the explanations are shown. */
   onShowCandidates?: () => void;
 }
@@ -99,21 +104,22 @@ interface Props {
  * with its most possible cost. Nothing is sent until the user confirms that
  * exact plan; the answers appear under the candidates they explain.
  */
-export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0, askKind, onShowCandidates }: Props) {
+export function AIPanel({ s, selection, reanalysis, onEndReanalysis, liveEndMs, previewAsk = 0, onShowCandidates }: Props) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
   const settings = useSettings();
   const runs = useQuery({ queryKey: ["aiRuns", s.id], queryFn: () => api.aiRuns(s.id) });
   const [provider, setProvider] = useState("");
-  const [model, setModel] = useState("");
-  const [models, setModels] = useState<AIModel[]>([]);
-  const [kind, setKind] = useState<"explain" | "cut">("explain");
-  const [mode, setMode] = useState<"candidates" | "all" | "range">("candidates");
-  // The cut analysis works on picked candidates only.
-  useEffect(() => {
-    if (kind === "cut") setMode("candidates");
-  }, [kind]);
+  // Typed models and loaded model lists, per provider: switching back finds them again.
+  const [modelEdits, setModelEdits] = useState<Record<string, string>>({});
+  const [modelLists, setModelLists] = useState<Record<string, AIModel[]>>({});
+  // The kind the user chose for the ticked candidates; a re-analysis is a cut analysis unless changed for it alone.
+  const [kindChoice, setKindChoice] = useState<Kind>("explain");
+  // Keyed by the ask too: asking again (even for the same candidate) starts from the cut analysis the button names.
+  const reKey = reanalysis ? `${reanalysis.itemId}|${reanalysis.planId ?? ""}|${previewAsk}` : "";
+  const [reKind, setReKind] = useState<{ key: string; kind: Kind } | null>(null);
+  const [mode, setMode] = useState<Mode>("candidates");
   const [from, setFrom] = useState("0:00:00");
   const live = liveEndMs !== undefined;
   const [to, setTo] = useState(live ? "" : timecode(s.durationMs, true));
@@ -122,7 +128,8 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
   // Cut analysis: stop before each search round's results go out.
   const [confirmSearches, setConfirmSearches] = useState(false);
   const [preview, setPreview] = useState<AIPreview | null>(null);
-  const [counted, setCounted] = useState<AITokenCount | null>(null);
+  // An exact count, with the preview it counted (a later preview of the same inputs can send more).
+  const [counted, setCounted] = useState<(AITokenCount & { previewId: string }) | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   // The provider's details start open when it cannot send yet, and stay as the user leaves them.
   const [showDest, setShowDest] = useState<boolean | null>(null);
@@ -130,78 +137,102 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
   const list = providers.data?.providers ?? [];
   // The settings screen's provider and model come first; the tab can change them for this review.
   const current = list.find((p) => p.id === (provider || settings.data?.aiProvider)) ?? list[0];
-  const firstModel = startModel(settings.data, current);
+  const model = (current && modelEdits[current.id]) ?? startModel(settings.data, current);
+  const models = (current && modelLists[current.id]) ?? [];
+  const kind: Kind = reanalysis ? (reKind?.key === reKey ? reKind.kind : "cut") : kindChoice;
+  const chooseKind = (k: Kind) => (reanalysis ? setReKind({ key: reKey, kind: k }) : setKindChoice(k));
+  // What is actually sent, whatever was chosen before: a cut analysis and a re-analysis take candidates one by one,
+  // a provider without prices has no cap (so no automatic selection), and one without batches sends one by one.
+  const sendMode: Mode = reanalysis || kind === "cut" ? "candidates" : mode === "all" && !current?.hasPrices ? "candidates" : mode;
+  const sendDelivery: AIDelivery = current?.canBatch && kind === "explain" ? delivery : "single";
+  const sendCap = current?.hasPrices ? cap : "";
+  const picked = useMemo(() => (reanalysis ? [reanalysis.itemId] : selection), [reanalysis, selection]);
+  const continuePlans = useMemo(
+    () => (reanalysis?.planId ? { [reanalysis.itemId]: reanalysis.planId } : undefined),
+    [reanalysis],
+  );
   useEffect(() => {
     if (showDest === null && current) setShowDest(!current.configured);
   }, [showDest, current]);
-  // A new provider starts from its default model and its own options.
-  useEffect(() => {
-    setModel(firstModel);
-    setModels([]);
-    if (!current?.canBatch) setDelivery("single");
-    if (!current?.hasPrices) {
-      // Without prices there is no cap, so no automatic selection either.
-      setCap("");
-      setMode((m) => (m === "all" ? "candidates" : m));
-    }
-  }, [current?.id, firstModel, current?.canBatch, current?.hasPrices]);
-  // Any change to what would be sent drops the preview.
-  const inputs = useMemo(
-    () => JSON.stringify([current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches, continuePlans]),
-    [current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches, continuePlans],
-  );
-  useEffect(() => {
-    setPreview(null);
-    setCounted(null);
-  }, [inputs]);
-  // After a reload, follow a run that is still going (a batch can take hours).
-  const running = runs.data?.runs.find((r) => r.state === "running");
-  useEffect(() => {
-    if (!runId && running) setRunId(running.id);
-  }, [runId, running]);
 
   const toEnd = live && to.trim() === "";
-  const capValue = cap.trim() === "" ? undefined : Number(cap);
+  const startMs = parseTime(from);
+  const endMs = toEnd ? undefined : parseTime(to);
+  const rangeInvalid =
+    sendMode === "range" && (Number.isNaN(startMs) || (endMs !== undefined && (Number.isNaN(endMs) || endMs <= startMs)));
+  const capValue = sendCap.trim() === "" ? undefined : Number(sendCap);
   const capInvalid = capValue !== undefined && (!Number.isFinite(capValue) || capValue <= 0);
+  const needsCap = sendMode === "all" && capValue === undefined;
+
+  // Any change to what would be sent drops the preview, its count and their errors.
+  const inputs = useMemo(
+    () => JSON.stringify([current?.id, model, kind, sendMode, from, to, picked, sendDelivery, sendCap, confirmSearches, continuePlans]),
+    [current?.id, model, kind, sendMode, from, to, picked, sendDelivery, sendCap, confirmSearches, continuePlans],
+  );
+  const latest = useRef(inputs);
+  latest.current = inputs;
 
   const loadModels = useMutation({
-    mutationFn: () => api.aiModels(current!.id),
-    onSuccess: (r) => setModels(r.models),
+    mutationFn: (pid: string) => api.aiModels(pid),
+    onSuccess: (r, pid) => setModelLists((m) => ({ ...m, [pid]: r.models })),
   });
   const makePreview = useMutation({
-    mutationFn: () =>
+    // Sent with the inputs it was made from: an answer for inputs changed meanwhile is dropped.
+    mutationFn: (_sent: string) =>
       api.aiPreview({
         sessionId: s.id,
         provider: current!.id,
         model,
         kind,
-        mode,
-        itemIds: mode === "candidates" ? selection : undefined,
-        startMs: mode === "range" ? parseTime(from) : undefined,
+        mode: sendMode,
+        itemIds: sendMode === "candidates" ? picked : undefined,
+        startMs: sendMode === "range" ? startMs : undefined,
         // An empty LIVE end is the server's analysed point when previewing, not this screen's last copy of it.
-        endMs: mode === "range" && !toEnd ? parseTime(to) : undefined,
-        toEnd: mode === "range" && toEnd ? true : undefined,
-        delivery,
+        endMs: sendMode === "range" ? endMs : undefined,
+        toEnd: sendMode === "range" && toEnd ? true : undefined,
+        delivery: sendDelivery,
         costCapUsd: capValue,
         confirmSearches: kind === "cut" ? confirmSearches : undefined,
-        continuePlans: kind === "cut" && mode === "candidates" ? continuePlans : undefined,
+        continuePlans: kind === "cut" && sendMode === "candidates" ? continuePlans : undefined,
       }),
-    onSuccess: setPreview,
+    onSuccess: (p, sent) => {
+      if (sent === latest.current) setPreview(p);
+    },
   });
   const count = useMutation({
-    mutationFn: () => api.aiCount(preview!.previewId, preview!.plan.fingerprint),
+    mutationFn: (pv: AIPreview) => api.aiCount(pv.previewId, pv.plan.fingerprint).then((c) => ({ ...c, previewId: pv.previewId })),
     onSuccess: setCounted,
   });
   const start = useMutation({
-    mutationFn: () => api.aiStart(preview!.previewId, preview!.plan.fingerprint),
-    onSuccess: (r) => {
+    mutationFn: ({ pv }: { pv: AIPreview; sent: string }) => api.aiStart(pv.previewId, pv.plan.fingerprint),
+    onSuccess: (r, { sent }) => {
       setRunId(r.id);
       void queryClient.invalidateQueries({ queryKey: ["aiRuns", s.id] });
+      // The plan is on its way: its progress takes the preview's place, and a re-analysis is done asking
+      // (unless the user has already moved on to other inputs).
+      if (sent !== latest.current) return;
+      setPreview(null);
+      onEndReanalysis?.();
     },
   });
+  const resetPreview = makePreview.reset;
+  const resetCount = count.reset;
+  const resetStart = start.reset;
+  useEffect(() => {
+    setPreview(null);
+    setCounted(null);
+    resetPreview();
+    resetCount();
+    resetStart();
+  }, [inputs, resetPreview, resetCount, resetStart]);
+
   const run = useQuery({ queryKey: ["aiRun", runId], queryFn: () => api.aiRun(runId!), enabled: !!runId });
-  const cancel = useMutation({ mutationFn: () => api.aiCancel(runId!) });
-  const proceed = useMutation({ mutationFn: (send: boolean) => api.aiContinue(runId!, send) });
+  // After a reload, follow a run that is still going (a batch can take hours); others still going are listed too.
+  const runningRuns = (runs.data?.runs ?? []).filter((x) => x.state === "running");
+  const running = runningRuns[0];
+  useEffect(() => {
+    if (!runId && running) setRunId(running.id);
+  }, [runId, running]);
 
   useEffect(
     () =>
@@ -215,38 +246,82 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
     [subscribe, queryClient, s.id],
   );
 
-  const needsCap = mode === "all" && capValue === undefined;
-  const canPreview =
-    !!current && !makePreview.isPending && !!model.trim() && !capInvalid && !needsCap && (mode !== "candidates" || selection.length > 0);
+  // Why a preview cannot be made now, in the words of what to do about it.
+  const blocked = !current
+    ? "AI 제공자를 고르세요."
+    : !model.trim()
+      ? "‘2. 어디로 보낼지’에서 모델 ID를 넣으세요."
+      : sendMode === "candidates" && picked.length === 0
+        ? "보낼 후보를 먼저 고르세요."
+        : capInvalid
+          ? "비용 한도는 0보다 큰 숫자로 입력하세요."
+          : needsCap
+            ? "모든 후보를 보낼 때는 비용 한도를 정하세요."
+            : rangeInvalid
+              ? "시각은 1:02:03, 12:30 또는 초로 적고, 끝을 시작보다 뒤로 정하세요."
+              : null;
+  const canPreview = !blocked && !makePreview.isPending;
 
-  // The candidate list asked for a review of its picks: switch to them and preview at once.
+  // The candidate list asked for a review (its picks, or a cut box's re-analysis): show those and preview at once.
   const [pendingAsk, setPendingAsk] = useState(0);
+  // The asks made before this panel mounted (it remounts when its page recovers) are old news.
+  const seenAsk = useRef(previewAsk);
   useEffect(() => {
-    if (previewAsk > 0) {
-      if (askKind) setKind(askKind);
-      setMode("candidates");
-      setPendingAsk(previewAsk);
-    }
-    // The kind belongs to this ask only; a later change of it alone asks nothing.
+    if (previewAsk === seenAsk.current) return;
+    seenAsk.current = previewAsk;
+    if (!reanalysis) setMode("candidates");
+    setPendingAsk(previewAsk);
+    // Only a new ask counts; the re-analysis it brings is read on this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewAsk]);
+  const settled = providers.isSuccess && !settings.isPending;
   useEffect(() => {
-    if (!pendingAsk || mode !== "candidates" || !current) return;
+    if (!pendingAsk || !settled || sendMode !== "candidates" || !current) return;
     setPendingAsk(0);
-    if (current.configured && canPreview) makePreview.mutate();
-    else setShowDest(true);
+    // Previewing sends nothing, so it runs without a key too; the provider block opens where something is missing.
+    if (canPreview) makePreview.mutate(inputs);
+    if (!current.configured || !model.trim()) setShowDest(true);
     // The preview reads the state of this render; the inputs above are the ones it sends.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingAsk, mode, current?.id]);
+  }, [pendingAsk, settled, sendMode, inputs]);
 
   const listModels = current?.canListModels && current.configured && (
-    <button type="button" className="link-button" onClick={() => loadModels.mutate()} disabled={loadModels.isPending}>
+    <button type="button" className="link-button" onClick={() => loadModels.mutate(current.id)} disabled={loadModels.isPending}>
       {models.length > 0 ? `모델 ${models.length}개 불러옴` : "쓸 수 있는 모델 불러오기"}
     </button>
   );
   const r = run.data;
-  const failed = makePreview.error ?? start.error ?? cancel.error ?? proceed.error ?? loadModels.error ?? count.error;
-  if (list.length === 0) return null;
+  const others = runningRuns.filter((x) => x.id !== runId);
+  // A failed refetch (after saving a key) keeps the panel and says so here; without any list the panel says it below.
+  const failed = makePreview.error ?? start.error ?? loadModels.error ?? count.error ?? (providers.data ? providers.error : null);
+
+  if (!providers.data || list.length === 0) {
+    return (
+      <section className="panel-section" aria-labelledby="ai-title">
+        <h2 id="ai-title" className="section-title">
+          AI 검토
+        </h2>
+        {providers.isError && !providers.data ? (
+          <>
+            <p className="error" role="alert">
+              AI 제공자를 확인하지 못했습니다. {providers.error.message}
+            </p>
+            <p className="actions">
+              <button type="button" className="button button-quiet" onClick={() => void providers.refetch()} disabled={providers.isFetching}>
+                다시 확인
+              </button>
+            </p>
+          </>
+        ) : providers.data ? (
+          <p className="empty">이 실행파일에는 쓸 수 있는 AI 제공자가 없습니다.</p>
+        ) : (
+          <p className="field-help" aria-busy="true">
+            AI 제공자를 확인하는 중
+          </p>
+        )}
+      </section>
+    );
+  }
   const plan = preview?.plan;
   const destOpen = showDest ?? true;
   return (
@@ -262,13 +337,28 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
 
       <div className="ai-step">
         <h3 className="ai-step-title">1. 무엇을 보낼지</h3>
+        {reanalysis && (
+          <div className="notice ai-target" role="status">
+            <p>
+              <strong>{reanalysis.label}</strong>의 컷 분석을 다시 합니다. 앞선 결과와 남긴 메모를 이어받아 새 버전을 만들고, 후보
+              목록에서 고른 후보는 그대로 둡니다.
+            </p>
+            {onEndReanalysis && (
+              <p className="actions">
+                <button type="button" className="link-button" onClick={onEndReanalysis}>
+                  {selection.length > 0 ? `고른 후보 ${selection.length}개 검토로 돌아가기` : "다시 분석 그만두기"}
+                </button>
+              </p>
+            )}
+          </div>
+        )}
         <div className="ai-mode">
           <Segmented
             name="ai-kind"
             legend="분석 종류"
             hideLegend
             value={kind}
-            onChange={setKind}
+            onChange={chooseKind}
             options={[
               { value: "explain" as const, label: "장면 설명" },
               { value: "cut" as const, label: "컷 분석" },
@@ -276,62 +366,76 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
           />
           <p className="field-help">{kindHelp[kind]}</p>
         </div>
-        <div className="ai-mode">
-          <Segmented
-            name="ai-mode"
-            legend="보낼 범위"
-            hideLegend
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "candidates" as const, label: `후보 목록에서 고른 ${selection.length}개` },
-              ...(current?.hasPrices && kind === "explain" ? [{ value: "all" as const, label: "모든 후보 자동 선택" }] : []),
-              ...(kind === "explain" ? [{ value: "range" as const, label: "채팅 구간 직접 지정" }] : []),
-            ]}
-          />
-          <p className="field-help">
-            {kind === "cut"
-              ? "고른 후보마다 편집 구간 앞뒤 1분의 발언(전사가 있을 때)과 채팅을 읽고 시작합니다."
-              : !live
-                ? modeHelp[mode]
-                : mode === "range"
-                  ? liveModeHelp.range(liveEndMs)
-                  : liveModeHelp[mode]}
-          </p>
-          {kind === "cut" && (
-            <label className="check check-option ai-confirm-searches">
-              <input type="checkbox" checked={confirmSearches} onChange={(e) => setConfirmSearches(e.target.checked)} />
-              <span>
-                검색 결과를 보내기 전에 매번 확인
-                <span className="check-help">
-                  켜면 검색이 찾은 발언·채팅을 보내기 전에 멈추고 보여 줍니다. 끄면 미리보기에 적힌 상한 안에서 바로 보내고, 보낸 것은
-                  실행 기록에 남습니다.
-                </span>
-              </span>
-            </label>
-          )}
-          {mode === "range" && (
-            <span className="ai-range">
-              <input type="text" aria-label="시작 시각" value={from} onChange={(e) => setFrom(e.target.value)} /> ~{" "}
-              <input
-                type="text"
-                aria-label="끝 시각"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                placeholder={live ? "분석한 위치" : undefined}
-              />
-            </span>
-          )}
-          {mode === "candidates" && selection.length === 0 && onShowCandidates && (
+        {!reanalysis && (
+          <div className="ai-mode">
+            <Segmented
+              name="ai-mode"
+              legend="보낼 범위"
+              hideLegend
+              value={sendMode}
+              onChange={setMode}
+              options={[
+                { value: "candidates" as const, label: `후보 목록에서 고른 ${selection.length}개` },
+                ...(current?.hasPrices && kind === "explain" ? [{ value: "all" as const, label: "모든 후보 자동 선택" }] : []),
+                ...(kind === "explain" ? [{ value: "range" as const, label: "채팅 구간 직접 지정" }] : []),
+              ]}
+            />
             <p className="field-help">
-              아직 고른 후보가 없습니다.{" "}
-              <button type="button" className="link-button" onClick={onShowCandidates}>
-                후보 탭에서 ‘AI 검토에 포함’을 체크하세요
-              </button>
-              .
+              {kind === "cut"
+                ? "고른 후보마다 편집 구간 앞뒤 1분의 발언(전사가 있을 때)과 채팅을 읽고 시작합니다."
+                : !live
+                  ? modeHelp[sendMode]
+                  : sendMode === "range"
+                    ? liveModeHelp.range(liveEndMs)
+                    : liveModeHelp[sendMode]}
             </p>
-          )}
-        </div>
+            {sendMode === "range" && (
+              <>
+                <div className="ai-range">
+                  <label className="field">
+                    <span className="field-label">시작 시각</span>
+                    <input type="text" inputMode="numeric" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="0:00:00" />
+                  </label>
+                  <span className="ai-range-dash" aria-hidden="true">
+                    ~
+                  </span>
+                  <label className="field">
+                    <span className="field-label">끝 시각</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={to}
+                      onChange={(e) => setTo(e.target.value)}
+                      placeholder={live ? "분석한 위치" : timecode(s.durationMs, true)}
+                    />
+                  </label>
+                </div>
+                <p className="field-help">1:02:03, 12:30 또는 초로 적습니다.</p>
+              </>
+            )}
+            {sendMode === "candidates" && selection.length === 0 && onShowCandidates && (
+              <p className="field-help">
+                아직 고른 후보가 없습니다.{" "}
+                <button type="button" className="link-button" onClick={onShowCandidates}>
+                  후보 탭에서 ‘AI 검토에 포함’을 체크하세요
+                </button>
+                .
+              </p>
+            )}
+          </div>
+        )}
+        {kind === "cut" && (
+          <label className="check check-option ai-confirm-searches">
+            <input type="checkbox" checked={confirmSearches} onChange={(e) => setConfirmSearches(e.target.checked)} />
+            <span>
+              검색 결과를 보내기 전에 매번 확인
+              <span className="check-help">
+                켜면 검색이 찾은 발언·채팅을 보내기 전에 멈추고 보여 줍니다. 끄면 미리보기에 적힌 상한 안에서 바로 보내고, 보낸 것은 실행
+                기록에 남습니다.
+              </span>
+            </span>
+          </label>
+        )}
       </div>
 
       <div className="ai-step">
@@ -364,7 +468,7 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
                 <input
                   type="text"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => current && setModelEdits((m) => ({ ...m, [current.id]: e.target.value }))}
                   list="ai-models"
                   placeholder="계정에서 쓸 수 있는 모델 ID"
                 />
@@ -401,26 +505,26 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
               />
             )}
             {current?.selfAuth && listModels && <p className="actions">{listModels}</p>}
-            {(current?.canBatch || current?.hasPrices) && (
+            {((current?.canBatch && kind === "explain") || current?.hasPrices) && (
               <div className="ai-grid">
-                {current?.canBatch && (
+                {current?.canBatch && kind === "explain" && (
                   <div className="ai-mode">
                     <Segmented
                       name="ai-delivery"
                       legend="전송 방식"
-                      value={delivery}
+                      value={sendDelivery}
                       onChange={setDelivery}
                       options={[
                         { value: "single" as const, label: "바로 보내기" },
                         { value: "batch" as const, label: "배치로 보내기" },
                       ]}
                     />
-                    <p className="field-help">{deliveryHelp[delivery]}</p>
+                    <p className="field-help">{deliveryHelp[sendDelivery]}</p>
                   </div>
                 )}
                 {current?.hasPrices && (
                   <label className="field ai-cap">
-                    <span className="field-label">비용 한도 (미국 달러{mode === "all" ? ", 필수" : ", 비우면 없음"})</span>
+                    <span className="field-label">비용 한도 (미국 달러{sendMode === "all" ? ", 필수" : ", 비우면 없음"})</span>
                     <input type="text" inputMode="decimal" value={cap} onChange={(e) => setCap(e.target.value)} placeholder="예: 2" />
                   </label>
                 )}
@@ -437,11 +541,10 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
       <div className="ai-step">
         <h3 className="ai-step-title">3. 확인하고 보내기</h3>
         <p className="actions">
-          <button type="button" className="button button-quiet" onClick={() => makePreview.mutate()} disabled={!canPreview}>
-            보낼 내용 미리보기
+          <button type="button" className="button button-quiet" onClick={() => makePreview.mutate(inputs)} disabled={!canPreview}>
+            {makePreview.isPending ? "미리보기 만드는 중" : "보낼 내용 미리보기"}
           </button>
-          {capInvalid && <span className="field-help">비용 한도는 0보다 큰 숫자로 입력하세요.</span>}
-          {needsCap && <span className="field-help">모든 후보를 보낼 때는 비용 한도를 정하세요.</span>}
+          {blocked && <span className="field-help">{blocked}</span>}
         </p>
         {plan && preview && (
           <div className="ai-preview" role="status" data-kind={plan.kind ?? "explain"}>
@@ -486,7 +589,7 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
             <p className="field-help">{plan.estimate_note}</p>
             {current?.canCount && (
               <p className="actions">
-                <button type="button" className="link-button" onClick={() => count.mutate()} disabled={count.isPending || !current.configured}>
+                <button type="button" className="link-button" onClick={() => count.mutate(preview)} disabled={count.isPending || !current.configured}>
                   정확한 토큰 수 계산
                 </button>
                 <span className="field-help">
@@ -494,7 +597,7 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
                 </span>
               </p>
             )}
-            {counted && (
+            {counted?.previewId === preview.previewId && (
               <p className="ai-cost">
                 정확한 입력 토큰 {tokens(counted.inputTokens)}개
                 {counted.hasPrice && `, 예상 비용 최대 ${usd(counted.costUpperUsd)}`}.
@@ -520,66 +623,29 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
               <button
                 type="button"
                 className="button"
-                onClick={() => start.mutate()}
+                onClick={() => start.mutate({ pv: preview, sent: inputs })}
                 disabled={start.isPending || !current?.configured || (r?.state === "running" && r.delivery === "single")}
               >
                 확인한 내용으로 AI 실행
               </button>
-              {!current?.configured && (
-                <span className="field-help">{current?.selfAuth ? current.notReady : "먼저 API 키를 저장하세요."}</span>
+              {!current?.configured ? (
+                <span className="field-help">{current?.selfAuth ? current.notReady : "먼저 ‘2. 어디로 보낼지’에서 API 키를 저장하세요."}</span>
+              ) : (
+                r?.state === "running" &&
+                r.delivery === "single" && <span className="field-help">진행 중인 AI 작업이 끝나면 보낼 수 있습니다.</span>
               )}
             </p>
           </div>
         )}
       </div>
-      {r && (
-        <p className="ai-status" role="status" data-state={r.state}>
-          <span className={r.state === "running" ? "shimmer" : undefined}>
-            AI {r.state === "running" && r.delivery === "batch" ? "배치" : runStateText[r.state]}
-          </span>
-          : {runSummary(r)}
-          {r.waitingForKey && ". API 키를 다시 저장하면 결과를 가져옵니다"}
-          {r.errorMessage && ` (${r.errorMessage})`}
-          {r.state === "running" && (
-            <>
-              {" "}
-              <button type="button" className="link-button" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
-                {r.delivery === "batch" ? "배치 취소" : "AI 작업 중단"}
-              </button>
-            </>
-          )}
-        </p>
-      )}
-      {r && r.state === "running" && r.pending && (
-        <div className="ai-pending" role="status" aria-live="polite">
-          <p className="ai-pending-head">
-            검색 결과를 보낼까요? {r.pending.round}단계 검색이 발언 {r.pending.utterances}건·채팅 {r.pending.chats}건(
-            {Math.max(1, Math.round(r.pending.bytes / 1024))}KB)을 찾았습니다. 보내면 이 근거로 분석을 다시 하고, 보내지 않으면 미리보기의
-            범위만으로 계획합니다.
-          </p>
-          <ul className="ai-pending-list">
-            {r.pending.evidence.map((e) => (
-              <li key={e.ref}>
-                <span className="timecode">{timecode(e.start_ms, s.durationMs >= 3_600_000)}</span>{" "}
-                <span className="chat-author">{e.kind === "utterance" ? (e.speaker ?? "방송자") : (e.author?.slice(0, 4) ?? "익명")}</span>{" "}
-                {e.text}
-              </li>
-            ))}
-          </ul>
-          <p className="actions">
-            <button type="button" className="button" onClick={() => proceed.mutate(true)} disabled={proceed.isPending}>
-              보내고 계속
-            </button>
-            <button type="button" className="button button-quiet" onClick={() => proceed.mutate(false)} disabled={proceed.isPending}>
-              보내지 않고 계속
-            </button>
-          </p>
-        </div>
-      )}
+      {others.map((o) => (
+        <RunStatus key={o.id} r={o} longForm={s.durationMs >= 3_600_000} />
+      ))}
+      {r && <RunStatus key={r.id} r={r} longForm={s.durationMs >= 3_600_000} />}
       {r && r.state !== "running" && r.recommendations > 0 && (
         <p className="ai-done" role="status">
           {r.kind === "cut"
-            ? "컷 계획은 후보 목록의 각 후보 아래 ‘AI 컷 분석’으로 들어갔습니다. 검수에 걸린 계획은 그 이유와 함께 표시됩니다."
+            ? "컷 분석 결과는 후보 목록의 각 후보 아래 ‘AI 컷 분석’으로 들어갔습니다. 검수에 걸린 결과는 그 이유와 함께 표시됩니다."
             : "설명은 후보 목록의 각 후보 아래 ‘AI 설명’으로, 새로 찾은 장면은 ‘AI 추천’ 행으로 들어갔습니다."}
           {onShowCandidates && (
             <>
@@ -597,6 +663,75 @@ export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * One run's progress: the state, counts, tokens and cost; cancelling (asked
+ * once more, since what was sent is paid for); and a cut analysis' search
+ * round waiting to be sent or skipped.
+ */
+function RunStatus({ r, longForm }: { r: AIRun; longForm: boolean }) {
+  const cancel = useMutation({ mutationFn: () => api.aiCancel(r.id) });
+  const proceed = useMutation({ mutationFn: (send: boolean) => api.aiContinue(r.id, send) });
+  const batch = r.delivery === "batch";
+  const failed = cancel.error ?? proceed.error;
+  return (
+    <>
+      <div className="ai-status" role="status" data-state={r.state}>
+        <p className="ai-status-line">
+          <span className={r.state === "running" ? "shimmer" : undefined}>AI {r.state === "running" && batch ? "배치" : runStateText[r.state]}</span>
+          : {runSummary(r)}
+          {r.waitingForKey && ". API 키를 다시 저장하면 결과를 가져옵니다"}
+          {r.errorMessage && ` (${r.errorMessage})`}
+        </p>
+        {r.state === "running" && (
+          <ConfirmAction
+            label={batch ? "배치 취소" : "AI 작업 중단"}
+            question={
+              batch
+                ? "제공자에게 배치 취소를 요청합니다. 이미 처리된 요청의 비용은 들 수 있습니다."
+                : "지금까지 받은 결과만 남기고 멈춥니다. 이미 보낸 요청의 비용은 듭니다."
+            }
+            keepLabel={batch ? "계속 기다리기" : "계속 보내기"}
+            onConfirm={() => cancel.mutate()}
+            disabled={cancel.isPending}
+            className="link-button"
+          />
+        )}
+      </div>
+      {r.state === "running" && r.pending && (
+        <div className="ai-pending" role="status" aria-live="polite">
+          <p className="ai-pending-head">
+            검색 결과를 보낼까요? {r.pending.round}단계 검색이 발언 {r.pending.utterances}건·채팅 {r.pending.chats}건(
+            {Math.max(1, Math.round(r.pending.bytes / 1024))}KB)을 찾았습니다. 보내면 이 근거로 분석을 다시 하고, 보내지 않으면 미리보기의
+            범위만으로 계획합니다.
+          </p>
+          <ul className="ai-pending-list">
+            {r.pending.evidence.map((e) => (
+              <li key={e.ref}>
+                <span className="timecode">{timecode(e.start_ms, longForm)}</span>{" "}
+                <span className="chat-author">{e.kind === "utterance" ? (e.speaker ?? "방송자") : (e.author?.slice(0, 4) ?? "익명")}</span>{" "}
+                {e.text}
+              </li>
+            ))}
+          </ul>
+          <p className="actions">
+            <button type="button" className="button" onClick={() => proceed.mutate(true)} disabled={proceed.isPending}>
+              보내고 계속
+            </button>
+            <button type="button" className="button button-quiet" onClick={() => proceed.mutate(false)} disabled={proceed.isPending}>
+              보내지 않고 계속
+            </button>
+          </p>
+        </div>
+      )}
+      {failed && (
+        <p className="error" role="alert">
+          {failed.message}
+        </p>
+      )}
+    </>
   );
 }
 

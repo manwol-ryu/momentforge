@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Candidate, LiveChat, LiveUpdate } from "../../api/types";
@@ -39,6 +39,8 @@ export function useLiveFeed(id: string) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const [chats, setChats] = useState<LiveChat[]>([]);
+  // Every message taken in so far; only the last KEEP stay in memory, so the log counts what arrived from this.
+  const [received, setReceived] = useState(0);
   const [candidates, setCandidates] = useState<Map<string, Candidate>>(new Map());
   const [error, setError] = useState<Error | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -52,6 +54,7 @@ export function useLiveFeed(id: string) {
     if (fresh.length === 0) return;
     lastSeq.current = fresh[fresh.length - 1]!.seq;
     setChats((prev) => [...prev, ...fresh].slice(-KEEP));
+    setReceived((n) => n + fresh.length);
   }, []);
 
   // One catch-up at a time; a request made meanwhile runs once more after it.
@@ -110,6 +113,6 @@ export function useLiveFeed(id: string) {
     };
   }, [id, subscribe, sync, append, queryClient]);
 
-  const sorted = [...candidates.values()].sort((a, b) => a.clipStartMs - b.clipStartMs);
-  return { chats, candidates: sorted, error, loaded };
+  const sorted = useMemo(() => [...candidates.values()].sort((a, b) => a.clipStartMs - b.clipStartMs), [candidates]);
+  return { chats, received, candidates: sorted, error, loaded, retry: sync };
 }

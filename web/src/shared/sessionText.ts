@@ -30,11 +30,15 @@ export function sessionHref(s: Session): string {
   return s.kind === "live" ? `/live/${s.id}` : `/sessions/${s.id}`;
 }
 
-/** What a saved session is and where it stands: "치지직 수집 완료", "치지직 생방송 중단됨", "예시 채팅". */
+/**
+ * What a saved session is and where it stands: "치지직 다시보기 수집 완료",
+ * "치지직 생방송 중단됨", "예시 채팅". The kind is always said, so a VOD and
+ * a capture of the same broadcast (same title) tell apart in the list.
+ */
 export function sessionKindText(s: Session): string {
   if (s.isDemo) return "예시 채팅";
   if (s.kind === "live") return `${s.platformName} 생방송 ${liveStateText[s.state as LiveState] ?? s.state}`;
-  return `${s.platformName} ${vodStateText[s.state] ?? s.state}`;
+  return `${s.platformName} 다시보기 ${vodStateText[s.state] ?? s.state}`;
 }
 
 /** One line for lists: kind and state, chat count and length. */
