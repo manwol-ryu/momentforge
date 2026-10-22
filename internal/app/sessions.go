@@ -128,20 +128,18 @@ func (a *App) CandidateChats(ctx context.Context, analysisID, candidateID string
 	if offset < 0 || limit < 1 || limit > 500 {
 		return nil, 0, domain.NewUserError("INPUT", "채팅 조회 범위가 올바르지 않습니다.")
 	}
-	an, err := a.cfg.Store.Analysis(ctx, analysisID)
+	an, err := a.cfg.Store.AnalysisMeta(ctx, analysisID)
 	if err != nil {
 		return nil, 0, err
 	}
-	var cand *domain.Candidate
-	for i := range an.Candidates {
-		if an.Candidates[i].ID == candidateID {
-			cand = &an.Candidates[i]
-		}
+	cand, ok, err := a.cfg.Store.AnalysisCandidate(ctx, analysisID, candidateID)
+	if err != nil {
+		return nil, 0, err
 	}
-	if cand == nil {
+	if !ok {
 		return nil, 0, domain.NewUserError("NOT_FOUND", "편집 후보를 찾을 수 없습니다.")
 	}
-	return a.contextChats(ctx, an.SessionID, *cand, an.MaxSeq, offset, limit)
+	return a.contextChats(ctx, an.SessionID, cand, an.MaxSeq, offset, limit)
 }
 
 func (a *App) contextChats(ctx context.Context, sid string, cand domain.Candidate, maxSeq int64, offset, limit int) ([]ContextChat, int, error) {
@@ -175,22 +173,29 @@ const (
 )
 
 // ChatsAt returns up to 150 messages on each side of atMs within ±30 s,
-// limited to the analysis snapshot when analysisID is given.
+// limited to the analysis snapshot when analysisID is given. The player
+// asks every few seconds, so this reads one small row before the chat.
 func (a *App) ChatsAt(ctx context.Context, sid, analysisID string, atMs int64) (*PlayheadChats, error) {
 	if atMs < 0 || atMs > 31*24*3600*1000+1000 {
 		return nil, domain.NewUserError("INPUT", "재생 시간이 올바르지 않습니다.")
 	}
-	s, err := a.cfg.Store.Session(ctx, sid)
-	if err != nil {
-		return nil, err
-	}
-	end, maxSeq := s.DurationMs, int64(store.AllSeq)
-	if analysisID != "" {
-		an, err := a.cfg.Store.Analysis(ctx, analysisID)
+	var end, maxSeq int64
+	if analysisID == "" {
+		s, err := a.cfg.Store.Session(ctx, sid)
 		if err != nil {
 			return nil, err
 		}
-		if an.SessionID != sid {
+		end, maxSeq = s.DurationMs, store.AllSeq
+	} else {
+		an, err := a.cfg.Store.AnalysisMeta(ctx, analysisID)
+		if err != nil || an.SessionID != sid {
+			// A missing session is reported as such first.
+			if _, serr := a.cfg.Store.Session(ctx, sid); serr != nil {
+				return nil, serr
+			}
+			if err != nil {
+				return nil, err
+			}
 			return nil, domain.NewUserError("INPUT", "분석과 수집 작업이 맞지 않습니다.")
 		}
 		end, maxSeq = an.DurationMs, an.MaxSeq

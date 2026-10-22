@@ -1,7 +1,19 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { Chat } from "../../api/types";
 import { timecode } from "../format";
 import { authorTag, ChatText } from "./ChatText";
+
+/** The last message at or before a time (-1: none yet). Chats are in time order. */
+export function currentChat(chats: readonly Chat[], ms: number): number {
+  let lo = 0;
+  let hi = chats.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (chats[mid]!.offsetMs <= ms) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
 
 interface Props {
   chats: (Chat & { isEvidence?: boolean })[];
@@ -18,20 +30,22 @@ interface Props {
  * A chat log with timecodes: one compact row per message, the author as a
  * short tag, the platform's emote codes as chips, evidence messages marked.
  * With onPick every row is a button that jumps the video to that message.
+ * Memoized: at the playhead it re-renders when the current message changes,
+ * not on every time update.
  */
-export function ChatList({ chats, currentMs, follow = false, longForm = false, label, onPick }: Props) {
+export const ChatList = memo(function ChatList({ chats, currentMs, follow = false, longForm = false, label, onPick }: Props) {
   const list = useRef<HTMLOListElement>(null);
-  let current = -1;
-  if (currentMs !== undefined) {
-    for (let i = 0; i < chats.length && chats[i]!.offsetMs <= currentMs; i++) current = i;
-  }
+  const current = currentMs === undefined ? -1 : currentChat(chats, currentMs);
 
   useEffect(() => {
     if (!follow || current < 0) return;
-    const item = list.current?.children[current] as HTMLElement | undefined;
     const box = list.current;
-    if (item && box) box.scrollTop = item.offsetTop - box.clientHeight / 2;
-  }, [follow, current]);
+    const item = box?.children[current] as HTMLElement | undefined;
+    if (!item || !box) return;
+    // Measured from the list itself: offsetTop would count from the nearest positioned ancestor, not the list.
+    const top = item.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    box.scrollTop = top - (box.clientHeight - item.offsetHeight) / 2;
+  }, [follow, current, chats]);
 
   if (chats.length === 0) return <p className="empty">이 구간에 저장된 채팅이 없습니다.</p>;
   return (
@@ -78,4 +92,4 @@ export function ChatList({ chats, currentMs, follow = false, longForm = false, l
       })}
     </ol>
   );
-}
+});

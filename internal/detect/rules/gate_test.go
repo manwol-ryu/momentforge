@@ -132,12 +132,11 @@ func TestAdaptiveGateIsScaleFree(t *testing.T) {
 	}
 }
 
-// A chat that goes quiet (late night) keeps finding reactions that are big
-// for the hour, which the fixed 15-message gate cannot see.
-func TestAdaptiveGateFollowsLateNight(t *testing.T) {
+// lateNight is three hours of chat that drops to a fifth after two hours,
+// with nine authors laughing at laughAt (2:40).
+func lateNight() (events []domain.ChatEvent, laughAt int64) {
 	const hour = 60 * 60000
 	rnd := rand.New(rand.NewPCG(9, 9))
-	var events []domain.ChatEvent
 	add := func(ms int64, author, text string) {
 		events = append(events, domain.ChatEvent{ID: fmt.Sprintf("n%05d", len(events)), OffsetMs: ms, AuthorKey: author, Text: text})
 	}
@@ -147,7 +146,7 @@ func TestAdaptiveGateFollowsLateNight(t *testing.T) {
 		}
 		add(ms, fmt.Sprintf("v%02d", rnd.IntN(40)), "오늘 재밌다")
 	}
-	laughAt := int64(2*hour + 40*60000)
+	laughAt = int64(2*hour + 40*60000)
 	for i := range 9 {
 		add(laughAt+int64(i)*900, fmt.Sprintf("v%02d", i), "ㅋㅋㅋㅋ")
 		add(laughAt+10000+int64(i)*900, fmt.Sprintf("v%02d", i), "ㅋㅋㅋ")
@@ -156,6 +155,14 @@ func TestAdaptiveGateFollowsLateNight(t *testing.T) {
 	for i := range events {
 		events[i].Seq = int64(i + 1)
 	}
+	return events, laughAt
+}
+
+// A chat that goes quiet (late night) keeps finding reactions that are big
+// for the hour, which the fixed 15-message gate cannot see.
+func TestAdaptiveGateFollowsLateNight(t *testing.T) {
+	const hour = 60 * 60000
+	events, laughAt := lateNight()
 	found := func(cs []domain.Candidate) bool {
 		for _, c := range cs {
 			if c.ReactionStartMs <= laughAt+10000 && c.ReactionEndMs >= laughAt {
@@ -250,5 +257,38 @@ func TestAdaptiveGateLiveMatchesBatch(t *testing.T) {
 	}
 	if key(live) != key(batch) || len(batch) == 0 {
 		t.Fatalf("live %s\nbatch %s", key(live), key(batch))
+	}
+}
+
+// The incremental engine (LIVE) counts viewers' messages only: a bot-hidden
+// laugh flood and subscription notices are no reaction, and an authorless
+// system notice no longer voids its window.
+func TestIncrementalCountsViewerMessagesOnly(t *testing.T) {
+	const end = 15 * 60000
+	events := smallChannel(end, 10*60000)
+	for i := range 40 {
+		kind, hidden, author := domain.ChatKindChat, true, fmt.Sprintf("b%02d", i)
+		switch i % 4 {
+		case 1:
+			kind, hidden = domain.ChatKindSubscription, false
+		case 3:
+			kind, hidden, author = domain.ChatKindSystem, false, ""
+		}
+		events = append(events, domain.ChatEvent{ID: fmt.Sprintf("x%02d", i), OffsetMs: 300000 + int64(i)*200,
+			AuthorKey: author, Text: "ㅋㅋㅋㅋ", Kind: kind, Hidden: hidden})
+	}
+	slices.SortStableFunc(events, func(a, b domain.ChatEvent) int { return int(a.OffsetMs - b.OffsetMs) })
+	p := detect.DefaultParams()
+	p.Broadcast = nil
+	res := analyze(t, events, end, p)
+	for _, c := range res.Candidates {
+		if c.ReactionStartMs < 320000 && c.ReactionEndMs > 290000 {
+			t.Fatalf("hidden messages or notices made a candidate: %+v", c)
+		}
+	}
+	for _, w := range res.Windows {
+		if w.T > 300000 && w.T <= 320000 && !w.Valid {
+			t.Fatalf("t=%d: an authorless system notice voided the window", w.T)
+		}
 	}
 }

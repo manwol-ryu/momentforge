@@ -148,13 +148,18 @@ func (a *App) collect(ctx context.Context, h job, p platform.Platform, src platf
 	}
 	collecting = false
 
-	if err := a.writeChat(ctx, sess.ID); err != nil {
+	// The chat is read once for its files and the analysis.
+	chat, err := a.loadChat(ctx, sess.ID)
+	if err != nil {
+		return err
+	}
+	if err := writeChatFiles(dir, chat); err != nil {
 		warning = "채팅 파일을 쓰지 못했습니다. 저장된 채팅으로 다시 분석할 수 있습니다."
 	}
 	h.update(func(s *JobStatus) {
 		s.Phase, s.Message, s.Warning = "analyzing", "편집 후보를 찾는 중입니다.", warning
 	})
-	an, err := a.analyzeSession(ctx, sess.ID, params, h)
+	an, err := a.analyzeChat(ctx, chat, params, h)
 	if err != nil {
 		return err
 	}

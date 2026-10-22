@@ -2,6 +2,7 @@ package cut
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -170,8 +171,8 @@ func TestCheckPlanRequiresContextInsideSpans(t *testing.T) {
 }
 
 func TestVerificationParsing(t *testing.T) {
-	clip, err := ParseClipVerification([]byte(`{"pass":false,"answers":{"what":"x","condition":"알 수 없음","result":"x","references":"x","why_reaction":"x"},"gaps":["약속이 없음"]}`))
-	if err != nil || clip.Pass || len(clip.Gaps) != 1 {
+	clip, err := ParseClipVerification([]byte(`{"pass":false,"answers":{"what":"x","condition":"알 수 없음","result":"x","references":"x","why_reaction":"x"},"gaps":[{"refs":[],"text":"약속이 없음"}],"asides":[]}`), nil)
+	if err != nil || clip.Pass || len(clip.Gaps) != 1 || clip.Gaps[0].Text != "약속이 없음" {
 		t.Fatalf("clip %+v err %v", clip, err)
 	}
 	src, err := ParseSourceVerification([]byte(`{"pass":true,"mixed_attempt":false,"cut_condition":true,"missed_correction":false,"ended_early":false,"notes":[]}`))
@@ -182,23 +183,43 @@ func TestVerificationParsing(t *testing.T) {
 	if len(issues) != 2 || !strings.HasPrefix(issues[0], "클립만") || !strings.HasPrefix(issues[1], "원본") {
 		t.Errorf("issues = %v", issues)
 	}
-	if _, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x"},"gaps":[]}`)); err == nil {
+	if _, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x"},"gaps":[]}`), nil); err == nil {
 		t.Error("missing answers passed")
+	}
+	if _, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"x","result":"x","references":"x","why_reaction":"x"},"gaps":[],"server_changes":[{"from":"fail","to":"pass","why":"x"}]}`), nil); err == nil {
+		t.Error("the model wrote the server's field")
 	}
 }
 
 func TestAsidesNeverFailTheClipCheck(t *testing.T) {
-	clip, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"해당 없음","result":"x","references":"x","why_reaction":"x"},"gaps":[],"asides":["채팅 '이미 써먹었죠'가 가리키는 일은 알 수 없음"]}`))
-	if err != nil || len(clip.Asides) != 1 {
+	clip, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"해당 없음","result":"x","references":"x","why_reaction":"x"},"gaps":[],"asides":[{"refs":[],"text":"채팅 '이미 써먹었죠'가 가리키는 일은 알 수 없음"}]}`), nil)
+	if err != nil || len(clip.Asides) != 1 || !clip.Pass {
 		t.Fatalf("clip %+v err %v", clip, err)
 	}
 	if issues := Issues(&clip, nil); len(issues) != 0 {
 		t.Errorf("an aside became an issue: %v", issues)
 	}
 	// An answer from before asides existed still reads, with an empty list.
-	old, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"x","result":"x","references":"x","why_reaction":"x"},"gaps":[]}`))
+	old, err := ParseClipVerification([]byte(`{"pass":true,"answers":{"what":"x","condition":"x","result":"x","references":"x","why_reaction":"x"},"gaps":[]}`), nil)
 	if err != nil || old.Asides == nil {
 		t.Fatalf("old %+v err %v", old, err)
+	}
+}
+
+// A plan checked with prompt v2 stored gaps and asides as plain strings.
+func TestStoredStringFindingsStillRead(t *testing.T) {
+	var p Plan
+	raw := `{"verification":{"clip_only":{"pass":false,"answers":{},"gaps":["약속이 없음"],"asides":["곁가지"]},"evidence_match":"all_read","boundary_ok":false,"issues":[]}}`
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	v := p.Verification.ClipOnly
+	if v == nil || len(v.Gaps) != 1 || v.Gaps[0].Text != "약속이 없음" || v.Gaps[0].Refs == nil || v.Asides[0].Text != "곁가지" {
+		t.Fatalf("clip = %+v", v)
+	}
+	b, _ := json.Marshal(v)
+	if !strings.Contains(string(b), `"gaps":[{"refs":[],"text":"약속이 없음"}]`) || strings.Contains(string(b), "server_changes") {
+		t.Errorf("rewritten as %s", b)
 	}
 }
 
@@ -212,7 +233,8 @@ func TestVerifyClipMarksKeyEvidence(t *testing.T) {
 	an := Analysis{Causes: []Cause{{Support: []string{"utt:1", "chat:a"}}, {Support: []string{"chat:b"}}}}
 	answer := PlanAnswer{EventStartRef: "utt:1", RequiredContextRefs: []string{"utt:1"}}
 	key := KeyRefs(an, answer)
-	step := VerifyClipStep("오인과 정정", []Span{{StartMs: 9_000, EndMs: 20_000, Role: "main"}}, ev, key)
+	clip := ClipSpans([]Span{{StartMs: 9_000, EndMs: 20_000, Role: "main"}}, ev, key)
+	step := VerifyClipStep("오인과 정정", clip)
 	spans := step.Input.(map[string]any)["spans"].([]ClipSpan)
 	got := map[string]bool{}
 	for _, e := range spans[0].Evidence {
@@ -225,6 +247,95 @@ func TestVerifyClipMarksKeyEvidence(t *testing.T) {
 	if strings.Contains(string(b), `"key"`) || !strings.Contains(string(b), `"ref":"chat:b"`) {
 		t.Errorf("a side remark is sent without a key mark: %s", b)
 	}
+}
+
+func TestServerReclassifiesClipFindings(t *testing.T) {
+	clip := ClipSpans([]Span{{StartMs: 0, EndMs: 60_000, Role: "main"}}, []Evidence{
+		{Ref: "utt:1", Kind: KindUtterance, StartMs: 1_000, EndMs: 4_000, Text: "아 죽었다"},
+		{Ref: "utt:2", Kind: KindUtterance, StartMs: 5_000, EndMs: 8_000, Text: "그거 말고"},
+		{Ref: "chat:k", Kind: KindChat, StartMs: 10_000, Author: author("u1"), Text: "아까 벌칙 건다며"},
+		{Ref: "chat:b", Kind: KindChat, StartMs: 11_000, Author: author("u2"), Text: "이미 써먹었죠"},
+		{Ref: "chat:c", Kind: KindChat, StartMs: 12_000, Author: author("u3"), Text: "아까 그거 ㅋㅋ"},
+		{Ref: "chat:d", Kind: KindChat, StartMs: 13_000, Author: author("u2"), Text: "또 그 얘기"},
+		{Ref: "chat:n", Kind: KindChat, StartMs: 14_000, Text: "작성자 모름"},
+		{Ref: "chat:out", Kind: KindChat, StartMs: 90_000, Author: author("u4"), Text: "클립 밖"},
+	}, []string{"utt:1", "chat:k"})
+	answers := `"answers":{"what":"x","condition":"x","result":"x","references":"x","why_reaction":"x"}`
+	parse := func(t *testing.T, pass bool, gaps, asides string) ClipVerification {
+		t.Helper()
+		raw := fmt.Sprintf(`{"pass":%v,%s,"gaps":[%s],"asides":[%s]}`, pass, answers, gaps, asides)
+		v, err := ParseClipVerification([]byte(raw), clip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	texts := func(list []ClipFinding) []string {
+		out := []string{}
+		for _, f := range list {
+			out = append(out, f.Text)
+		}
+		return out
+	}
+
+	t.Run("an aside citing key evidence is a gap", func(t *testing.T) {
+		v := parse(t, true, ``, `{"refs":["chat:k"],"text":"'아까 벌칙'이 가리키는 약속이 없음"}`)
+		if v.Pass || len(v.Gaps) != 1 || len(v.Asides) != 0 || len(v.Changes) != 2 ||
+			v.Changes[0].From != "aside" || v.Changes[0].To != "gap" || !strings.Contains(v.Changes[0].Why, "chat:k") ||
+			v.Changes[1].From != "pass" || v.Changes[1].To != "fail" {
+			t.Fatalf("v = %+v", v)
+		}
+		if issues := Issues(&v, nil); len(issues) != 1 || !strings.Contains(issues[0], "(근거 chat:k)") {
+			t.Errorf("issues = %v", issues)
+		}
+	})
+	t.Run("chats of two authors pointing at one past are a gap", func(t *testing.T) {
+		v := parse(t, true, ``, `{"refs":["chat:b","chat:c","chat:d"],"text":"여러 사람이 말하는 그 일"}`)
+		if v.Pass || len(v.Gaps) != 1 || !strings.Contains(v.Changes[0].Why, "작성자 2명") {
+			t.Fatalf("v = %+v", v)
+		}
+	})
+	t.Run("one viewer's chats only are an aside", func(t *testing.T) {
+		v := parse(t, false, `{"refs":["chat:b","chat:d"],"text":"'이미 써먹었죠'가 가리키는 일"}`, ``)
+		if !v.Pass || len(v.Gaps) != 0 || len(v.Asides) != 1 || len(v.Changes) != 2 ||
+			v.Changes[0].From != "gap" || v.Changes[0].To != "aside" || v.Changes[1].From != "fail" || v.Changes[1].To != "pass" {
+			t.Fatalf("v = %+v", v)
+		}
+	})
+	t.Run("what the server cannot judge stays where the model put it", func(t *testing.T) {
+		v := parse(t, false,
+			`{"refs":[],"text":"target의 사건이 클립에 없음"},{"refs":["utt:2"],"text":"'그거'가 무엇인지"},{"refs":["chat:n"],"text":"작성자 모름"}`,
+			`{"refs":["chat:b"],"text":"곁가지"},{"refs":[],"text":"배경 음악"}`)
+		if v.Pass || len(v.Changes) != 0 {
+			t.Fatalf("v = %+v", v)
+		}
+		if g, a := texts(v.Gaps), texts(v.Asides); len(g) != 3 || len(a) != 2 {
+			t.Errorf("gaps %v asides %v", g, a)
+		}
+	})
+	t.Run("refs outside the clip are dropped", func(t *testing.T) {
+		v := parse(t, false, `{"refs":["chat:out","chat:out","chat:b"],"text":"클립 밖을 가리킴"}`, ``)
+		// Left with one viewer's chat: an aside, and the check passes.
+		if !v.Pass || len(v.Asides) != 1 || len(v.Asides[0].Refs) != 1 || v.Asides[0].Refs[0] != "chat:b" ||
+			v.Changes[0].From != "gap" || v.Changes[0].To != "gap" || !strings.Contains(v.Changes[0].Why, "chat:out") {
+			t.Fatalf("v = %+v", v)
+		}
+	})
+	t.Run("a failure without a gap stays a failure", func(t *testing.T) {
+		v := parse(t, false, ``, `{"refs":["chat:b"],"text":"곁가지"}`)
+		if v.Pass || len(v.Changes) != 0 {
+			t.Fatalf("v = %+v", v)
+		}
+		if issues := Issues(&v, nil); len(issues) != 1 || !strings.Contains(issues[0], "이해할 수 없다고") {
+			t.Errorf("issues = %v", issues)
+		}
+	})
+	t.Run("a pass with a gap is a failure", func(t *testing.T) {
+		v := parse(t, true, `{"refs":["utt:2"],"text":"'그거'가 무엇인지"}`, ``)
+		if v.Pass || len(v.Changes) != 1 || v.Changes[0].To != "fail" {
+			t.Fatalf("v = %+v", v)
+		}
+	})
 }
 
 func TestClampAppliesDefaultsAndLimits(t *testing.T) {
@@ -281,5 +392,47 @@ func TestMergeMarksNewEvidenceAndKeepsOrder(t *testing.T) {
 	if !SameRequest(SearchRequest{Tool: ToolSearch, Query: "a", BeforeMs: 1}, SearchRequest{Tool: ToolSearch, Query: "a", BeforeMs: 1}) ||
 		SameRequest(SearchRequest{Tool: ToolSearch, Query: "a"}, SearchRequest{Tool: ToolSearch, Query: "b"}) {
 		t.Fatal("SameRequest")
+	}
+}
+
+func TestCheckPlanReplansOnEveryInventedRef(t *testing.T) {
+	known := Known(evidence())
+	for _, tc := range []struct {
+		name string
+		edit func(*PlanAnswer)
+	}{
+		{"required", func(p *PlanAnswer) { p.RequiredContextRefs = append(p.RequiredContextRefs, "utt:zz") }},
+		{"analysis", func(p *PlanAnswer) { p.AnalysisEvidenceRefs = append(p.AnalysisEvidenceRefs, "chat:zz") }},
+		{"optional", func(p *PlanAnswer) { p.OptionalContextRefs = []string{"utt:zz"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := planAnswer([]SpanRefs{{StartRef: "utt:p", EndRef: "utt:p", Role: "setup"}, {StartRef: "utt:b", EndRef: "utt:e", Role: "main"}},
+				[]string{"utt:p", "utt:d"})
+			tc.edit(&p)
+			checked, issues := CheckPlan(&p, known, 600_000)
+			if checked.Dropped != 1 || len(issues) != 1 || !strings.Contains(issues[0], "읽지 않은 근거") {
+				t.Fatalf("dropped %d issues %v", checked.Dropped, issues)
+			}
+		})
+	}
+}
+
+func TestMergeLeavesTheSharedEvidenceAlone(t *testing.T) {
+	// The preview's list has room to grow in place; a search must not write into it.
+	shared := make([]Evidence, 2, 8)
+	shared[0] = Evidence{Ref: "chat:b", Kind: KindChat, StartMs: 300000, Text: "b"}
+	shared[1] = Evidence{Ref: "chat:c", Kind: KindChat, StartMs: 310000, Text: "c"}
+	in := Input{Evidence: shared}
+	added := Merge(&in, Known(in.Evidence), []Evidence{{Ref: "utt:a", Kind: KindUtterance, StartMs: 30000, Text: "a"}})
+	if len(added) != 1 || in.Evidence[0].Ref != "utt:a" || len(in.Evidence) != 3 {
+		t.Fatalf("merged %+v", in.Evidence)
+	}
+	if shared[0].Ref != "chat:b" || shared[1].Ref != "chat:c" || shared[:3][2].Ref != "" {
+		t.Fatalf("the shared list changed: %+v", shared[:3])
+	}
+	// Nothing new: the input keeps its list.
+	before := in.Evidence
+	if Merge(&in, Known(in.Evidence), in.Evidence[:1]) != nil || &before[0] != &in.Evidence[0] {
+		t.Fatal("a merge without news replaced the list")
 	}
 }

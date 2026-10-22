@@ -63,11 +63,29 @@ interface Props {
  * must keep; the three boundary candidates to switch between; how the event
  * ends and what the checks answered; and the user's notes and confirmation.
  */
+// Unsaved notes by plan. A row that is not chosen shows its plan in one
+// line, so the box unmounts; a draft waits here until the row opens again.
+const drafts = new Map<string, { text: string; open: boolean }>();
+
 export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, onReanalyze }: Props) {
   const c = it.cut;
   const queryClient = useQueryClient();
-  const [noteText, setNoteText] = useState("");
-  const [noteOpen, setNoteOpen] = useState(false);
+  const draftKey = c?.planId ?? it.id;
+  const [noteText, setNoteTextState] = useState(() => drafts.get(draftKey)?.text ?? "");
+  const [noteOpen, setNoteOpenState] = useState(() => drafts.get(draftKey)?.open ?? false);
+  const keepDraft = (text: string, open: boolean) => {
+    if (text || open) drafts.set(draftKey, { text, open });
+    else drafts.delete(draftKey);
+  };
+  const setNoteText = (text: string) => {
+    setNoteTextState(text);
+    keepDraft(text, noteOpen);
+  };
+  const setNoteOpen = (open: boolean | ((o: boolean) => boolean)) => {
+    const next = typeof open === "function" ? open(noteOpen) : open;
+    setNoteOpenState(next);
+    keepDraft(noteText, next);
+  };
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["timeline"] });
     void queryClient.invalidateQueries({ queryKey: ["files"] });
@@ -276,7 +294,7 @@ export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, on
           </span>
           {v.answers && (
             <details className="ai-note-more">
-              <summary>검수 답 보기</summary>
+              <summary>검수 답 보기{v.serverChanges.length > 0 && ` (서버가 바꾼 분류 ${v.serverChanges.length}건)`}</summary>
               <dl className="cut-answers">
                 {answerLabel.map(([k, label]) =>
                   v.answers?.[k] ? (
@@ -289,7 +307,27 @@ export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, on
                 {v.asides.length > 0 && (
                   <div>
                     <dt>참고 (실패 사유 아님)</dt>
-                    <dd>{v.asides.join(" · ")}</dd>
+                    <dd>
+                      <ul className="cut-findings">
+                        {v.asides.map((f, i) => (
+                          <li key={i}>
+                            {f.text} {f.refs.map((e) => ref(e))}
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                )}
+                {v.serverChanges.length > 0 && (
+                  <div>
+                    <dt>서버가 바꾼 분류</dt>
+                    <dd>
+                      <ul className="cut-findings" aria-label="서버가 바꾼 분류">
+                        {v.serverChanges.map((s, i) => (
+                          <li key={i}>{s}</li>
+                        ))}
+                      </ul>
+                    </dd>
                   </div>
                 )}
               </dl>

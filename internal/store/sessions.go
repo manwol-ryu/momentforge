@@ -71,10 +71,11 @@ func (s *Store) CreateSession(ctx context.Context, n NewSession) (Session, error
 	return s.Session(ctx, id)
 }
 
+// sessionColumns are a session's own columns and its latest analysis (an
+// index lookup); ChatCount comes from chatCount.
 const sessionColumns = `s.id, s.platform, s.kind, s.target_id, s.title, s.duration_ms, s.reported_duration_ms,
 	s.state, s.cursor, s.pages, COALESCE(s.error_code,''), COALESCE(s.error_message,''), s.hidden,
 	s.created_at, s.updated_at,
-	(SELECT count(*) FROM chat_events c WHERE c.session_id = s.id),
 	COALESCE((SELECT a.id FROM analyses a WHERE a.session_id = s.id ORDER BY a.created_at DESC LIMIT 1), '')`
 
 func scanSession(row interface{ Scan(...any) error }) (Session, error) {
@@ -83,7 +84,7 @@ func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	var created, updated string
 	err := row.Scan(&x.ID, &x.Platform, &x.Kind, &x.TargetID, &x.Title, &x.DurationMs, &x.ReportedDurationMs,
 		&x.State, &x.Cursor, &x.Pages, &x.ErrorCode, &x.ErrorMessage, &hidden, &created, &updated,
-		&x.ChatCount, &x.LatestAnalysisID)
+		&x.LatestAnalysisID)
 	if err != nil {
 		return x, err
 	}
@@ -102,7 +103,8 @@ func (s *Store) Session(ctx context.Context, id string) (Session, error) {
 	if err != nil {
 		return x, fmt.Errorf("read session: %w", err)
 	}
-	return x, nil
+	x.ChatCount, err = s.chatCount(ctx, id)
+	return x, err
 }
 
 // Sessions lists sessions, newest first.
@@ -124,7 +126,16 @@ func (s *Store) Sessions(ctx context.Context, includeHidden bool) ([]Session, er
 		}
 		out = append(out, x)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	rows.Close()
+	for i := range out {
+		if out[i].ChatCount, err = s.chatCount(ctx, out[i].ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // SetAllHidden hides every visible session from the list (hidden=true) or
@@ -215,7 +226,7 @@ func (s *Store) SavePage(ctx context.Context, sid string, p Page) ([]domain.Chat
 		error_code=NULL, error_message=NULL, updated_at=? WHERE id=?`, p.Next, state, maxEnd, now(), sid); err != nil {
 		return nil, fmt.Errorf("update checkpoint: %w", err)
 	}
-	return added, tx.Commit()
+	return added, s.commitChat(tx, sid, len(added))
 }
 
 // Quarantine keeps a rejected page for diagnosis.

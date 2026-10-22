@@ -1,9 +1,12 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"math"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/detect"
@@ -118,17 +121,9 @@ func (a *App) LiveCandidates(ctx context.Context, sid string, afterRev int64) ([
 	if err != nil {
 		return nil, 0, err
 	}
-	var ids []string
-	for _, c := range cands {
-		ids = append(ids, c.EvidenceIDs...)
-	}
-	chats, err := a.cfg.Store.ChatsByID(ctx, sid, ids)
+	byID, err := a.evidenceChats(ctx, sid, cands, store.AllSeq)
 	if err != nil {
 		return nil, 0, err
-	}
-	byID := make(map[string]domain.ChatEvent, len(chats))
-	for _, e := range chats {
-		byID[e.ID] = e
 	}
 	out := make([]CandidateView, len(cands))
 	for i, c := range cands {
@@ -186,19 +181,30 @@ func (a *App) LiveDensity(ctx context.Context, sid string) (LiveDensity, error) 
 		end = max(end, (b+1)*bucket)
 	}
 	out := LiveDensity{BucketMs: bucket, EndMs: end, Windows: []domain.Window{}}
-	for b := int64(0); b*bucket < end; b++ {
-		start := b * bucket
-		valid := true
-		for _, g := range gaps {
-			if g.StartMs <= start && start+bucket <= g.EndMs {
-				valid = false
-			}
-		}
-		if n := counts[b]; n > 0 || !valid {
-			out.Windows = append(out.Windows, domain.Window{T: start + bucket, N: n, Valid: valid, Signals: []string{}})
+	for b, unobserved := range coveredBuckets(gaps, bucket, end) {
+		if n := counts[int64(b)]; n > 0 || unobserved {
+			out.Windows = append(out.Windows, domain.Window{T: int64(b+1) * bucket, N: n, Valid: !unobserved, Signals: []string{}})
 		}
 	}
 	return out, nil
+}
+
+// coveredBuckets reports, for each bucket of [0, end), whether a single gap
+// covers it. With the gaps in start order, that is when the furthest end of
+// those starting at or before the bucket reaches the bucket's end.
+func coveredBuckets(gaps []domain.Gap, bucket, end int64) []bool {
+	gaps = slices.Clone(gaps)
+	slices.SortFunc(gaps, func(x, y domain.Gap) int { return cmp.Compare(x.StartMs, y.StartMs) })
+	out := make([]bool, (end+bucket-1)/bucket)
+	next, reach := 0, int64(math.MinInt64)
+	for b := range out {
+		start := int64(b) * bucket
+		for ; next < len(gaps) && gaps[next].StartMs <= start; next++ {
+			reach = max(reach, gaps[next].EndMs)
+		}
+		out[b] = reach >= start+bucket
+	}
+	return out
 }
 
 // Checkpoint is a saved copy of a LIVE capture so far.

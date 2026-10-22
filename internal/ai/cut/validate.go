@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
 )
@@ -138,7 +139,7 @@ func CheckPlan(p *PlanAnswer, known map[string]Evidence, durationMs int64) (Chec
 	out.Dropped += d
 	p.OptionalContextRefs, d = keepKnown(p.OptionalContextRefs, known)
 	out.Dropped += d
-	if d > 0 {
+	if out.Dropped > 0 {
 		issues = append(issues, "이 분석에서 읽지 않은 근거 ref를 썼습니다. 입력 evidence의 ref만 쓰세요")
 	}
 	for _, ref := range []*string{&p.StoryOriginRef, &p.EventStartRef} {
@@ -192,27 +193,158 @@ func CheckPlan(p *PlanAnswer, known map[string]Evidence, durationMs int64) (Chec
 	return out, issues
 }
 
-// ParseClipVerification reads the clip-only check's answer.
-func ParseClipVerification(raw json.RawMessage) (ClipVerification, error) {
+// ParseClipVerification reads the clip-only check's answer and sorts its
+// findings again by the clip it was given (ReclassifyClip).
+func ParseClipVerification(raw json.RawMessage, clip []ClipSpan) (ClipVerification, error) {
 	var v ClipVerification
-	if err := decodeStrict(raw, &v); err != nil {
+	var answer struct {
+		Pass    bool              `json:"pass"`
+		Answers map[string]string `json:"answers"`
+		Gaps    []ClipFinding     `json:"gaps"`
+		Asides  []ClipFinding     `json:"asides"`
+	}
+	if err := decodeStrict(raw, &answer); err != nil {
 		return v, err
 	}
 	for _, k := range []string{"what", "condition", "result", "references", "why_reaction"} {
-		if _, ok := v.Answers[k]; !ok {
+		if _, ok := answer.Answers[k]; !ok {
 			return v, errFormat
 		}
 	}
-	if v.Gaps == nil {
-		v.Gaps = []string{}
-	}
-	if v.Asides == nil {
-		v.Asides = []string{}
-	}
-	if len(v.Asides) > 6 {
-		v.Asides = v.Asides[:6]
-	}
+	v = ClipVerification{Pass: answer.Pass, Answers: answer.Answers, Gaps: firstFindings(answer.Gaps), Asides: firstFindings(answer.Asides)}
+	ReclassifyClip(&v, clip)
 	return v, nil
+}
+
+const maxFindings = 6
+
+func firstFindings(list []ClipFinding) []ClipFinding {
+	out := make([]ClipFinding, 0, min(len(list), maxFindings))
+	for _, f := range list {
+		if len(out) == maxFindings {
+			break
+		}
+		if f.Refs == nil {
+			f.Refs = []string{}
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// ReclassifyClip sorts the model's gaps and asides again by the refs they
+// cite, so whether a finding fails the check does not rest on the model's
+// wording alone:
+//   - refs that are not in the clip are dropped;
+//   - an aside that cites key evidence, or chats of two or more authors
+//     pointing at the same past, is a gap;
+//   - a gap that cites only chats of one author, none of them key, is an
+//     aside (a single viewer's side remark);
+//   - the check passes when no gap is left, unless the model failed it
+//     without naming a gap.
+//
+// Every move is recorded in v.Changes for the result box.
+func ReclassifyClip(v *ClipVerification, clip []ClipSpan) {
+	in := map[string]ClipEvidence{}
+	for _, s := range clip {
+		for _, e := range s.Evidence {
+			in[e.Ref] = e
+		}
+	}
+	failedOnGaps := !v.Pass && len(v.Gaps) > 0
+	gaps, asides := []ClipFinding{}, []ClipFinding{}
+	for _, f := range v.Gaps {
+		f = v.keepInClip(f, "gap", in)
+		if why := sideRemark(f, in); why != "" {
+			asides = append(asides, f)
+			v.Changes = append(v.Changes, ClipChange{Text: f.Text, From: "gap", To: "aside", Why: why})
+			continue
+		}
+		gaps = append(gaps, f)
+	}
+	for _, f := range v.Asides {
+		f = v.keepInClip(f, "aside", in)
+		if why := neededRef(f, in); why != "" {
+			gaps = append(gaps, f)
+			v.Changes = append(v.Changes, ClipChange{Text: f.Text, From: "aside", To: "gap", Why: why})
+			continue
+		}
+		asides = append(asides, f)
+	}
+	v.Gaps, v.Asides = gaps, asides
+	pass := len(gaps) == 0 && (v.Pass || failedOnGaps)
+	switch {
+	case pass && !v.Pass:
+		v.Changes = append(v.Changes, ClipChange{From: "fail", To: "pass", Why: "실패 사유가 모두 곁가지로 내려가 통과로 바꿈"})
+	case !pass && v.Pass:
+		v.Changes = append(v.Changes, ClipChange{From: "pass", To: "fail", Why: "실패 사유가 남아 있어 실패로 바꿈"})
+	}
+	v.Pass = pass
+}
+
+// keepInClip drops the refs of f that are not in the clip, recording it.
+func (v *ClipVerification) keepInClip(f ClipFinding, kind string, in map[string]ClipEvidence) ClipFinding {
+	kept, dropped := []string{}, []string{}
+	seen := map[string]bool{}
+	for _, r := range f.Refs {
+		switch {
+		case seen[r]:
+		case in[r].Ref == "":
+			dropped = append(dropped, r)
+		default:
+			kept = append(kept, r)
+		}
+		seen[r] = true
+	}
+	if len(dropped) > 0 {
+		v.Changes = append(v.Changes, ClipChange{Text: f.Text, From: kind, To: kind,
+			Why: "클립에 없는 근거 " + strings.Join(dropped, ", ") + "를 뺌"})
+	}
+	f.Refs = kept
+	return f
+}
+
+// neededRef says why an aside is needed for the target ("" when it is not):
+// it cites key evidence or chats of several authors.
+func neededRef(f ClipFinding, in map[string]ClipEvidence) string {
+	for _, r := range f.Refs {
+		if in[r].Key {
+			return "계획이 기댄 근거(key) " + r + "를 가리킴"
+		}
+	}
+	if n := len(chatAuthors(f, in)); n >= 2 {
+		return fmt.Sprintf("서로 다른 작성자 %d명의 채팅이 같은 과거를 가리킴", n)
+	}
+	return ""
+}
+
+// sideRemark says why a gap is a single viewer's side remark ("" when it is
+// not): every ref is a chat that is not key, all of one known author.
+func sideRemark(f ClipFinding, in map[string]ClipEvidence) string {
+	if len(f.Refs) == 0 {
+		return ""
+	}
+	for _, r := range f.Refs {
+		e := in[r]
+		if e.Key || e.Kind != KindChat || e.Author == nil {
+			return ""
+		}
+	}
+	if len(chatAuthors(f, in)) != 1 {
+		return ""
+	}
+	return "key가 아닌 시청자 한 사람의 채팅만 가리킴"
+}
+
+// chatAuthors are the distinct known authors of the chats f cites.
+func chatAuthors(f ClipFinding, in map[string]ClipEvidence) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range f.Refs {
+		if e := in[r]; e.Kind == KindChat && e.Author != nil {
+			out[*e.Author] = true
+		}
+	}
+	return out
 }
 
 // ParseSourceVerification reads the against-source check's answer; pass is
@@ -237,7 +369,11 @@ func Issues(clip *ClipVerification, src *SourceVerification) []string {
 	var out []string
 	if clip != nil && !clip.Pass {
 		for _, g := range clip.Gaps {
-			out = append(out, "클립만 봐서는 알 수 없음: "+g)
+			issue := "클립만 봐서는 알 수 없음: " + g.Text
+			if len(g.Refs) > 0 {
+				issue += " (근거 " + strings.Join(g.Refs, ", ") + ")"
+			}
+			out = append(out, issue)
 		}
 		if len(clip.Gaps) == 0 {
 			out = append(out, "클립만 봐서는 상황을 이해할 수 없다고 검수됨")

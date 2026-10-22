@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -77,11 +79,68 @@ func (s *Store) SearchChats(ctx context.Context, sid, query, author string, from
 	return chats, total, err
 }
 
+// ChatMatchesBefore returns, of the messages before before (up to maxSeq,
+// not hidden by the platform) whose text contains query, the limit latest
+// ones in time order: what the cut analysis's search finds nearest to the
+// moment it asks about. Unlike SearchChats it counts nothing.
+func (s *Store) ChatMatchesBefore(ctx context.Context, sid, query string, before, maxSeq int64, limit int) ([]domain.ChatEvent, error) {
+	chats, err := s.queryChats(ctx, "SELECT "+chatColumns+` FROM chat_events
+		WHERE session_id=? AND offset_ms<? AND seq<=? AND hidden=0 AND text LIKE ? ESCAPE '\'
+		ORDER BY offset_ms DESC, seq DESC LIMIT ?`, sid, before, maxSeq, "%"+escapeLike(query)+"%", limit)
+	slices.Reverse(chats)
+	return chats, err
+}
+
+// AnalysisCandidates returns an analysis's candidates in time order,
+// without its windows (Analysis reads those too).
+func (s *Store) AnalysisCandidates(ctx context.Context, analysisID string) ([]domain.Candidate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT body_json FROM candidates WHERE analysis_id=? ORDER BY reaction_start_ms, id`, analysisID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Candidate
+	for rows.Next() {
+		var body string
+		var c domain.Candidate
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(body), &c); err != nil {
+			return nil, fmt.Errorf("read candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ActivityBucket is the chat of one bucketMs-long span.
 type ActivityBucket struct {
 	Index   int64 // span number from 0 (start = Index × bucket length)
 	Chats   int
 	Authors int // different pseudonymous authors
+}
+
+// CountedActivity is ChatActivity limited to what the detector counts as
+// viewers' messages (chat and donation text, not hidden by the platform)
+// stored up to maxSeq; authors leave out unknown ones.
+func (s *Store) CountedActivity(ctx context.Context, sid string, bucketMs, from, to, maxSeq int64) ([]ActivityBucket, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT offset_ms/?, count(*), count(DISTINCT NULLIF(author_key, '')) FROM chat_events
+		WHERE session_id=? AND offset_ms>=? AND offset_ms<? AND seq<=? AND hidden=0 AND kind IN ('', 'chat', 'donation')
+		GROUP BY 1 ORDER BY 1`, bucketMs, sid, from, to, maxSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ActivityBucket
+	for rows.Next() {
+		var b ActivityBucket
+		if err := rows.Scan(&b.Index, &b.Chats, &b.Authors); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // ChatActivity counts messages and authors per bucketMs-long span in

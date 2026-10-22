@@ -106,11 +106,9 @@ func (a *App) Moments(ctx context.Context, sid string) ([]Moment, error) {
 			return nil, err
 		}
 	} else if tl.AnalysisID != "" {
-		an, err := a.cfg.Store.Analysis(ctx, tl.AnalysisID)
-		if err != nil {
+		if cands, err = a.cfg.Store.AnalysisCandidates(ctx, tl.AnalysisID); err != nil { // without the windows
 			return nil, err
 		}
-		cands = an.Candidates
 	}
 	for _, c := range cands {
 		rules[SourceRule+":"+c.ID] = c

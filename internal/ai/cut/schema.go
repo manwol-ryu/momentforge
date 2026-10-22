@@ -90,6 +90,10 @@ func PlanSchema() map[string]any {
 	})
 }
 
+func findingSchema() map[string]any {
+	return object(map[string]any{"refs": strs(), "text": str()})
+}
+
 // VerifyClipSchema is the clip-only check's answer.
 func VerifyClipSchema() map[string]any {
 	return object(map[string]any{
@@ -97,8 +101,8 @@ func VerifyClipSchema() map[string]any {
 		"answers": object(map[string]any{
 			"what": str(), "condition": str(), "result": str(), "references": str(), "why_reaction": str(),
 		}),
-		"gaps":   strs(),
-		"asides": strs(),
+		"gaps":   arr(findingSchema()),
+		"asides": arr(findingSchema()),
 	})
 }
 

@@ -50,6 +50,49 @@ def test_selected_candidate_shows_evidence_and_context_chat(page: Page, base_url
     page.screenshot(path=str(SHOTS / "session-selected.png"), full_page=True)
 
 
+def test_candidates_by_strength(page: Page, base_url: str) -> None:
+    """The sample is analyzed as a whole broadcast, so its candidates are ranked:
+    each row shows its timeline number, strength and what stood out against the
+    usual; the list sorts by strength and hides weak ones (the timeline marks what
+    the list shows, and the choice is remembered); the strong and medium ones
+    can be picked for the AI review at once; the bars read against the usual."""
+    open_sample(page, base_url)
+    rows = page.locator("ol.candidates > li")
+    expect(rows).to_have_count(3)
+    expect(rows.locator(".candidate-no")).to_have_text(["후보 1", "후보 2", "후보 3"])
+    strengths = rows.locator(".candidate-strength").all_inner_texts()
+    assert len(strengths) == 3 and set(strengths) <= {"강함", "보통", "약함"}, strengths
+    expect(rows.first.locator(".candidate-meta")).to_contain_text(re.compile(r"\d+초에 .+\(평소 "))
+    expect(page.locator(".stat", has_text="강한 후보").locator("dd")).to_have_text(f"{strengths.count('강함')}개")
+
+    page.get_by_role("radio", name="강한 순").check()
+    expect(rows.locator(".candidate-rank")).to_have_text(["1위", "2위", "3위"])
+    kept = len([s for s in strengths if s != "약함"])
+    page.get_by_role("radio", name="강함·보통만").check()
+    expect(rows).to_have_count(kept)
+    expect(page.locator(".timeline-marker")).to_have_count(kept)
+    expect(page.get_by_role("heading", name=f"편집 후보 {kept}개")).to_be_visible()
+    page.locator(".ws-panel").screenshot(path=str(SHOTS / "candidates-ranked.png"))
+    page.reload()
+    page.wait_for_selector(READY, timeout=10_000)
+    expect(page.get_by_role("radio", name="강함·보통만")).to_be_checked()
+    expect(rows).to_have_count(kept)
+    page.get_by_role("radio", name="모든 강도").check()
+    expect(rows).to_have_count(3)
+
+    page.get_by_role("button", name=f"강함·보통 {kept}개 AI 검토에 고르기").click()
+    expect(page.get_by_text(f"AI 검토에 고른 후보 {kept}개")).to_be_visible()
+    expect(page.get_by_role("button", name="강함·보통 후보를 모두 골랐습니다")).to_be_disabled()
+    page.get_by_role("button", name="고른 후보 비우기").click()
+    expect(page.locator(".pick-bar")).to_have_count(0)
+
+    graph = page.get_by_role("img", name=re.compile("반응 밀도 그래프"))
+    expect(graph).to_have_attribute("data-scale", "score")
+    page.get_by_role("radio", name="채팅 수", exact=True).check()
+    expect(graph).to_have_attribute("data-scale", "count")
+    page.locator(".stage-timeline").screenshot(path=str(SHOTS / "timeline-count.png"))
+
+
 def test_timeline_marker_is_keyboard_operable(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
     marker = page.get_by_role("button", name="후보 3, 07:25")

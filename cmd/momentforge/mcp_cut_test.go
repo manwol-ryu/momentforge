@@ -56,16 +56,20 @@ func buildCutData(t *testing.T, dir string) (sid, v1, v2 string) {
 		cut.IndexRefs(&p, known)
 		return ai.Encode(p)
 	}
-	run, err := st.CreateAIRun(ctx, store.AIRun{SessionID: demo.ID, Provider: "evalai", Model: "m", Kind: store.AIKindCut, State: store.AICompleted})
+	run, err := st.CreateAIRun(ctx, store.AIRun{SessionID: demo.ID, Provider: "evalai", Model: "m", Kind: store.AIKindCut, State: store.AICompleted,
+		AnalysisID: demo.LatestAnalysisID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var ids []string
+	lineage := "" // the second version continues the first one's lineage
 	for _, target := range []string{"벌칙 약속과 실패", "벌칙 약속과 실패 (다시 분석)"} {
-		rec, err := st.CreateCutPlan(ctx, store.CutPlan{RunID: run.ID, SessionID: demo.ID, CandidateIDs: []string{"rule:m0001"}, State: cut.StateOK})
+		rec, err := st.CreateCutPlan(ctx, store.CutPlan{RunID: run.ID, SessionID: demo.ID, CandidateIDs: []string{"rule:m0001"},
+			AnalysisID: run.AnalysisID, Lineage: lineage, State: cut.StateOK})
 		if err != nil {
 			t.Fatal(err)
 		}
+		lineage = rec.Lineage
 		rec.PlanJSON = plan(target)
 		if err := st.SaveCutPlan(ctx, rec); err != nil {
 			t.Fatal(err)

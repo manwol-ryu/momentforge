@@ -3,13 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Session } from "../../api/types";
 import { timecode } from "../../shared/format";
+import { usePlayhead, type Playhead } from "../../shared/playhead";
 import { useJob } from "../../shared/useJob";
 
 interface Props {
   s: Session;
   busy: boolean;
   /** The playhead; the lines around it are listed. */
-  nowMs: number;
+  playhead: Playhead;
   durationMs: number;
   /** Jump the video (or the playhead) to a time. */
   onPick: (ms: number) => void;
@@ -25,11 +26,12 @@ const sourceText = { asr: "이 컴퓨터에서 인식", file: "자막 파일", d
  * button to that moment; a search over the page; the way to run the
  * recognition (again); and a caption file (SRT·VTT) as another source.
  */
-export function TranscriptPanel({ s, busy, nowMs, durationMs, onPick }: Props) {
+export function TranscriptPanel({ s, busy, playhead, durationMs, onPick }: Props) {
   const queryClient = useQueryClient();
   const transcript = useQuery({ queryKey: ["transcript", s.id, s.updatedAt], queryFn: () => api.transcript(s.id) });
   const [page, setPage] = useState<number | null>(null); // null: follow the playhead
-  const current = page ?? Math.floor(nowMs / WINDOW_MS);
+  const playheadPage = usePlayhead(playhead, (ms) => Math.floor(ms / WINDOW_MS));
+  const current = page ?? playheadPage;
   const from = current * WINDOW_MS;
   const to = Math.min(durationMs || from + WINDOW_MS, from + WINDOW_MS);
   const lines = useQuery({
@@ -42,6 +44,14 @@ export function TranscriptPanel({ s, busy, nowMs, durationMs, onPick }: Props) {
   const longForm = durationMs >= 3_600_000;
   const pages = Math.max(1, Math.ceil(Math.max(durationMs, 1) / WINDOW_MS));
   const shown = (lines.data?.utterances ?? []).filter((u) => !query.trim() || u.text.includes(query.trim()));
+  // The lines being said at the playhead, as one key, so the panel re-renders only when they change.
+  const saying = usePlayhead(playhead, (ms) =>
+    shown
+      .filter((u) => u.startMs <= ms && ms < u.endMs + 2000)
+      .map((u) => u.id)
+      .join("\n"),
+  );
+  const sayingIds = new Set(saying.split("\n"));
   const t = transcript.data;
   const job = useJob().data;
   const working = !!job?.busy && job.sessionId === s.id && (job.phase === "transcribing" || job.phase === "downloading");
@@ -140,7 +150,7 @@ export function TranscriptPanel({ s, busy, nowMs, durationMs, onPick }: Props) {
           ) : (
             <ol className="chatlog transcript-lines" aria-label="발언 목록" data-pickable>
               {shown.map((u) => (
-                <li key={u.id} data-current={u.startMs <= nowMs && nowMs < u.endMs + 2000 || undefined}>
+                <li key={u.id} data-current={sayingIds.has(u.id) || undefined}>
                   <button type="button" className="chat-row" title="이 발언으로 이동" onClick={() => onPick(u.startMs)}>
                     <span className="chat-time timecode">{timecode(u.startMs, longForm)}</span>
                     <span className="chat-author" data-tone={3}>

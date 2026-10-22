@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -303,9 +304,10 @@ func WriteAnalysis(dir string, m AnalysisManifest, title string, cands []domain.
 		}
 		var marker strings.Builder
 		marker.WriteString("# * = 판정 근거에 포함된 채팅. 나머지는 앞뒤 문맥입니다.\n")
-		for _, e := range events {
-			if e.OffsetMs < c.ClipStartMs || e.OffsetMs >= c.ClipEndMs {
-				continue
+		from := sort.Search(len(events), func(i int) bool { return events[i].OffsetMs >= c.ClipStartMs })
+		for _, e := range events[from:] {
+			if e.OffsetMs >= c.ClipEndMs {
+				break
 			}
 			if evidence[e.ID] {
 				marker.WriteString("* ")

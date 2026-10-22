@@ -142,9 +142,14 @@ func (e *Engine) Transcribe(ctx context.Context, audio string, opts asr.Options,
 			StartMs *int64 `json:"start_ms"`
 			EndMs   int64  `json:"end_ms"`
 			Text    string `json:"text"`
-			Status  string `json:"status"`
-			Error   string `json:"error"`
-			Done    bool   `json:"done"`
+			Words   []struct {
+				StartMs int64  `json:"s"`
+				EndMs   int64  `json:"e"`
+				Text    string `json:"t"`
+			} `json:"words"`
+			Status string `json:"status"`
+			Error  string `json:"error"`
+			Done   bool   `json:"done"`
 		}
 		if json.Unmarshal(sc.Bytes(), &line) != nil {
 			continue
@@ -157,7 +162,21 @@ func (e *Engine) Transcribe(ctx context.Context, audio string, opts asr.Options,
 				progress(asr.Progress{Phase: line.Status, Utterances: len(utts)})
 			}
 		case line.StartMs != nil && line.Text != "":
-			utts = append(utts, domain.Utterance{StartMs: *line.StartMs, EndMs: line.EndMs, Speaker: "방송자", Text: line.Text})
+			// A result is often 10–20 s; its word times cut it where a clip may start or end.
+			parts := []domain.Utterance{{StartMs: *line.StartMs, EndMs: line.EndMs, Text: line.Text}}
+			if len(line.Words) > 0 {
+				words := make([]asr.Word, len(line.Words))
+				for i, w := range line.Words {
+					words[i] = asr.Word{StartMs: w.StartMs, EndMs: w.EndMs, Text: w.Text}
+				}
+				if split := asr.Split(words, opts.Split); len(split) > 0 {
+					parts = split
+				}
+			}
+			for _, u := range parts {
+				u.Speaker = "방송자"
+				utts = append(utts, u)
+			}
 			if progress != nil {
 				progress(asr.Progress{Phase: "transcribing", DoneMs: line.EndMs, Utterances: len(utts)})
 			}

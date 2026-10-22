@@ -19,6 +19,14 @@ def open_home(page: Page, base_url: str) -> None:
     page.wait_for_selector(READY, timeout=10_000)
 
 
+def select_row(row) -> None:
+    """AI results open in full only under the chosen row: choose it (pressing a chosen row closes it)."""
+    head = row.locator(".candidate-head")
+    if head.get_attribute("aria-pressed") != "true":
+        head.click()
+    expect(head).to_have_attribute("aria-pressed", "true")
+
+
 def open_video(page: Page, base_url: str, title: str, url: str) -> None:
     """Opens the saved video, collecting it first if this run has not."""
     open_home(page, base_url)
@@ -95,8 +103,11 @@ def test_ai_review_is_previewed_then_confirmed(page: Page, base_url: str) -> Non
     expect(page.locator(".ai-done")).to_contain_text("각 후보 아래 ‘AI 설명’")
     page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
     expect(page.get_by_role("tab", name=re.compile("^후보"))).to_have_attribute("aria-selected", "true")
-    # The explanation sits under the candidate it was asked about, not in a row of its own.
+    # The explanation sits under the candidate it was asked about, not in a row of its own:
+    # one line until the row is chosen, then in full.
     first = page.locator("ol.candidates > li").first
+    expect(first.locator(".ai-brief", has_text="AI 설명").first).to_be_visible()
+    select_row(first)
     expect(first.locator(".ai-note")).to_contain_text("AI 설명")
     expect(first.locator(".ai-note")).to_contain_text("가짜 AI 추천")
     expect(page.locator("ol.candidates > li[data-source='ai']")).to_have_count(0)

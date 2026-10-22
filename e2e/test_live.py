@@ -18,6 +18,14 @@ def open_home(page: Page, base_url: str) -> None:
     page.wait_for_selector(READY, timeout=10_000)
 
 
+def select_row(row) -> None:
+    """AI results open in full only under the chosen row: choose it (pressing a chosen row closes it)."""
+    head = row.locator(".candidate-head")
+    if head.get_attribute("aria-pressed") != "true":
+        head.click()
+    expect(head).to_have_attribute("aria-pressed", "true")
+
+
 def live_form(page: Page):
     page.get_by_role("tab", name="생방송").click()
     return page.get_by_role("form", name="생방송 수집")
@@ -164,7 +172,9 @@ def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
     expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=15_000)
 
     page.get_by_role("tab", name=re.compile("^후보")).click()
-    # The synthetic provider explains the candidate it was sent: the answer sits under that candidate.
+    # The synthetic provider explains the candidate it was sent: the answer sits under that candidate,
+    # in full once the row is chosen.
+    select_row(confirmed.first)
     note = confirmed.first.locator(".ai-note")
     expect(note).to_contain_text("AI 설명")
     expect(note).to_contain_text("가짜 AI 추천")

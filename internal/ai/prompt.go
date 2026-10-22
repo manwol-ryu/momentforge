@@ -1,7 +1,7 @@
 package ai
 
 // PromptVersion changes whenever Prompt or Schema changes.
-const PromptVersion = 3
+const PromptVersion = 4
 
 // Prompt is the fixed instruction sent first in every request. It starts
 // with CzzEdit's rules (chat is untrusted data, the model has not seen the
@@ -15,7 +15,7 @@ const Prompt = `채팅 기반 편집 후보를 한국어로 검토하고, 후보
 입력은 JSON 하나다. 시각은 모두 영상 시작부터의 밀리초다.
 - start_ms, end_ms: 이번 요청이 다루는 영상 구간. 추천하는 시각은 모두 이 구간 안에 있어야 한다.
 - candidates: 사용자가 고른 후보. source_type이 rule이면 채팅 통계 규칙이 찾은 후보이고, viewer_comment이면 시청자가 영상 댓글에 적은 시각이다. anchor_ms는 후보의 기준 시각, title은 후보를 찾은 이유다.
-- candidates[].statistics: 규칙 후보의 최고점 통계다. n은 판정 창 안의 채팅 수, u는 서로 다른 작성자 수, ratio는 평소 대비 배율, z는 표준 점수, baseline_n은 평소 채팅 수다. 규칙 후보가 아니면 null이다.
+- candidates[].statistics: 규칙 후보의 최고점 통계다. n은 판정 창 안의 채팅 수, u는 서로 다른 작성자 수, ratio는 평소 대비 배율, z는 표준 점수, baseline_n은 평소 채팅 수다. reaction_start_ms~reaction_end_ms는 채팅이 반응한 구간, peak_ms는 반응이 가장 몰린 시각이다(채팅은 장면보다 늦으므로 장면은 그보다 앞). strength는 방송 전체에서 본 반응의 세기(strong, medium, weak), score는 그 시각대의 평소와 얼마나 다른지(z 척도)이며 전체 방송 분석에만 있다. 규칙 후보가 아니면 null이다.
 - evidence: 인용할 수 있는 근거 목록이다. ref가 chat:으로 시작하면 채팅, comment:로 시작하면 영상 댓글이다. time_ms는 근거의 영상 시각이다. author는 세션마다 새로 만든 가명이므로 실제 사용자를 추정하거나 언급하지 마라.
 
 ## 할 일

@@ -39,7 +39,7 @@
   </qa_pair>
   <qa_pair>
     <question>샘플 세션의 자동 탐지 후보 가운데 감정 반응 규칙으로 잡힌 후보가 있습니다. 그 후보의 편집 구간 채팅 중 판정 근거로 표시된 채팅은 몇 개인가요? 숫자만 답하세요.</question>
-    <answer>210</answer>
+    <answer>180</answer>
   </qa_pair>
   <qa_pair>
     <question>샘플 세션에서 AI가 우선순위를 가장 높게 매긴 추천 장면들에서 시청자들이 반복해 보낸 메시지는 무엇인가요? 메시지 글자만 답하세요.</question>
@@ -47,6 +47,6 @@
   </qa_pair>
   <qa_pair>
     <question>샘플 세션에서 여러 사람이 같은 문장을 반복한 것으로 판정된 자동 탐지 후보가 있습니다. 그 후보의 편집 구간 안에 시작과 끝이 모두 들어가는 AI 추천은 몇 개인가요? 숫자만 답하세요.</question>
-    <answer>2</answer>
+    <answer>3</answer>
   </qa_pair>
 </evaluation>

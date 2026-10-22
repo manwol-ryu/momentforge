@@ -280,14 +280,19 @@ type evidenceJSON struct {
 }
 
 type analysisJSON struct {
-	ID           string          `json:"id"`
-	SessionID    string          `json:"sessionId"`
-	Title        string          `json:"title"`
-	DurationMs   int64           `json:"durationMs"`
-	RulesVersion string          `json:"rulesVersion"`
-	Sensitive    bool            `json:"sensitive"`
-	Windows      []domain.Window `json:"windows"`
-	Candidates   []candidateJSON `json:"candidates"`
+	ID           string `json:"id"`
+	SessionID    string `json:"sessionId"`
+	Title        string `json:"title"`
+	DurationMs   int64  `json:"durationMs"`
+	RulesVersion string `json:"rulesVersion"`
+	Sensitive    bool   `json:"sensitive"`
+	WindowMs     int64  `json:"windowMs"`
+	StepMs       int64  `json:"stepMs"`
+	// Whole-broadcast analyses: the window score a candidate's peak needs
+	// (omitted for the incremental engine, whose windows have no score).
+	ScoreThreshold float64         `json:"scoreThreshold,omitempty"`
+	Windows        []domain.Window `json:"windows"`
+	Candidates     []candidateJSON `json:"candidates"`
 }
 
 func (h *handler) analysis(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +302,8 @@ func (h *handler) analysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := analysisJSON{ID: a.ID, SessionID: a.SessionID, Title: a.Title, DurationMs: a.DurationMs,
-		RulesVersion: a.RulesVersion, Sensitive: a.Sensitive, Windows: nonNil(a.Windows),
+		RulesVersion: a.RulesVersion, Sensitive: a.Sensitive, WindowMs: a.WindowMs, StepMs: a.StepMs,
+		ScoreThreshold: a.ScoreThreshold, Windows: nonNil(a.Windows),
 		Candidates: make([]candidateJSON, 0, len(a.Candidates))}
 	for _, c := range a.Candidates {
 		out.Candidates = append(out.Candidates, toCandidateJSON(c))

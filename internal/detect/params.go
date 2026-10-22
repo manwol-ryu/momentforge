@@ -67,6 +67,72 @@ type Params struct {
 	MergeGapMs   int64 `json:"mergeGapMs"`   // signals this close extend a candidate
 	MaxSpanMs    int64 `json:"maxSpanMs"`    // longer reactions are split
 	CloseAfterMs int64 `json:"closeAfterMs"` // quiet time that closes a candidate (at least PostRollMs)
+
+	// Whole-broadcast analysis of a finished timeline (AnalyzeBroadcast,
+	// REDESIGN 6.2.2). Nil keeps the incremental engine for every analysis
+	// (CzzEdit, and LIVE sessions started before it existed). LIVE always
+	// uses the incremental engine: it cannot see the minutes after a window.
+	Broadcast *BroadcastParams `json:"broadcast,omitempty"`
+}
+
+// BroadcastParams tune AnalyzeBroadcast (REDESIGN 6.2.2). A window's chat
+// is compared with the same time of the broadcast on two scales — the
+// surrounding minutes (LocalMs on each side) and the broadcast's slower flow
+// (TrendMs on each side) — and with whichever is quieter, so a reaction
+// stands out both in a quiet stretch and inside a lively half hour. How
+// unusual a count is for its baseline is a z-score from a negative binomial
+// tail (surprise), which fits a 20-viewer chat and a 2,000-viewer chat alike.
+type BroadcastParams struct {
+	LocalMs        int64   `json:"localMs"`        // surrounding minutes, each side
+	TrendMs        int64   `json:"trendMs"`        // slower flow (audience size, late night), each side
+	ExcludeMs      int64   `json:"excludeMs"`      // kept out of a window's own baseline, each side
+	WinsorQuantile float64 `json:"winsorQuantile"` // reference bins above this quantile are capped
+	MinRefBins     int     `json:"minRefBins"`     // a scale with fewer valid 10 s bins is not used
+	CountFloor     float64 `json:"countFloor"`     // a usual count is never taken as below this
+	MinReactors    int     `json:"minReactors"`    // distinct authors a reaction measure needs at least
+	VolumeWeight   float64 `json:"volumeWeight"`   // chat and participant surges count this much of a reaction
+	ComboCorr      float64 `json:"comboCorr"`      // assumed correlation when a reaction and a surge combine (0: off)
+	// Tails at least as heavy as the whole broadcast's own burstiness of
+	// each measure (around its moving level). Without it a rare reaction
+	// word ("와" a few times a minute) reads as extraordinary whenever it
+	// clumps, and every bump of a large chat as significant.
+	BroadcastDispersion bool    `json:"broadcastDispersion"`
+	MaxDispersion       float64 `json:"maxDispersion"` // at most this burstiness (1/k), however reactive the broadcast
+	LongWindow          bool    `json:"longWindow"`    // also judge 20 s windows (reactions that build up)
+
+	OnZ          float64 `json:"onZ"`          // a candidate's peak reaches this score
+	OffZ         float64 `json:"offZ"`         // and it lasts while windows stay at or above this
+	SensitiveOnZ float64 `json:"sensitiveOnZ"` // OnZ with "항상 가장 민감하게"
+	ValleyDepth  float64 `json:"valleyDepth"`  // a long stretch is cut at a dip this far below the peaks around it
+	// Strength: strong needs StrongZ and a rank within the top StrongShare
+	// of the analysis's candidates, medium MediumZ and the top MediumShare;
+	// the rest are weak. The shares keep "strong" a short list in a big,
+	// clearly reacting chat too.
+	MediumZ     float64 `json:"mediumZ"`
+	StrongZ     float64 `json:"strongZ"`
+	MediumShare float64 `json:"mediumShare"`
+	StrongShare float64 `json:"strongShare"`
+}
+
+// DefaultBroadcastParams are the whole-broadcast defaults, tuned on a real
+// 3-hour VOD against moments three editor-judges picked and on rescaled
+// copies of it (REDESIGN 6.2.2).
+func DefaultBroadcastParams() BroadcastParams {
+	return BroadcastParams{
+		LocalMs: 300_000, TrendMs: 1_800_000, ExcludeMs: 30_000, WinsorQuantile: 0.8, MinRefBins: 12,
+		CountFloor: 0.25, MinReactors: 3, VolumeWeight: 0.85, ComboCorr: 0.5,
+		BroadcastDispersion: true, MaxDispersion: 1, LongWindow: true,
+		OnZ: 3, OffZ: 1.5, SensitiveOnZ: 2.6, ValleyDepth: 1.5,
+		MediumZ: 3.4, StrongZ: 4, MediumShare: 0.5, StrongShare: 0.2,
+	}
+}
+
+// onZ is the peak score a candidate needs with the current sensitivity.
+func (b BroadcastParams) onZ(sensitive bool) float64 {
+	if sensitive {
+		return b.SensitiveOnZ
+	}
+	return b.OnZ
 }
 
 // DefaultParams returns the thresholds new analyses use. Tune defaults here;
@@ -80,6 +146,8 @@ func DefaultParams() Params {
 	// (late night) without treating a hot half hour as normal; the spike gate
 	// catches reactions in quiet stretches. From REDESIGN 6.2.1's experiments.
 	p.GateBusyRatio, p.GateLookbackMs, p.GateWarmupBins, p.GateSpikeRatio = 3.75, 7_200_000, 18, 5
+	b := DefaultBroadcastParams()
+	p.Broadcast = &b
 	return p
 }
 
@@ -151,6 +219,14 @@ func (p Params) Validate() error {
 		(p.GateBusyRatio > 0 && (p.GateWarmupBins < 1 || p.GateLookbackMs < p.WindowMs)) ||
 		p.SensitiveMinMessages > p.MinMessages || p.SensitiveMinMessages < 1 {
 		return domain.NewUserError("CONFIG", "판정 시작 기준 설정이 올바르지 않습니다. 기본값으로 되돌린 뒤 다시 시도하세요.")
+	}
+	if b := p.Broadcast; b != nil {
+		if b.LocalMs < p.WindowMs || b.TrendMs < b.LocalMs || b.ExcludeMs < 0 || b.ExcludeMs*2 >= b.LocalMs ||
+			b.WinsorQuantile <= 0 || b.WinsorQuantile > 1 || b.MinRefBins < 1 || b.CountFloor <= 0 || b.MinReactors < 1 ||
+			b.VolumeWeight < 0 || b.ComboCorr < 0 || b.ComboCorr > 1 || b.MaxDispersion < 0 || b.OffZ <= 0 || b.OnZ < b.OffZ || b.SensitiveOnZ < b.OffZ ||
+			b.ValleyDepth <= 0 || b.MediumZ < b.OnZ || b.StrongZ < b.MediumZ || b.MediumShare < 0 || b.MediumShare > 1 || b.StrongShare < 0 || b.StrongShare > b.MediumShare {
+			return domain.NewUserError("CONFIG", "방송 전체 분석 설정이 올바르지 않습니다. 기본값으로 되돌린 뒤 다시 시도하세요.")
+		}
 	}
 	return nil
 }

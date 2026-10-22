@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -18,9 +20,9 @@ import (
 )
 
 // The user's decisions on cut plans (docs/AI-CUT-ANALYSIS.md 6.3, phase
-// 6-D): a note on a version goes into the next analysis of the same
-// candidates, which makes a new version; confirming a version keeps it as
-// the current one (a later version is shown beside it, not over it) and
+// 6-D): a note on a version goes into the next analysis of the same moment,
+// which makes a new version of its lineage; confirming a version keeps it
+// as the current one (a later version is shown beside it, not over it) and
 // puts it in the confirmed exports for editnest and editors.
 const (
 	maxNoteRunes     = 500
@@ -55,10 +57,13 @@ func decodePlan(rec store.CutPlan) (cut.Plan, bool) {
 	return p, true
 }
 
-// cutNotes are the notes left on any version of one candidate set's plans,
-// oldest first, without repeats: the next plan step reads them all.
-func (a *App) cutNotes(ctx context.Context, sid string, candidateIDs []string) ([]cut.UserNote, error) {
-	versions, err := a.cfg.Store.CutPlanVersions(ctx, sid, candidateIDs)
+// cutNotes are the notes left on any version of one lineage's plan, oldest
+// first, without repeats: the next plan step reads them all.
+func (a *App) cutNotes(ctx context.Context, sid, lineage string) ([]cut.UserNote, error) {
+	if lineage == "" {
+		return nil, nil
+	}
+	versions, err := a.cfg.Store.CutPlanLineage(ctx, sid, lineage)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +106,7 @@ func (a *App) saveDecision(ctx context.Context, rec store.CutPlan, p cut.Plan) e
 
 // ConfirmCut confirms a plan with one of its boundary candidates ("" is the
 // one the analysis chose), or takes a confirmation back. Only one version
-// per candidate set is confirmed: confirming one releases the others.
+// per lineage is confirmed: confirming one releases the others.
 func (a *App) ConfirmCut(ctx context.Context, id string, confirmed bool, boundary string) (CutPlanView, error) {
 	cutDecisionMu.Lock()
 	defer cutDecisionMu.Unlock()
@@ -123,7 +128,7 @@ func (a *App) ConfirmCut(ctx context.Context, id string, confirmed bool, boundar
 		if !boundaryUsable(p, boundary) {
 			return CutPlanView{}, domain.NewUserError("INPUT", "고른 경계 후보는 시각으로 바꾸지 못해 확정할 수 없습니다. 다른 후보를 고르세요.")
 		}
-		versions, err := a.cfg.Store.CutPlanVersions(ctx, rec.SessionID, rec.CandidateIDs)
+		versions, err := a.cfg.Store.CutPlanLineage(ctx, rec.SessionID, rec.Lineage)
 		if err != nil {
 			return CutPlanView{}, err
 		}
@@ -286,13 +291,21 @@ type CutEnding struct {
 type CutVerification struct {
 	ClipPass      *bool             `json:"clipPass,omitempty"`
 	Answers       map[string]string `json:"answers,omitempty"` // what, condition, result, references, why_reaction
-	Gaps          []string          `json:"gaps"`
-	Asides        []string          `json:"asides"` // unknowns the clip check judged not needed for the target
+	Gaps          []CutFinding      `json:"gaps"`
+	Asides        []CutFinding      `json:"asides"`        // unknowns the clip check judged not needed for the target
+	ServerChanges []string          `json:"serverChanges"` // how the server re-sorted the clip check's findings, in words
 	SourcePass    *bool             `json:"sourcePass,omitempty"`
 	Findings      []string          `json:"findings"` // which source checks flagged a problem
 	Notes         []string          `json:"notes"`
 	Issues        []string          `json:"issues"` // why the plan is not trusted
 	EvidenceMatch string            `json:"evidenceMatch"`
+}
+
+// CutFinding is one thing the clip-only check found unknown, with the clip
+// evidence that points at it (none for a plan checked with prompt v2 or earlier).
+type CutFinding struct {
+	Text string        `json:"text"`
+	Refs []CutEvidence `json:"refs"`
 }
 
 // CutNote is a note the user left.
@@ -304,9 +317,14 @@ type CutNote struct {
 
 // CutDetail is a cut plan as the result box (and MCP) shows it.
 type CutDetail struct {
-	PlanID            string    `json:"planId"`
-	SessionID         string    `json:"sessionId"`
-	CandidateIDs      []string  `json:"candidateIds"`
+	PlanID    string `json:"planId"`
+	SessionID string `json:"sessionId"`
+	// CandidateIDs are the current timeline items the plan is about; when
+	// the session was analysed again since, they are found by time and
+	// AnalyzedCandidateIDs keeps the IDs the plan was made for.
+	CandidateIDs         []string `json:"candidateIds"`
+	AnalyzedCandidateIDs []string `json:"analyzedCandidateIds,omitempty"`
+
 	Version           int       `json:"version"`
 	State             string    `json:"state"`
 	Confirmed         bool      `json:"confirmed"`
@@ -392,6 +410,27 @@ func orEmpty(s []string) []string {
 	return s
 }
 
+func findingsOf(p cut.Plan, list []cut.ClipFinding) []CutFinding {
+	out := make([]CutFinding, 0, len(list))
+	for _, f := range list {
+		out = append(out, CutFinding{Text: f.Text, Refs: evidenceList(p, f.Refs)})
+	}
+	return out
+}
+
+var clipKindText = map[string]string{"gap": "실패 사유", "aside": "참고", "pass": "통과", "fail": "실패"}
+
+// clipChangeText says one of the server's moves in words.
+func clipChangeText(c cut.ClipChange) string {
+	switch {
+	case c.Text == "":
+		return fmt.Sprintf("판정 %s → %s: %s", clipKindText[c.From], clipKindText[c.To], c.Why)
+	case c.From == c.To:
+		return fmt.Sprintf("'%s': %s", c.Text, c.Why)
+	}
+	return fmt.Sprintf("'%s': %s → %s (%s)", c.Text, clipKindText[c.From], clipKindText[c.To], c.Why)
+}
+
 // sourceFindings names the against-source checks that found a problem.
 func sourceFindings(v *cut.SourceVerification) []string {
 	out := []string{}
@@ -451,12 +490,15 @@ func cutDetail(rec store.CutPlan, p cut.Plan) CutDetail {
 		d.Adjustments = append(d.Adjustments, CutAdjustment{Ref: a.Ref, FromMs: a.FromMs, ToMs: a.ToMs, Why: a.Why})
 	}
 	v := p.Verification
-	d.Verification = CutVerification{Gaps: []string{}, Asides: []string{}, Findings: sourceFindings(v.AgainstSource), Notes: []string{}, Issues: orEmpty(v.Issues),
-		EvidenceMatch: v.EvidenceMatch}
+	d.Verification = CutVerification{Gaps: []CutFinding{}, Asides: []CutFinding{}, ServerChanges: []string{}, Findings: sourceFindings(v.AgainstSource),
+		Notes: []string{}, Issues: orEmpty(v.Issues), EvidenceMatch: v.EvidenceMatch}
 	if v.ClipOnly != nil {
 		pass := v.ClipOnly.Pass
-		d.Verification.ClipPass, d.Verification.Answers, d.Verification.Gaps = &pass, v.ClipOnly.Answers, orEmpty(v.ClipOnly.Gaps)
-		d.Verification.Asides = orEmpty(v.ClipOnly.Asides)
+		d.Verification.ClipPass, d.Verification.Answers = &pass, v.ClipOnly.Answers
+		d.Verification.Gaps, d.Verification.Asides = findingsOf(p, v.ClipOnly.Gaps), findingsOf(p, v.ClipOnly.Asides)
+		for _, c := range v.ClipOnly.Changes {
+			d.Verification.ServerChanges = append(d.Verification.ServerChanges, clipChangeText(c))
+		}
 	}
 	if v.AgainstSource != nil {
 		pass := v.AgainstSource.Pass
@@ -466,6 +508,15 @@ func cutDetail(rec store.CutPlan, p cut.Plan) CutDetail {
 		d.SearchAdded += len(r.FoundRefs)
 	}
 	return d
+}
+
+// placeUnder sets the current timeline items the plan belongs under,
+// keeping the analysed IDs when they differ.
+func (d *CutDetail) placeUnder(hosts []string) {
+	if !slices.Equal(hosts, d.CandidateIDs) {
+		d.AnalyzedCandidateIDs = d.CandidateIDs
+	}
+	d.CandidateIDs = hosts
 }
 
 // CutPlanDetail returns one plan as the result box shows it.
@@ -478,17 +529,31 @@ func (a *App) CutPlanDetail(ctx context.Context, id string) (CutDetail, error) {
 	if !ok {
 		return CutDetail{}, domain.NewUserError("INPUT", "이 컷 분석 결과를 읽지 못했습니다.")
 	}
-	return cutDetail(rec, p), nil
+	s, err := a.cfg.Store.Session(ctx, rec.SessionID)
+	if err != nil {
+		return CutDetail{}, err
+	}
+	hosts, err := a.currentHosts(ctx, s)
+	if err != nil {
+		return CutDetail{}, err
+	}
+	d := cutDetail(rec, p)
+	d.placeUnder(hosts.planHosts(rec, p))
+	return d, nil
 }
 
 // CutPlanDetails lists a session's plans in time order: the current ones
 // (the confirmed version and a newer one, CurrentCutPlans) or every version.
 func (a *App) CutPlanDetails(ctx context.Context, sid string, all bool) ([]CutDetail, error) {
-	if _, err := a.cfg.Store.Session(ctx, sid); err != nil {
+	s, err := a.cfg.Store.Session(ctx, sid)
+	if err != nil {
+		return nil, err
+	}
+	hosts, err := a.currentHosts(ctx, s)
+	if err != nil {
 		return nil, err
 	}
 	var recs []store.CutPlan
-	var err error
 	if all {
 		recs, err = a.cfg.Store.CutPlans(ctx, sid, true)
 	} else {
@@ -503,6 +568,7 @@ func (a *App) CutPlanDetails(ctx context.Context, sid string, all bool) ([]CutDe
 		if p, ok := decodePlan(rec); ok {
 			d := cutDetail(rec, p)
 			d.KeptVersion = kept.of(rec)
+			d.placeUnder(hosts.planHosts(rec, p))
 			out = append(out, d)
 		}
 	}
@@ -516,14 +582,14 @@ func (a *App) CutPlanDetails(ctx context.Context, sid string, all bool) ([]CutDe
 	return out, nil
 }
 
-// kept maps a candidate set to its confirmed version.
+// kept maps a lineage to its confirmed version.
 type kept map[string]int
 
 func keptVersions(recs []store.CutPlan) kept {
 	k := kept{}
 	for _, rec := range recs {
 		if rec.Confirmed {
-			k[strings.Join(rec.CandidateIDs, "\x00")] = rec.Version
+			k[rec.Lineage] = rec.Version
 		}
 	}
 	return k
@@ -531,7 +597,7 @@ func keptVersions(recs []store.CutPlan) kept {
 
 // of is the confirmed version that stays when rec is a later, unconfirmed one (else 0).
 func (k kept) of(rec store.CutPlan) int {
-	if v := k[strings.Join(rec.CandidateIDs, "\x00")]; !rec.Confirmed && rec.Version > v {
+	if v := k[rec.Lineage]; !rec.Confirmed && rec.Version > v {
 		return v
 	}
 	return 0

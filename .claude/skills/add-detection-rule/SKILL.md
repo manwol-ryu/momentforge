@@ -28,6 +28,11 @@ metadata:
 - 그때의 기준은 창과 후보 정점의 `gate`, `spikeGate`에 남습니다.
 - 민감도를 켜거나 `CzzEditParams()`를 쓰면 고정값입니다. 판정 방식 자체를 바꿔야 하면 창 규칙으로 만들거나, 엔진 변경으로 보고 사용자와 먼저 상의합니다.
 
+위 판정 시작 조건과 `Share`·`Fires`는 **LIVE 증분 엔진**의 방식입니다. 다시보기·NAS 백업·다시 분석(저장된 타임라인)은 **방송 전체 분석**(`detect.AnalyzeBroadcast`, REDESIGN.md 6.2.2)으로 판정합니다.
+- 메시지 규칙은 등록하면 측정 하나가 됩니다. 창마다 그 규칙의 키를 쓴 작성자 수(키별 최댓값)를 앞뒤 ±5분·±30분 중 조용한 쪽의 평소 값과 비교해 점수(z)를 냅니다. 3명 미만이면 세지 않습니다. 둘 이상이 함께 쓴 키는 "반응한 사람" 측정에도 들어갑니다.
+- `Share`, 창 규칙의 `Fires`, 판정 시작 조건은 쓰지 않습니다. 새 창 규칙은 LIVE에만 적용되므로, 다시보기에도 필요하면 `broadcast.go`의 측정으로 넣을지 사용자와 먼저 상의합니다.
+- 임계값은 `detect.BroadcastParams`(`Params.Broadcast`)에 있습니다. `DefaultBroadcastParams()`를 바꾸면 `TestDetectEvalReport`로 실제 다시보기에서 전후를 비교합니다(5절).
+
 ## 2. 구현
 
 `internal/detect/rules/<규칙>.go`에 작성합니다. 기존 예시는 `rules.go`, 어휘는 `vocab.go`에 있습니다.
@@ -69,9 +74,19 @@ func (Cheer) Keys(text string) []string {
 1. `rules_test.go`의 `TestMessageKeys`에 맞는 예와 맞지 않는 예를 추가합니다. 비슷하지만 걸리면 안 되는 문장(예: "대박이네")도 넣습니다.
 2. 버스트가 들어간 합성 채팅으로 `detect.Analyze`를 돌려, 기대한 시각에 새 신호가 나오는지 테스트합니다.
 3. `go test ./internal/detect/...`를 실행합니다. `TestMatchesLegacy`는 `CzzEdit()`와 `CzzEditParams()`를 쓰므로 계속 통과해야 합니다. 실패하면 엔진이나 기존 규칙을 건드린 것입니다.
-4. e2e-check 스킬로 `make test`와 `make e2e`를 실행합니다. 데모 결과(후보 3개)가 바뀌는 것이 의도된 변경이면 `e2e/test_demo.py` 기대값을 고치고 이유를 결정 기록에 남깁니다.
+4. 방송 전체 분석에도 들어가는지 `broadcast_test.go`처럼 `detect.AnalyzeBroadcast`로 확인합니다. 실제 데이터가 있으면 `MF_DETECT_EVAL_DATA=<데이터 폴더 절대 경로> go test ./cmd/momentforge -run TestDetectEvalReport -v`로 후보 수, 규모 변형 유지율, 섞은 채팅의 후보, 라벨(`e2e/detect-eval/labels/`) 일치율을 전후 비교합니다.
+5. e2e-check 스킬로 `make test`와 `make e2e`를 실행합니다. 데모 결과(후보 3개)가 바뀌는 것이 의도된 변경이면 `e2e/test_demo.py` 기대값을 고치고 이유를 결정 기록에 남깁니다.
 
 ## 왜 잡혔는지·안 잡혔는지 설명할 때
+
+먼저 분석의 `rulesVersion`을 봅니다. 3.x의 저장 분석(다시보기)은 방송 전체 분석입니다.
+
+1. 후보의 `measures`가 정점의 측정값(`observed`), 그때 평소 값(`usual`), 드문 정도(`z`), 창 길이(`windowMs`, 10초 또는 20초)를 보여 줍니다. `score`는 그중 가장 높은 반응, 채팅·사람 급증 ×0.85, 반응과 급증을 합친 값 중 최댓값입니다.
+2. 안 잡혔다면 그 시각 창들의 `score`를 봅니다. 정점이 `OnZ`(3, "항상 가장 민감하게"는 2.6) 미만이면 후보가 아닙니다. 반응 측정은 같은 반응을 한 사람이 3명 이상이어야 셉니다.
+3. 평소 값이 높아서인지 봅니다. 앞뒤 ±5분과 ±30분 중 낮은 쪽과 비교하므로, 둘 다 활발한 구간이면 더 큰 반응이어야 합니다. 그 방송이 원래 뭉쳐서 반응하는 정도(분산)도 반영됩니다.
+4. 강도는 점수와 순위 비율입니다(강함 = 4 이상·상위 20%, 보통 = 3.4 이상·상위 50%).
+
+아래는 LIVE와 2.x 이하 저장 분석(증분 엔진)의 설명 순서입니다.
 
 `detect.Analyze` 결과의 `Windows`에 5초마다 `n`(셈한 채팅 수), `u`(작성자 수), `ratio`, `z`, `baselineReady`, `signals`, `reactionRatios`가 있습니다. 해당 시각 앞뒤 창을 보고 다음 순서로 확인합니다.
 

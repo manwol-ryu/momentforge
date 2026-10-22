@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -105,17 +106,20 @@ func (s *Store) UtteranceCount(ctx context.Context, transcriptID string) (int, e
 	return n, err
 }
 
-// SearchUtterances returns a transcript's utterances starting in [from, to)
-// whose text contains query (letters A–Z match either case), in time order.
+// SearchUtterances returns, of a transcript's utterances starting in
+// [from, to) whose text contains query (letters A–Z match either case), the
+// limit latest ones (nearest to to) in time order.
 func (s *Store) SearchUtterances(ctx context.Context, transcriptID, query string, from, to int64, limit int) ([]domain.Utterance, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+utteranceColumns+` FROM utterances
 		WHERE transcript_id=? AND start_ms>=? AND start_ms<? AND text LIKE ? ESCAPE '\'
-		ORDER BY start_ms, seq LIMIT ?`, transcriptID, from, to, "%"+escapeLike(query)+"%", limit)
+		ORDER BY start_ms DESC, seq DESC LIMIT ?`, transcriptID, from, to, "%"+escapeLike(query)+"%", limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanUtterances(rows)
+	out, err := scanUtterances(rows)
+	slices.Reverse(out)
+	return out, err
 }
 
 // UtterancePage pages through a transcript's utterances starting in

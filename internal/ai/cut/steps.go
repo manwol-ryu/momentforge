@@ -75,9 +75,10 @@ func SelectedEvidence(spans []Span, evidence []Evidence) []Evidence {
 	return out
 }
 
-// VerifyClipStep is step ⑥: the chosen spans with their evidence only, the
-// refs in key marked (KeyRefs).
-func VerifyClipStep(target string, spans []Span, evidence []Evidence, key []string) ai.StepRequest {
+// ClipSpans are the chosen spans with only the evidence inside each, the
+// refs in key marked (KeyRefs): what the clip-only check reads, and what its
+// answer is sorted against (ReclassifyClip).
+func ClipSpans(spans []Span, evidence []Evidence, key []string) []ClipSpan {
 	isKey := make(map[string]bool, len(key))
 	for _, r := range key {
 		isKey[r] = true
@@ -92,6 +93,11 @@ func VerifyClipStep(target string, spans []Span, evidence []Evidence, key []stri
 		}
 		clip = append(clip, cs)
 	}
+	return clip
+}
+
+// VerifyClipStep is step ⑥: the clip (ClipSpans) and the target only.
+func VerifyClipStep(target string, clip []ClipSpan) ai.StepRequest {
 	return ai.StepRequest{Name: "verify_clip", Prompt: PromptVerifyClip, Schema: VerifyClipSchema(), SchemaName: "clip_check",
 		Input: map[string]any{"target": target, "spans": clip}, MaxOutputTokens: verifyOutputTokens}
 }

@@ -22,7 +22,11 @@ export function foldAI(items: TimelineItem[]): FoldedItems {
       rows.push(it);
       continue;
     }
-    for (const host of hosts) aiFor.set(host, [...(aiFor.get(host) ?? []), it]);
+    for (const host of hosts) {
+      const notes = aiFor.get(host);
+      if (notes) notes.push(it);
+      else aiFor.set(host, [it]);
+    }
   }
   return { rows, aiFor };
 }

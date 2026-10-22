@@ -261,8 +261,13 @@ func (a *App) stageBundle(ctx context.Context, b *bundleState, staging string) e
 	}
 
 	// Chat: chat.jsonl, chat.txt and the collection manifest as chat-manifest.json.
+	// The chat is read once, for these files and the analysis below.
+	chat, err := a.loadChat(ctx, s.ID)
+	if err != nil {
+		return err
+	}
 	chatDir := filepath.Join(staging, ".chat")
-	if err := write("chat", a.writeChatTo(ctx, s.ID, chatDir)); err != nil {
+	if err := write("chat", writeChatFiles(chatDir, chat)); err != nil {
 		return err
 	}
 	for from, to := range map[string]string{"manifest.json": "chat-manifest.json", "chat.txt": "chat.txt", "chat.jsonl": "chat.jsonl"} {
@@ -304,20 +309,14 @@ func (a *App) stageBundle(ctx context.Context, b *bundleState, staging string) e
 		b.index.Timeline = true
 	}
 
-	// The latest rule analysis.
+	// The latest rule analysis, with the chat it analyzed (its snapshot, as
+	// the manifest's event count says), not chat added since.
 	if s.LatestAnalysisID != "" {
 		an, err := st.Analysis(ctx, s.LatestAnalysisID)
 		if err != nil {
 			return err
 		}
-		events, err := st.Chats(ctx, s.ID, store.AllSeq, false)
-		if err != nil {
-			return err
-		}
-		gaps, err := st.Gaps(ctx, s.ID)
-		if err != nil {
-			return err
-		}
+		events, gaps := upTo(chat.events, an.MaxSeq), chat.gaps
 		m := export.AnalysisManifest{AnalysisID: an.ID, SourceSessionID: s.ID, Params: an.ParamsJSON, DataSHA256: an.DataSHA256,
 			EventCount: an.EventCount, MaxSeq: an.MaxSeq, RulesVersion: an.RulesVersion, DurationMs: an.DurationMs, SourceState: an.SourceState,
 			Completeness: export.Completeness(an.SourceState == store.StateFinished, len(gaps)), Gaps: gaps}

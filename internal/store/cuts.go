@@ -19,13 +19,18 @@ type CutPlan struct {
 	RunID        string
 	SessionID    string
 	CandidateIDs []string
-	Version      int
-	Supersedes   string
-	State        string // ok | verify_failed | failed
-	StartMs      int64
-	EndMs        int64
-	PlanJSON     []byte // empty when listed
-	Confirmed    bool
+	// AnalysisID is the rule analysis the candidate IDs belong to ("" none);
+	// Lineage groups the versions of one moment's plan (a new lineage is the
+	// plan's own ID; plans from before migration 0012 use their candidate IDs).
+	AnalysisID string
+	Lineage    string
+	Version    int
+	Supersedes string
+	State      string // ok | verify_failed | failed
+	StartMs    int64
+	EndMs      int64
+	PlanJSON   []byte // empty when listed
+	Confirmed  bool
 	// The user's decisions: notes (JSON list, owned by the caller), the
 	// confirmed boundary candidate and when the plan was confirmed.
 	UserNotesJSON     []byte
@@ -35,25 +40,30 @@ type CutPlan struct {
 	UpdatedAt         time.Time
 }
 
-// CreateCutPlan stores a plan as the next version for its candidates and
-// returns it with its ID, version and the plan it supersedes.
+// CreateCutPlan stores a plan as the next version of its lineage (a new
+// lineage when Lineage is empty) and returns it with its ID, lineage,
+// version and the plan it supersedes.
 func (s *Store) CreateCutPlan(ctx context.Context, p CutPlan) (CutPlan, error) {
 	ids, _ := json.Marshal(p.CandidateIDs)
+	p.ID = newID()
+	if p.Lineage == "" {
+		p.Lineage = p.ID
+	}
 	var version int
 	var prev sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0), (SELECT id FROM ai_cut_plans WHERE session_id=? AND candidate_ids_json=?
-		ORDER BY version DESC LIMIT 1) FROM ai_cut_plans WHERE session_id=? AND candidate_ids_json=?`,
-		p.SessionID, string(ids), p.SessionID, string(ids)).Scan(&version, &prev)
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0), (SELECT id FROM ai_cut_plans WHERE session_id=? AND lineage=?
+		ORDER BY version DESC LIMIT 1) FROM ai_cut_plans WHERE session_id=? AND lineage=?`,
+		p.SessionID, p.Lineage, p.SessionID, p.Lineage).Scan(&version, &prev)
 	if err != nil {
 		return p, fmt.Errorf("cut plan version: %w", err)
 	}
-	p.ID, p.Version, p.Supersedes = newID(), version+1, prev.String
+	p.Version, p.Supersedes = version+1, prev.String
 	p.CreatedAt = time.Now().UTC()
 	p.UpdatedAt = p.CreatedAt
-	_, err = s.db.ExecContext(ctx, `INSERT INTO ai_cut_plans (id, run_id, session_id, candidate_ids_json, version, supersedes,
-		state, start_ms, end_ms, plan_json, confirmed, created_at, updated_at) VALUES (?,?,?,?,?,NULLIF(?,''),?,?,?,?,?,?,?)`,
-		p.ID, p.RunID, p.SessionID, string(ids), p.Version, p.Supersedes, p.State, p.StartMs, p.EndMs, string(p.PlanJSON),
-		p.Confirmed, p.CreatedAt.Format(time.RFC3339Nano), p.UpdatedAt.Format(time.RFC3339Nano))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO ai_cut_plans (id, run_id, session_id, candidate_ids_json, analysis_id, lineage, version,
+		supersedes, state, start_ms, end_ms, plan_json, confirmed, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NULLIF(?,''),?,?,?,?,?,?,?)`,
+		p.ID, p.RunID, p.SessionID, string(ids), p.AnalysisID, p.Lineage, p.Version, p.Supersedes, p.State, p.StartMs, p.EndMs,
+		string(p.PlanJSON), p.Confirmed, p.CreatedAt.Format(time.RFC3339Nano), p.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return p, fmt.Errorf("create cut plan: %w", err)
 	}
@@ -77,7 +87,7 @@ func (s *Store) SaveCutPlan(ctx context.Context, p CutPlan) error {
 	return err
 }
 
-const cutColumns = `id, run_id, session_id, candidate_ids_json, version, COALESCE(supersedes,''), state, start_ms, end_ms,
+const cutColumns = `id, run_id, session_id, candidate_ids_json, analysis_id, lineage, version, COALESCE(supersedes,''), state, start_ms, end_ms,
 	plan_json, confirmed, user_notes_json, confirmed_boundary, COALESCE(confirmed_at,''), created_at, updated_at`
 
 var cutListColumns = replaceOnce(cutColumns, "plan_json", "''")
@@ -95,7 +105,7 @@ func scanCutPlan(row interface{ Scan(...any) error }) (CutPlan, error) {
 	var p CutPlan
 	var ids, plan, notes, confirmedAt, created, updated string
 	var confirmed int
-	err := row.Scan(&p.ID, &p.RunID, &p.SessionID, &ids, &p.Version, &p.Supersedes, &p.State, &p.StartMs, &p.EndMs,
+	err := row.Scan(&p.ID, &p.RunID, &p.SessionID, &ids, &p.AnalysisID, &p.Lineage, &p.Version, &p.Supersedes, &p.State, &p.StartMs, &p.EndMs,
 		&plan, &confirmed, &notes, &p.ConfirmedBoundary, &confirmedAt, &created, &updated)
 	json.Unmarshal([]byte(ids), &p.CandidateIDs)
 	p.PlanJSON = []byte(plan)
@@ -126,31 +136,29 @@ func (s *Store) CutPlans(ctx context.Context, sid string, withJSON bool) ([]CutP
 	return s.cutPlanRows(ctx, "SELECT "+cols+` FROM ai_cut_plans WHERE session_id=? ORDER BY created_at DESC LIMIT 500`, sid)
 }
 
-// CurrentCutPlans are, for each candidate set, the confirmed plan (the
-// newest confirmed version) and the newest plan when it is a later version,
-// with JSON, in time order. Without a confirmation it is the newest alone.
+// CurrentCutPlans are, for each lineage, the confirmed plan (the newest
+// confirmed version) and the newest plan when it is a later version, with
+// JSON, in time order. Without a confirmation it is the newest alone.
 func (s *Store) CurrentCutPlans(ctx context.Context, sid string) ([]CutPlan, error) {
 	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans p WHERE session_id=? AND (
-		version = (SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json)
-		OR id = (SELECT id FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json
+		version = (SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.lineage=p.lineage)
+		OR id = (SELECT id FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.lineage=p.lineage
 			AND q.confirmed=1 ORDER BY version DESC LIMIT 1))
 		ORDER BY start_ms, version`, sid)
 }
 
-// ConfirmedCutPlans are the session's confirmed plans, one per candidate
-// set (its newest confirmed version), with JSON, in time order.
+// ConfirmedCutPlans are the session's confirmed plans, one per lineage (its
+// newest confirmed version), with JSON, in time order.
 func (s *Store) ConfirmedCutPlans(ctx context.Context, sid string) ([]CutPlan, error) {
 	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans p WHERE session_id=? AND confirmed=1 AND version =
-		(SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.candidate_ids_json=p.candidate_ids_json AND q.confirmed=1)
+		(SELECT MAX(version) FROM ai_cut_plans q WHERE q.session_id=p.session_id AND q.lineage=p.lineage AND q.confirmed=1)
 		ORDER BY start_ms, created_at`, sid)
 }
 
-// CutPlanVersions are every version of the plans for one candidate set,
-// oldest first, with JSON.
-func (s *Store) CutPlanVersions(ctx context.Context, sid string, candidateIDs []string) ([]CutPlan, error) {
-	ids, _ := json.Marshal(candidateIDs)
-	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans WHERE session_id=? AND candidate_ids_json=? ORDER BY version`,
-		sid, string(ids))
+// CutPlanLineage is every version of one lineage's plan, oldest first,
+// with JSON.
+func (s *Store) CutPlanLineage(ctx context.Context, sid, lineage string) ([]CutPlan, error) {
+	return s.cutPlanRows(ctx, "SELECT "+cutColumns+` FROM ai_cut_plans WHERE session_id=? AND lineage=? ORDER BY version`, sid, lineage)
 }
 
 func (s *Store) cutPlanRows(ctx context.Context, query string, args ...any) ([]CutPlan, error) {

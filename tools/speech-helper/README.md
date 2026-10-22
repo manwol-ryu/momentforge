@@ -8,7 +8,8 @@ MomentForge가 macOS의 내장 음성 인식(Speech 프레임워크의 `SpeechAn
 speech-helper locales                 # 지원·설치된 언어, 한국어 여부
 speech-helper probe <media>           # 길이(ms), 음성·영상 트랙 유무, 해상도
 speech-helper transcribe <audio> [--from 초] [--seconds 초] [--locale ko-KR] [--install]
-                                      # 발언마다 {"start_ms","end_ms","text"}, 끝에 {"done":true,…}
+                                      # 인식 결과마다 {"start_ms","end_ms","text","words":[{"s","e","t"}]}, 끝에 {"done":true,…}
+                                      # words는 낱말별 시각. 앱이 이것으로 결과(10~20초)를 짧은 발언으로 나눔(internal/asr/split.go)
 ```
 
 2026-10-18 측정(Apple M4, macOS 27, NAS의 7시간 44분 m4a): 한국어 지원·설치됨, 5분 → 2.2초, 30분 → 9초(구간 추출 9초 별도), 실시간의 약 140~190배. 발언 단위 시각이 채팅과 맞고, 노래 구간의 영어 가사는 깨짐.

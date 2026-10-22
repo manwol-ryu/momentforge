@@ -1,11 +1,13 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -192,7 +194,7 @@ func (s *Store) AppendLive(ctx context.Context, sid string, evs []LiveEvent, see
 		e.Seq, _ = res.LastInsertId()
 		saved = append(saved, e)
 	}
-	return saved, duplicates, tx.Commit()
+	return saved, duplicates, s.commitChat(tx, sid, len(saved))
 }
 
 // AddGap records an unobserved span.
@@ -338,17 +340,10 @@ func (s *Store) LiveChatsAround(ctx context.Context, sid string, at, span int64,
 	if err != nil {
 		return nil, err
 	}
-	sortChats(rows)
+	slices.SortFunc(rows, func(a, b LiveChat) int {
+		return cmp.Or(cmp.Compare(a.OffsetMs, b.OffsetMs), cmp.Compare(a.Seq, b.Seq))
+	})
 	return rows, nil
-}
-
-func sortChats(rows []LiveChat) {
-	for i := 1; i < len(rows); i++ {
-		for j := i; j > 0 && (rows[j].OffsetMs < rows[j-1].OffsetMs ||
-			(rows[j].OffsetMs == rows[j-1].OffsetMs && rows[j].Seq < rows[j-1].Seq)); j-- {
-			rows[j], rows[j-1] = rows[j-1], rows[j]
-		}
-	}
 }
 
 // MaxSeq returns the session's last stored message seq.
@@ -403,23 +398,37 @@ func (s *Store) LiveChatsUpTo(ctx context.Context, sid string, maxSeq int64) ([]
 	return s.queryLive(ctx, "SELECT "+liveColumns+" FROM chat_events WHERE session_id=? AND seq<=? ORDER BY offset_ms, seq", sid, maxSeq)
 }
 
-// ChatsByID returns the session's messages with the given event IDs, in time order.
+// ChatsByID returns the session's messages with the given event IDs (each
+// once), in time order.
 func (s *Store) ChatsByID(ctx context.Context, sid string, ids []string) ([]domain.ChatEvent, error) {
+	seen := make(map[string]bool, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
 	var out []domain.ChatEvent
-	for len(ids) > 0 {
+	for ids := unique; len(ids) > 0; {
 		n := min(len(ids), 500)
 		args := []any{sid}
 		for _, id := range ids[:n] {
 			args = append(args, id)
 		}
+		// No ORDER BY: it would make SQLite walk the session's whole time
+		// index instead of looking each id up; the result is sorted below.
 		rows, err := s.queryChats(ctx, "SELECT "+chatColumns+" FROM chat_events WHERE session_id=? AND event_id IN (?"+
-			strings.Repeat(",?", n-1)+") ORDER BY offset_ms, seq", args...)
+			strings.Repeat(",?", n-1)+")", args...)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, rows...)
 		ids = ids[n:]
 	}
+	slices.SortFunc(out, func(a, b domain.ChatEvent) int {
+		return cmp.Or(cmp.Compare(a.OffsetMs, b.OffsetMs), cmp.Compare(a.Seq, b.Seq))
+	})
 	return out, nil
 }
 

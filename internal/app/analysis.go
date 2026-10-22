@@ -1,11 +1,13 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/manwol-ryu/momentforge/internal/detect"
@@ -25,8 +27,13 @@ type AnalysisView struct {
 	DurationMs   int64
 	RulesVersion string
 	Sensitive    bool
-	Windows      []domain.Window
-	Candidates   []CandidateView
+	// How the windows were cut and judged, for drawing them: window length
+	// and step, and for a whole-broadcast analysis the score a candidate's
+	// peak needs (0 for the incremental engine).
+	WindowMs, StepMs int64
+	ScoreThreshold   float64
+	Windows          []domain.Window
+	Candidates       []CandidateView
 }
 
 // CandidateView is a candidate plus a short summary of its evidence chat.
@@ -67,27 +74,77 @@ func (a *App) StartAnalyze(sid string, sensitive bool) (JobStatus, error) {
 	})
 }
 
-// analyzeSession runs detection over everything collected so far, stores
-// the result with its chat snapshot, and writes the analysis files.
-func (a *App) analyzeSession(ctx context.Context, sid string, p detect.Params, h job) (*store.Analysis, error) {
+// storedChat is a session as stored with all its chat (in time order) and
+// gaps, read once when a job both writes the chat files and analyzes.
+type storedChat struct {
+	s      store.Session
+	events []domain.ChatEvent
+	gaps   []domain.Gap
+}
+
+func (a *App) loadChat(ctx context.Context, sid string) (storedChat, error) {
 	st := a.cfg.Store
 	s, err := st.Session(ctx, sid)
 	if err != nil {
+		return storedChat{}, err
+	}
+	events, err := st.Chats(ctx, sid, store.AllSeq, false)
+	if err != nil {
+		return storedChat{}, err
+	}
+	gaps, err := st.Gaps(ctx, sid)
+	if err != nil {
+		return storedChat{}, err
+	}
+	return storedChat{s: s, events: events, gaps: gaps}, nil
+}
+
+// byArrival returns the chat in arrival order (chat.received.txt).
+func (c storedChat) byArrival() []domain.ChatEvent {
+	out := slices.Clone(c.events)
+	slices.SortFunc(out, func(x, y domain.ChatEvent) int { return cmp.Compare(x.Seq, y.Seq) })
+	return out
+}
+
+// upTo returns the chat of an analysis snapshot (seq <= maxSeq), in time order.
+func upTo(events []domain.ChatEvent, maxSeq int64) []domain.ChatEvent {
+	if !slices.ContainsFunc(events, func(e domain.ChatEvent) bool { return e.Seq > maxSeq }) {
+		return events
+	}
+	out := make([]domain.ChatEvent, 0, len(events))
+	for _, e := range events {
+		if e.Seq <= maxSeq {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// analyzeSession runs detection over everything collected so far, stores
+// the result with its chat snapshot, and writes the analysis files.
+func (a *App) analyzeSession(ctx context.Context, sid string, p detect.Params, h job) (*store.Analysis, error) {
+	c, err := a.loadChat(ctx, sid)
+	if err != nil {
 		return nil, err
 	}
+	return a.analyzeChat(ctx, c, p, h)
+}
+
+// analyzeChat is analyzeSession on chat already read.
+func (a *App) analyzeChat(ctx context.Context, c storedChat, p detect.Params, h job) (*store.Analysis, error) {
+	st := a.cfg.Store
+	s, sid, events, gaps := c.s, c.s.ID, c.events, c.gaps
 	end := s.Cursor
 	if s.State == store.StateFinished {
 		end = s.DurationMs
 	}
-	events, err := st.Chats(ctx, sid, store.AllSeq, false)
-	if err != nil {
-		return nil, err
+	// A stored timeline is analyzed as a whole (REDESIGN 6.2.2); params
+	// without whole-broadcast settings keep the incremental engine.
+	analyze := detect.Analyze
+	if p.Broadcast != nil {
+		analyze = detect.AnalyzeBroadcast
 	}
-	gaps, err := st.Gaps(ctx, sid)
-	if err != nil {
-		return nil, err
-	}
-	res, err := detect.Analyze(ctx, events, end, gaps, p, a.cfg.Rules, func(pr detect.Progress) {
+	res, err := analyze(ctx, events, end, gaps, p, a.cfg.Rules, func(pr detect.Progress) {
 		if h.j != nil {
 			h.update(func(js *JobStatus) { js.PositionMs, js.Candidates = pr.PositionMs, pr.Candidates })
 		}
@@ -136,24 +193,16 @@ func snapshot(events []domain.ChatEvent) (int64, string) {
 
 // writeChat refreshes the session's chat files from the database.
 func (a *App) writeChat(ctx context.Context, sid string) error {
-	return a.writeChatTo(ctx, sid, a.exportDir(sid))
+	c, err := a.loadChat(ctx, sid)
+	if err != nil {
+		return err
+	}
+	return writeChatFiles(a.exportDir(sid), c)
 }
 
-// writeChatTo writes the session's chat files (manifest.json, chat.txt, chat.jsonl) into dir.
-func (a *App) writeChatTo(ctx context.Context, sid, dir string) error {
-	st := a.cfg.Store
-	s, err := st.Session(ctx, sid)
-	if err != nil {
-		return err
-	}
-	events, err := st.Chats(ctx, sid, store.AllSeq, false)
-	if err != nil {
-		return err
-	}
-	gaps, err := st.Gaps(ctx, sid)
-	if err != nil {
-		return err
-	}
+// writeChatFiles writes the session's chat files (manifest.json, chat.txt, chat.jsonl) into dir.
+func writeChatFiles(dir string, c storedChat) error {
+	s := c.s
 	finished := s.State == store.StateFinished
 	avail := s.Cursor
 	if finished {
@@ -162,9 +211,29 @@ func (a *App) writeChatTo(ctx context.Context, sid, dir string) error {
 	return export.WriteChat(dir, export.ChatManifest{
 		ID: s.ID, Platform: s.Platform, TargetID: s.TargetID, Title: s.Title, DurationMs: s.DurationMs,
 		ReportedDurationMs: s.ReportedDurationMs, State: s.State, Cursor: s.Cursor, Pages: s.Pages,
-		Gaps: gaps, Error: s.ErrorCode, AvailableEndMs: avail,
-		Completeness: export.Completeness(finished, len(gaps)), RetrievalFinished: finished,
-	}, events)
+		Gaps: c.gaps, Error: s.ErrorCode, AvailableEndMs: avail,
+		Completeness: export.Completeness(finished, len(c.gaps)), RetrievalFinished: finished,
+	}, c.events)
+}
+
+// evidenceChats reads the evidence messages of cands (those up to maxSeq)
+// by event ID, for summarize.
+func (a *App) evidenceChats(ctx context.Context, sid string, cands []domain.Candidate, maxSeq int64) (map[string]domain.ChatEvent, error) {
+	var ids []string
+	for _, c := range cands {
+		ids = append(ids, c.EvidenceIDs...)
+	}
+	chats, err := a.cfg.Store.ChatsByID(ctx, sid, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.ChatEvent, len(chats))
+	for _, e := range chats {
+		if e.Seq <= maxSeq {
+			byID[e.ID] = e
+		}
+	}
+	return byID, nil
 }
 
 // Analysis loads a stored analysis for review.
@@ -180,16 +249,19 @@ func (a *App) Analysis(ctx context.Context, id string) (*AnalysisView, error) {
 	}
 	var p detect.Params
 	json.Unmarshal(an.ParamsJSON, &p)
-	events, err := st.Chats(ctx, an.SessionID, an.MaxSeq, false)
+	// Only the evidence is read: a long broadcast has hundreds of thousands of messages.
+	byID, err := a.evidenceChats(ctx, an.SessionID, an.Candidates, an.MaxSeq)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[string]domain.ChatEvent, len(events))
-	for _, e := range events {
-		byID[e.ID] = e
-	}
 	view := &AnalysisView{ID: an.ID, SessionID: s.ID, Title: s.Title, DurationMs: an.DurationMs,
-		RulesVersion: an.RulesVersion, Sensitive: p.Sensitive, Windows: an.Windows}
+		RulesVersion: an.RulesVersion, Sensitive: p.Sensitive, WindowMs: p.WindowMs, StepMs: p.StepMs, Windows: an.Windows}
+	if p.Broadcast != nil {
+		view.ScoreThreshold = p.Broadcast.OnZ
+		if p.Sensitive {
+			view.ScoreThreshold = p.Broadcast.SensitiveOnZ
+		}
+	}
 	link := a.linker(s)
 	for _, c := range an.Candidates {
 		cv := CandidateView{Candidate: c, EvidenceTotal: len(c.EvidenceIDs), Evidence: summarize(c.EvidenceIDs, byID)}

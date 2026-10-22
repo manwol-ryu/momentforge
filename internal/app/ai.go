@@ -83,11 +83,12 @@ type aiActive struct {
 }
 
 type aiPreview struct {
-	plan    ai.Plan
-	cut     *CutPreview // cut analysis: the inputs the steps start from
-	expires time.Time
-	runID   string
-	counted []int // exact input tokens per chunk, once the user asked for them
+	plan       ai.Plan
+	cut        *CutPreview // cut analysis: the inputs the steps start from
+	analysisID string      // the analysis the plan's rule IDs belong to (the run records it)
+	expires    time.Time
+	runID      string
+	counted    []int // exact input tokens per chunk, once the user asked for them
 }
 
 func (a *App) initAI() {
@@ -330,6 +331,10 @@ type AIPreviewRequest struct {
 	CostCapUSD float64 // 0: no limit
 	// Cut analysis: each search round's results wait for the user before they are sent.
 	ConfirmSearches bool
+	// Cut analysis: item ID → the plan whose versions the new one continues
+	// (the result box "다시 분석" was pressed in). Without one, an item
+	// continues the plan shown under it now.
+	ContinuePlans map[string]string
 }
 
 // AIPreview is a plan the user must confirm before anything is sent.
@@ -387,7 +392,7 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 		if err != nil {
 			return AIPreview{}, err
 		}
-		return a.keepPreview(plan, cp)
+		return a.keepPreview(plan, cp, cp.AnalysisID)
 	}
 	src, err := a.aiSource(ctx, req.SessionID)
 	if err != nil {
@@ -399,7 +404,7 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	}
 	add := func(it TimelineItem) {
 		in.Candidates = append(in.Candidates, ai.Candidate{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs,
-			Title: it.Title, Statistics: src.stats[it.ID]})
+			Title: it.Title, Statistics: explainStats(it)})
 		start := it.ClipStartMs
 		if it.Source == SourceViewer {
 			start = max(0, it.AnchorMs-30000)
@@ -450,11 +455,11 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 	if err != nil {
 		return AIPreview{}, err
 	}
-	return a.keepPreview(plan, nil)
+	return a.keepPreview(plan, nil, src.analysisID)
 }
 
 // keepPreview stores a plan the user is about to see, for a while.
-func (a *App) keepPreview(plan ai.Plan, cp *CutPreview) (AIPreview, error) {
+func (a *App) keepPreview(plan ai.Plan, cp *CutPreview, analysisID string) (AIPreview, error) {
 	a.ai.mu.Lock()
 	defer a.ai.mu.Unlock()
 	now := time.Now()
@@ -467,7 +472,7 @@ func (a *App) keepPreview(plan ai.Plan, cp *CutPreview) (AIPreview, error) {
 		return AIPreview{}, domain.NewUserError("BUSY", "미리보기가 너무 많습니다. 잠시 후 다시 시도해 주세요.")
 	}
 	id := randomHex()
-	a.ai.previews[id] = &aiPreview{plan: plan, cut: cp, expires: now.Add(aiPreviewTTL)}
+	a.ai.previews[id] = &aiPreview{plan: plan, cut: cp, analysisID: analysisID, expires: now.Add(aiPreviewTTL)}
 	return AIPreview{ID: id, ExpiresAt: now.Add(aiPreviewTTL), Plan: plan, Cut: cp}, nil
 }
 
@@ -596,7 +601,7 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 		return "", domain.NewUserError("BUSY", "결과를 기다리는 배치가 너무 많습니다. 끝난 뒤 다시 시도해 주세요.")
 	}
 	run := store.AIRun{SessionID: plan.SessionID, Provider: plan.Provider, Model: plan.Model, Fingerprint: plan.Fingerprint,
-		Delivery: plan.Delivery, RequestCount: plan.RequestCount, PlanJSON: ai.Encode(plan)}
+		Delivery: plan.Delivery, AnalysisID: pv.analysisID, RequestCount: plan.RequestCount, PlanJSON: ai.Encode(plan)}
 	if plan.CostCapUSD > 0 {
 		run.CostCapUSD = &plan.CostCapUSD
 	}
@@ -961,8 +966,10 @@ func (a *App) AIRuns(ctx context.Context, sid string) ([]AIRunView, error) {
 	return out, nil
 }
 
-// aiTimelineItems are the newest review's recommendations.
-func (a *App) aiTimelineItems(ctx context.Context, sid string, watch func(int64) string) (aiItems, error) {
+// aiTimelineItems are the newest review's recommendations, each under the
+// current candidates it explains (hostsFor: found by time when the session
+// was analysed again after the review).
+func (a *App) aiTimelineItems(ctx context.Context, sid string, watch func(int64) string, hosts momentHosts) (aiItems, error) {
 	run, ok, err := a.cfg.Store.LatestAIRun(ctx, sid)
 	if err != nil || !ok {
 		return aiItems{}, err
@@ -971,7 +978,8 @@ func (a *App) aiTimelineItems(ctx context.Context, sid string, watch func(int64)
 	for _, r := range runRecs(run) {
 		out.items = append(out.items, TimelineItem{ID: SourceAI + ":" + r.ID, Source: SourceAI, OriginID: r.ID,
 			AnchorMs: r.StartMs, ClipStartMs: r.StartMs, ClipEndMs: r.EndMs, Title: r.Title, Rationale: r.Rationale,
-			Uncertainty: r.Uncertainty, Priority: r.Priority, SourceCandidateIDs: r.SourceCandidateIDs, WatchURL: watch(r.StartMs)})
+			Uncertainty: r.Uncertainty, Priority: r.Priority, WatchURL: watch(r.StartMs),
+			SourceCandidateIDs: hosts.hostsFor(r.SourceCandidateIDs, run.AnalysisID, r.StartMs, r.EndMs, -1)})
 	}
 	return out, nil
 }

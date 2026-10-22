@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,19 +23,36 @@ import (
 type stepAI struct {
 	fakeAI
 	dropSetup bool
-	steps     []string
-	notes     []cut.UserNote // what the last plan step was given
+	keyAside  bool // the clip check passes, filing a key ref as a side remark
+	// The first source check fails and the re-plan that follows leaves the
+	// setup out (a plan and a verdict of different attempts must not mix).
+	sourceFailsOnce bool
+	badAnalyze      string // the candidate whose analysis answers in the wrong shape
+	steps           []string
+	notes           []cut.UserNote // what the last plan step was given
 }
 
 func (f *stepAI) Step(ctx context.Context, key, model string, step ai.StepRequest) (json.RawMessage, ai.Usage, error) {
 	f.mu.Lock()
 	f.steps = append(f.steps, step.Name)
+	plans, sources := 0, 0
+	for _, s := range f.steps {
+		switch s {
+		case "plan":
+			plans++
+		case "verify_source":
+			sources++
+		}
+	}
 	f.mu.Unlock()
 	u := ai.Usage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}
 	var out any
 	switch step.Name {
 	case "analyze":
 		in := step.Input.(cut.Input)
+		if in.Candidates[0].ID == f.badAnalyze {
+			return json.RawMessage(`{"target":""}`), u, nil
+		}
 		out = map[string]any{"target": "약속과 실패의 대비", "cause_status": "likely", "questions": []string{"'아까'는 무엇인가"},
 			"search_requests": []any{map[string]any{"tool": "search", "query": "벌칙", "in": "both", "before_ms": in.WindowStartMs, "at_ms": 0, "from_ms": 0, "to_ms": 0, "window_s": 0}},
 			"causes": []any{map[string]any{"kind": "callback_to_earlier", "summary": "앞선 장담", "support": []string{in.Evidence[0].Ref},
@@ -59,7 +78,7 @@ func (f *stepAI) Step(ctx context.Context, key, model string, step ai.StepReques
 			}
 		}
 		spans := []any{map[string]any{"start_ref": first.Ref, "end_ref": last.Ref, "role": "main"}}
-		if !f.dropSetup {
+		if !f.dropSetup && !(f.sourceFailsOnce && plans > 1) {
 			spans = append([]any{map[string]any{"start_ref": promise.Ref, "end_ref": promise.Ref, "role": "setup"}}, spans...)
 		}
 		out = map[string]any{"story_origin_ref": promise.Ref, "origin_confidence": "found_in_search_range", "event_start_ref": first.Ref,
@@ -68,9 +87,24 @@ func (f *stepAI) Step(ctx context.Context, key, model string, step ai.StepReques
 			"chosen": "context", "start_reason": "약속부터", "end_reason": "인정까지",
 			"ending": map[string]any{"state": "confirmed", "event_kind": "promise_penalty", "checks": []string{"결과 확인"}}, "unresolved_questions": []string{}}
 	case "verify_clip":
-		out = map[string]any{"pass": true, "answers": map[string]string{"what": "도전", "condition": "지면 벌칙", "result": "실패", "references": "약속", "why_reaction": "대비"}, "gaps": []string{}}
+		asides := []any{}
+		if f.keyAside {
+			for _, s := range step.Input.(map[string]any)["spans"].([]cut.ClipSpan) {
+				for _, e := range s.Evidence {
+					if e.Key && len(asides) == 0 {
+						asides = append(asides, map[string]any{"refs": []string{e.Ref, "chat:nowhere"}, "text": "'아까'가 가리키는 일"})
+					}
+				}
+			}
+		}
+		out = map[string]any{"pass": true, "answers": map[string]string{"what": "도전", "condition": "지면 벌칙", "result": "실패", "references": "약속", "why_reaction": "대비"},
+			"gaps": []string{}, "asides": asides}
 	case "verify_source":
 		out = map[string]any{"pass": true, "mixed_attempt": false, "cut_condition": false, "missed_correction": false, "ended_early": false, "notes": []string{}}
+		if f.sourceFailsOnce && sources == 1 {
+			out = map[string]any{"pass": false, "mixed_attempt": false, "cut_condition": false, "missed_correction": false, "ended_early": true,
+				"notes": []string{"벌칙을 받아들이는 말 전에 끊음"}}
+		}
 	}
 	b, _ := json.Marshal(out)
 	return b, u, nil
@@ -188,6 +222,32 @@ func TestCutAnalysisSavesAPlanWithSpans(t *testing.T) {
 	}
 	if cuts != 1 {
 		t.Fatalf("the newest plan alone is shown, got %d", cuts)
+	}
+
+	// A check that passes while filing key evidence as a side remark is failed by the server, which says why.
+	waitIdle(t, a)
+	f.dropSetup, f.keyAside = false, true
+	pv, _ = a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{item}})
+	id, err = a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v = waitAI(t, a, id); v.State != store.AICompleted {
+		t.Fatalf("run %+v", v)
+	}
+	plans, _ = a.CutPlans(ctx, demo.ID)
+	if len(plans) != 3 || plans[0].State != cut.StateVerifyFailed {
+		t.Fatalf("plans %+v", plans)
+	}
+	d, err := a.CutPlanDetail(ctx, plans[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cv := d.Verification
+	if cv.ClipPass == nil || *cv.ClipPass || len(cv.Gaps) != 1 || len(cv.Asides) != 0 || len(cv.Gaps[0].Refs) != 1 || cv.Gaps[0].Refs[0].AtMs == nil ||
+		len(cv.ServerChanges) != 3 || !strings.Contains(cv.ServerChanges[0], "chat:nowhere") || !strings.Contains(cv.ServerChanges[1], "참고 → 실패 사유") ||
+		!strings.Contains(cv.ServerChanges[2], "판정 통과 → 실패") || !strings.Contains(cv.Issues[0], "(근거 "+cv.Gaps[0].Refs[0].Ref+")") {
+		t.Fatalf("verification %+v", cv)
 	}
 }
 
@@ -529,5 +589,290 @@ func TestCutNotesMakeANewVersionAndTheConfirmedOneStays(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("without a confirmation the newest alone is shown, got %d", n)
+	}
+}
+
+// A plan whose source check fails is re-planned; when the re-plan fails the
+// structural checks, the saved plan is the verified one with its own
+// verdict, never the re-plan with the earlier verdict.
+func TestCutPlanAndVerdictComeFromTheSameAttempt(t *testing.T) {
+	f := &stepAI{sourceFailsOnce: true}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetAIKey("fakeai", "k", false)
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{"rule:m0001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := waitAI(t, a, id); v.State != store.AICompleted || strings.Join(f.steps, ",") != "analyze,plan,verify_clip,verify_source,plan" {
+		t.Fatalf("run %+v steps %v", v, f.steps)
+	}
+	p := lastPlan(t, a, demo.ID)
+	src := p.Verification.AgainstSource
+	if p.State != cut.StateVerifyFailed || len(p.SelectedSpans) != 2 || p.SelectedSpans[0].Role != "setup" || src == nil || src.Pass ||
+		len(p.Verification.Issues) != 1 || !strings.HasPrefix(p.Verification.Issues[0], "원본 비교: ") {
+		t.Fatalf("plan spans %+v verdict %+v issues %v", p.SelectedSpans, src, p.Verification.Issues)
+	}
+}
+
+// One candidate whose answer cannot be read fails alone: the others are
+// analysed and saved, and the run says which one failed and why.
+func TestCutRunGoesOnPastAFailedCandidate(t *testing.T) {
+	f := &stepAI{badAnalyze: "rule:m0001"}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reanalyse(t, a, demo.ID) // two candidates: m0001 (00:00:30) and m0002
+	a.SetAIKey("fakeai", "k", false)
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut",
+		ItemIDs: []string{"rule:m0001", "rule:m0002"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitAI(t, a, id)
+	if v.State != store.AIPartial || v.Recommendations != 1 || v.ErrorCode != "AI_FORMAT" ||
+		!strings.Contains(v.ErrorMessage, "후보 2개 중 1개") || !strings.Contains(v.ErrorMessage, "00:00:30 후보") {
+		t.Fatalf("run %+v", v)
+	}
+	if p := lastPlan(t, a, demo.ID); !slices.Equal(p.CandidateIDs, []string{"rule:m0002"}) || p.State != cut.StateOK {
+		t.Fatalf("plan %+v", p)
+	}
+	// A limit still stops the whole run.
+	for code, stops := range map[string]bool{"CANCELLED": true, "COST_CAP": true, "AI_HTTP_401": true, "AI_UNAVAILABLE": true,
+		"AI_FORMAT": false, "AI_REFUSAL": false, "AI_HTTP_529": false} {
+		if got := cutRunStops(&ai.ProviderError{UserError: domain.NewUserError(code, "x")}); got != stops {
+			t.Errorf("%s stops the run: %v", code, got)
+		}
+	}
+}
+
+// The cut input keeps the reaction itself: the detector's account (real
+// peak, strength, what stood out), a chat curve over the clip, and chat
+// chosen from the reaction outward.
+func TestCutInputCarriesTheReaction(t *testing.T) {
+	f := &stepAI{}
+	a := newAIApp(t, &f.fakeAI)
+	a.cfg.AI = &ai.Registry{}
+	a.cfg.AI.Register(f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", Kind: "cut", ItemIDs: []string{"rule:m0001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := pv.Cut.Inputs[0]
+	r := in.Candidates[0].Reaction
+	if r == nil || r.PeakMs <= in.Candidates[0].ClipStartMs || r.StartMs < in.Candidates[0].ClipStartMs || r.Strength == "" ||
+		len(r.Measures) == 0 || len(r.Measures) > cutMaxMeasures || r.Measures[0].WindowS != 10 {
+		t.Fatalf("reaction %+v", r)
+	}
+	c := in.Curve
+	if c == nil || c.BinMs != cutCurveBinMs || c.Partial || len(c.Bins) != int((in.Candidates[0].ClipEndMs-in.Candidates[0].ClipStartMs)/cutCurveBinMs) {
+		t.Fatalf("curve %+v", c)
+	}
+	peakBin, quiet := 0, 0
+	for _, b := range c.Bins {
+		if b.StartMs <= r.PeakMs && r.PeakMs < b.StartMs+c.BinMs {
+			peakBin = b.Reacting
+		}
+		if b.StartMs < r.StartMs-20_000 {
+			quiet = max(quiet, b.Reacting)
+		}
+	}
+	if peakBin < 5 || quiet >= peakBin || c.UsualChats <= 0 {
+		t.Fatalf("curve does not show the reaction: peak bin %d, before %d, usual %v", peakBin, quiet, c.UsualChats)
+	}
+	// Every message of the window is either sent or counted as left out.
+	chats, total, err := a.cfg.Store.ChatsBetween(ctx, demo.ID, in.WindowStartMs, in.WindowEndMs, store.AllSeq, 1_000_000, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := 0
+	for _, e := range in.Evidence {
+		if e.Kind == cut.KindChat {
+			sent++
+		}
+	}
+	if sent+in.ChatsLeftOut != total || sent > cutMaxChats || len(chats) != total {
+		t.Fatalf("sent %d left out %d of %d", sent, in.ChatsLeftOut, total)
+	}
+	// The plan keeps the real peak, not the clip start.
+	a.SetAIKey("fakeai", "k", false)
+	id, err := a.StartAI(ctx, pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitAI(t, a, id)
+	if p := lastPlan(t, a, demo.ID); p.Reaction.PeakMs != r.PeakMs {
+		t.Fatalf("plan peak %d, reaction peak %d", p.Reaction.PeakMs, r.PeakMs)
+	}
+}
+
+func TestPickChatsKeepsTheReactionFirst(t *testing.T) {
+	var chats []domain.ChatEvent
+	add := func(ms int64, kind string) {
+		chats = append(chats, domain.ChatEvent{ID: fmt.Sprint(len(chats)), OffsetMs: ms, Kind: kind, Text: "ㅋㅋ"})
+	}
+	for ms := int64(0); ms < 100_000; ms += 1000 { // one a second for 100 s
+		add(ms, "")
+	}
+	add(5_500, domain.ChatKindDonation)
+	slices.SortStableFunc(chats, func(x, y domain.ChatEvent) int { return int(x.OffsetMs - y.OffsetMs) })
+	times := func(list []domain.ChatEvent) []int64 {
+		var out []int64
+		for _, c := range list {
+			out = append(out, c.OffsetMs)
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name     string
+		from, to int64
+		n        int
+		check    func([]domain.ChatEvent) bool
+	}{
+		{"everything fits", 40_000, 60_000, 200, func(got []domain.ChatEvent) bool { return len(got) == len(chats) }},
+		{"the focus and then the nearest", 40_000, 50_000, 21, func(got []domain.ChatEvent) bool {
+			// The donation, the ten focus seconds, then five on each side.
+			return len(got) == 21 && got[0].Kind == domain.ChatKindDonation && got[1].OffsetMs == 35_000 && got[len(got)-1].OffsetMs == 54_000
+		}},
+		{"a crowded focus is thinned across its bins", 0, 100_000, 21, func(got []domain.ChatEvent) bool {
+			// The donation and one message from each 5 s bin, in time order.
+			ts := times(got)
+			return len(got) == 21 && slices.IsSorted(ts) && ts[0] == 0 && ts[1] == 5_000 && ts[2] == 5_500 && ts[len(ts)-1] == 95_000
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pickChats(chats, tc.from, tc.to, tc.n)
+			if !tc.check(got) {
+				t.Fatalf("picked %v", times(got))
+			}
+		})
+	}
+}
+
+func TestChatEvidenceDropsHiddenAndMarksNotices(t *testing.T) {
+	ev := chatEvidence([]domain.ChatEvent{
+		{ID: "a", OffsetMs: 1000, AuthorKey: "u1", Text: "ㅋㅋㅋ"},
+		{ID: "b", OffsetMs: 2000, AuthorKey: "u2", Text: "광고", Hidden: true},
+		{ID: "c", OffsetMs: 3000, AuthorKey: "u3", Text: "후원 감사", Kind: domain.ChatKindDonation, Amount: 1000},
+		{ID: "d", OffsetMs: 4000, Text: "구독", Kind: domain.ChatKindSubscription},
+	})
+	if len(ev) != 3 || ev[0].ChatKind != "" || ev[1].Ref != "chat:c" || ev[1].ChatKind != domain.ChatKindDonation ||
+		ev[2].ChatKind != domain.ChatKindSubscription || ev[2].Author != nil {
+		t.Fatalf("evidence %+v", ev)
+	}
+}
+
+// A search returns the matches nearest before the moment, and keeps room
+// for chat when utterances alone would fill it.
+func TestCutSearchReturnsTheNearestMatchesWithChat(t *testing.T) {
+	f := &stepAI{}
+	a := newAIApp(t, &f.fakeAI)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var utts []domain.Utterance
+	for i := range 40 {
+		ms := int64(i) * 5000
+		utts = append(utts, domain.Utterance{StartMs: ms, EndMs: ms + 3000, Speaker: "방송자", Text: fmt.Sprintf("벌칙 이야기 %d", i)})
+	}
+	tr, err := a.cfg.Store.SaveTranscript(ctx, store.Transcript{SessionID: demo.ID, Source: "demo"}, utts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chats, err := a.cfg.Store.ChatMatchesBefore(ctx, demo.ID, "벌칙", 400_000, store.AllSeq, 100)
+	if err != nil || len(chats) == 0 {
+		t.Fatalf("the sample's chat about the penalty: %d %v", len(chats), err)
+	}
+	s := &cutSearcher{a: a, sid: demo.ID, transcriptID: tr.ID, maxSeq: store.AllSeq, endMs: domain.DemoDurationMs}
+	texts := func(in string) []string {
+		t.Helper()
+		found, _, err := s.search(ctx, cut.SearchRequest{Tool: cut.ToolSearch, Query: "벌칙", In: in, BeforeMs: 400_000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range found {
+			out = append(out, e.Text)
+		}
+		return out
+	}
+	// Utterances alone: the 30 nearest, oldest first.
+	if got := texts("utterances"); len(got) != cut.SearchMaxResults || got[0] != "벌칙 이야기 10" || got[29] != "벌칙 이야기 39" {
+		t.Fatalf("utterances %v", got)
+	}
+	// Both: chat keeps its share, the utterances give way from the far end.
+	nChat := min(len(chats), searchChatShare)
+	got := texts("both")
+	if len(got) != cut.SearchMaxResults || got[0] != fmt.Sprintf("벌칙 이야기 %d", 40-(cut.SearchMaxResults-nChat)) ||
+		got[len(got)-1] != chats[len(chats)-1].Text {
+		t.Fatalf("both (%d chats) %v", nChat, got)
+	}
+}
+
+// The first-generation review sends a rule candidate's reaction span, peak
+// and strength with its peak numbers.
+func TestExplainStatisticsCarryTheReaction(t *testing.T) {
+	f := &fakeAI{}
+	a := newAIApp(t, f)
+	ctx := context.Background()
+	demo, err := a.CreateDemo(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pv, err := a.PreviewAI(ctx, AIPreviewRequest{SessionID: demo.ID, Provider: "fakeai", Model: "m", ItemIDs: []string{"rule:m0001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := pv.Plan.Chunks[0].Candidates[0].Statistics
+	for _, k := range []string{"n", "u", "reaction_start_ms", "reaction_end_ms", "peak_ms", "strength", "score"} {
+		if _, ok := st[k]; !ok {
+			t.Fatalf("statistics lack %s: %v", k, st)
+		}
+	}
+	if !strings.Contains(pv.Plan.Prompt, "reaction_start_ms") || pv.Plan.PromptVersion != ai.PromptVersion {
+		t.Fatalf("the prompt does not explain the new numbers")
+	}
+}
+
+// What a search finds goes into the run's copy of the input; the preview
+// the user confirmed stays as it was shown.
+func TestCutSearchLeavesThePreviewAlone(t *testing.T) {
+	a, _, _, pv := cutSetup(t, false)
+	before := slices.Clone(pv.Cut.Inputs[0].Evidence)
+	id, err := a.StartAI(context.Background(), pv.ID, pv.Plan.Fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := waitAI(t, a, id); v.State != store.AICompleted {
+		t.Fatalf("run %+v", v)
+	}
+	if after := pv.Cut.Inputs[0].Evidence; !slices.Equal(after, before) || len(pv.Cut.Inputs[0].Searched) != 0 {
+		t.Fatalf("the preview changed: %d → %d evidence, %d searches", len(before), len(after), len(pv.Cut.Inputs[0].Searched))
 	}
 }

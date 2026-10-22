@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { Candidate, CutBoundaryName, TimelineItem, TimelineSource, TimelineSpan } from "../../api/types";
 import { CandidateItem } from "./CandidateList";
-import { CutBox, startBoundary } from "./CutBox";
+import { boundaryLabel, CutBox, startBoundary } from "./CutBox";
 import { timecode } from "../format";
 
 export const sourceLabel: Record<TimelineSource, string> = {
@@ -32,19 +32,24 @@ interface Props {
   cutChoice?: Record<string, CutBoundaryName>;
   onCutChoice?: (planId: string, name: CutBoundaryName, itemId: string) => void;
   /** Ask for a new cut analysis of a candidate (its notes go along). */
-  onReanalyzeCut?: (itemId: string) => void;
+  onReanalyzeCut?: (itemId: string, planId?: string) => void;
   /** Timeline item IDs ticked for an AI review. */
   aiSelection: Set<string>;
   onToggleAI: (itemId: string) => void;
   /** Whether a non-AI item can be ticked now (default: always); a LIVE candidate waits until it is settled. */
   canPick?: (it: TimelineItem) => boolean;
+  /** Rule candidate numbers by candidate ID, as the timeline marks them (candidateNumbers). */
+  numbers: Map<string, number>;
+  /** The window score a candidate's peak needs in this analysis (whole-broadcast analyses). */
+  scoreThreshold?: number;
   renderRuleDetail: (c: Candidate) => ReactNode;
 }
 
 /**
- * Every source's moments in video time order (CzzEdit's 통합 타임라인).
+ * Every source's moments (CzzEdit's 통합 타임라인), in the order given.
  * Each row says where it came from; comment and AI text is shown as text,
- * and an AI explanation of a listed candidate sits under that candidate.
+ * and an AI result about a listed candidate sits under that candidate: a
+ * line each until the row is chosen, then in full.
  */
 export function UnifiedList({
   items,
@@ -63,6 +68,8 @@ export function UnifiedList({
   aiSelection,
   onToggleAI,
   canPick,
+  numbers,
+  scoreThreshold,
   renderRuleDetail,
 }: Props) {
   const headHint = canPlay ? "고르면 영상이 이 구간부터 재생됩니다" : undefined;
@@ -87,9 +94,21 @@ export function UnifiedList({
         ))}
     </>
   );
-  const explanations = (it: TimelineItem) => {
-    const notes = aiFor?.get(it.id);
+  const explanations = (it: TimelineItem, selected: boolean) => renderNotes(it, aiFor?.get(it.id), selected);
+  // AI results shown with a row: one line each until the row is chosen. A
+  // cut plan whose moment has no candidate now is its own row and host.
+  const renderNotes = (it: TimelineItem, notes: TimelineItem[] | undefined, selected: boolean) => {
     if (!notes?.length) return null;
+    // A long list stays a list: the full results open with their row.
+    if (!selected) {
+      return (
+        <div className="ai-notes">
+          {notes.map((n) => (
+            <AIBrief key={n.id} it={n} onOpen={() => onSelect(it.id)} />
+          ))}
+        </div>
+      );
+    }
     return (
       <div className="ai-notes">
         {notes.map((n) =>
@@ -102,7 +121,7 @@ export function UnifiedList({
               onChoose={n.cut && onCutChoice ? (name) => onCutChoice(n.cut!.planId, name, it.id) : undefined}
               onPlay={onSeek ? (ms) => onSeek(ms, it.id) : undefined}
               onPlaySpans={canPlay && onPlaySpans ? (spans) => onPlaySpans(spans, it.id) : undefined}
-              onReanalyze={onReanalyzeCut && it.source !== "ai" ? () => onReanalyzeCut(it.id) : undefined}
+              onReanalyze={onReanalyzeCut && it.source !== "ai" ? () => onReanalyzeCut(it.id, n.cutPlanId) : undefined}
             />
           ) : (
             <AINote key={n.id} it={n} longForm={longForm} onPlay={canPlay && onSeek ? () => onSeek(n.clipStartMs, it.id) : undefined} />
@@ -111,7 +130,6 @@ export function UnifiedList({
       </div>
     );
   };
-  let ruleIndex = 0;
   return (
     <ol className="candidates">
       {items.map((it, pos) => {
@@ -122,15 +140,16 @@ export function UnifiedList({
             <CandidateItem
               key={it.id}
               c={rule}
-              index={ruleIndex++}
+              number={numbers.get(rule.id) ?? pos + 1}
               order={pos}
               selected={selected}
               onSelect={() => onSelect(it.id)}
               longForm={longForm}
               headHint={headHint}
               itemId={it.id}
+              scoreThreshold={scoreThreshold}
               badge={<span className="candidate-source" data-source="rule">자동 탐지</span>}
-              extra={explanations(it)}
+              extra={explanations(it, selected)}
               renderActions={() => actions(it)}
               renderDetail={renderRuleDetail}
             />
@@ -150,20 +169,60 @@ export function UnifiedList({
                 {timecode(it.clipStartMs, longForm)}–{timecode(it.clipEndMs, longForm)}
               </span>
               <span className="candidate-source" data-source={it.source}>
-                {sourceLabel[it.source]}
+                {it.kind === "cut" ? "AI 컷" : sourceLabel[it.source]}
               </span>
-              <span className="candidate-reasons">{it.title}</span>
+              <span className="candidate-reasons">{it.kind === "cut" ? "지금 분석에는 이 장면의 후보가 없습니다" : it.title}</span>
               {it.priority && <span className="candidate-state">중요도 {priorityLabel[it.priority]}</span>}
             </button>
             {it.commentText && <p className="candidate-meta source-note">영상 댓글: {it.commentText}</p>}
-            {it.rationale && <p className="candidate-meta candidate-text">{it.rationale}</p>}
-            {it.uncertainty && <p className="candidate-note">판단 한계: {it.uncertainty}</p>}
-            {explanations(it)}
+            {it.kind === "cut" ? (
+              renderNotes(it, [it], selected)
+            ) : (
+              <>
+                {it.rationale && <p className="candidate-meta candidate-text">{it.rationale}</p>}
+                {it.uncertainty && <p className="candidate-note">판단 한계: {it.uncertainty}</p>}
+              </>
+            )}
+            {explanations(it, selected)}
             <div className="candidate-actions">{actions(it)}</div>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/**
+ * An AI result in one line under a row that is not chosen: the kind and
+ * version, whether the plan passed its checks and is confirmed, and what it
+ * found. Pressing it chooses the row, which opens the result in full.
+ */
+function AIBrief({ it, onOpen }: { it: TimelineItem; onOpen: () => void }) {
+  if (it.kind === "cut") {
+    const c = it.cut;
+    const passed = c ? c.state === "ok" : !!it.verified;
+    const version = c?.version ?? it.version;
+    return (
+      <button type="button" className="ai-brief" title="후보를 고르면 컷 분석 전체가 펼쳐집니다" onClick={onOpen}>
+        <span className="candidate-source" data-source="ai">
+          AI 컷{version ? ` v${version}` : ""}
+        </span>
+        <span className="cut-state" data-ok={passed || undefined}>
+          {passed ? "검수 통과" : "검수 실패"}
+        </span>
+        {c?.confirmed && <span className="cut-confirmed">확정 · {boundaryLabel[startBoundary(c)]}</span>}
+        <span className="ai-brief-text">{c?.target || c?.causes[0]?.summary || it.title}</span>
+      </button>
+    );
+  }
+  return (
+    <button type="button" className="ai-brief" title="후보를 고르면 AI 설명 전체가 펼쳐집니다" onClick={onOpen}>
+      <span className="candidate-source" data-source="ai">
+        AI 설명
+      </span>
+      {it.priority && <span className="ai-note-priority">중요도 {priorityLabel[it.priority]}</span>}
+      <span className="ai-brief-text">{it.title || it.rationale}</span>
+    </button>
   );
 }
 

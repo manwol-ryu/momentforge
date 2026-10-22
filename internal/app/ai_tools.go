@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/manwol-ryu/momentforge/internal/ai/cut"
 	"github.com/manwol-ryu/momentforge/internal/domain"
@@ -89,7 +90,7 @@ func (s *cutSearcher) run(ctx context.Context, round int, reqs []cut.SearchReque
 		}
 		results = append(results, res)
 	}
-	in.Searched = append(in.Searched, results...)
+	in.Searched = append(slices.Clip(in.Searched), results...)
 	return results, added, nil
 }
 
@@ -102,26 +103,16 @@ func repeated(done []cut.SearchResult, r cut.SearchRequest) bool {
 	return false
 }
 
+// searchChatShare is how many of a search's results stay for chat when it
+// looks in both utterances and chat: utterances come first, but a viewer's
+// "아까 그거" is often what names the past event.
+const searchChatShare = 10
+
 // execute runs one clamped request.
 func (s *cutSearcher) execute(ctx context.Context, r cut.SearchRequest) ([]cut.Evidence, []cut.ActivityPoint, error) {
 	switch r.Tool {
 	case cut.ToolSearch:
-		var out []cut.Evidence
-		if r.In != "chats" && s.transcriptID != "" {
-			utts, err := s.a.cfg.Store.SearchUtterances(ctx, s.transcriptID, r.Query, 0, r.BeforeMs, cut.SearchMaxResults)
-			if err != nil {
-				return nil, nil, err
-			}
-			out = append(out, utteranceEvidence(utts)...)
-		}
-		if r.In != "utterances" && len(out) < cut.SearchMaxResults {
-			chats, _, err := s.a.cfg.Store.SearchChats(ctx, s.sid, r.Query, "", 0, r.BeforeMs, cut.SearchMaxResults-len(out), 0)
-			if err != nil {
-				return nil, nil, err
-			}
-			out = append(out, chatEvidence(upToSeq(chats, s.maxSeq))...)
-		}
-		return out, nil, nil
+		return s.search(ctx, r)
 	case cut.ToolReadAround:
 		return s.read(ctx, max(0, r.AtMs-r.WindowS*1000), min(s.endMs, r.AtMs+r.WindowS*1000))
 	case cut.ToolReadRange:
@@ -141,6 +132,30 @@ func (s *cutSearcher) execute(ctx context.Context, r cut.SearchRequest) ([]cut.E
 	return nil, nil, nil
 }
 
+// search finds the matches nearest before r.BeforeMs, at most
+// cut.SearchMaxResults: utterances first, with room kept for chat when the
+// request looks in both (searchChatShare), in time order within each kind.
+func (s *cutSearcher) search(ctx context.Context, r cut.SearchRequest) ([]cut.Evidence, []cut.ActivityPoint, error) {
+	var utts []domain.Utterance
+	var chats []domain.ChatEvent
+	var err error
+	if r.In != "chats" && s.transcriptID != "" {
+		if utts, err = s.a.cfg.Store.SearchUtterances(ctx, s.transcriptID, r.Query, 0, r.BeforeMs, cut.SearchMaxResults); err != nil {
+			return nil, nil, err
+		}
+	}
+	if r.In != "utterances" {
+		if chats, err = s.a.cfg.Store.ChatMatchesBefore(ctx, s.sid, r.Query, r.BeforeMs, s.maxSeq, cut.SearchMaxResults); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Both lists run oldest to newest; the newest are nearest the moment.
+	nUtt := min(len(utts), cut.SearchMaxResults-min(len(chats), searchChatShare))
+	nChat := min(len(chats), cut.SearchMaxResults-nUtt)
+	out := utteranceEvidence(utts[len(utts)-nUtt:])
+	return append(out, chatEvidence(chats[len(chats)-nChat:])...), nil, nil
+}
+
 // read returns the utterances (first) and chat of [from, to).
 func (s *cutSearcher) read(ctx context.Context, from, to int64) ([]cut.Evidence, []cut.ActivityPoint, error) {
 	var out []cut.Evidence
@@ -158,17 +173,6 @@ func (s *cutSearcher) read(ctx context.Context, from, to int64) ([]cut.Evidence,
 	return append(out, chatEvidence(chats)...), nil, nil
 }
 
-// upToSeq drops chat past the run's seq (a LIVE capture keeps receiving).
-func upToSeq(chats []domain.ChatEvent, maxSeq int64) []domain.ChatEvent {
-	out := chats[:0]
-	for _, c := range chats {
-		if c.Seq <= maxSeq {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 func utteranceEvidence(utts []domain.Utterance) []cut.Evidence {
 	out := make([]cut.Evidence, 0, len(utts))
 	for _, u := range utts {
@@ -177,10 +181,16 @@ func utteranceEvidence(utts []domain.Utterance) []cut.Evidence {
 	return out
 }
 
+// chatEvidence is chat as evidence: messages the platform hid (its bot
+// filter) are left out, and donations, subscriptions and system notices
+// are marked so they are not read as viewers' words.
 func chatEvidence(chats []domain.ChatEvent) []cut.Evidence {
 	out := make([]cut.Evidence, 0, len(chats))
 	for _, c := range chats {
-		e := cut.Evidence{Ref: "chat:" + c.ID, Kind: cut.KindChat, StartMs: c.OffsetMs, Text: c.Text}
+		if c.Hidden {
+			continue
+		}
+		e := cut.Evidence{Ref: "chat:" + c.ID, Kind: cut.KindChat, StartMs: c.OffsetMs, Text: c.Text, ChatKind: c.Kind}
 		if c.AuthorKey != "" {
 			author := c.AuthorKey
 			e.Author = &author

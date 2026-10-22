@@ -243,6 +243,27 @@ func TestAnalysisResponseShape(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "Evidence\"") {
 		t.Fatal("window evidence ids must not be sent")
 	}
+	// Fields screens and saved links already read keep their names; an
+	// incremental analysis has no score threshold.
+	for _, key := range []string{"id", "sessionId", "title", "durationMs", "rulesVersion", "sensitive", "windows", "candidates", "windowMs", "stepMs"} {
+		if _, ok := body[key]; !ok {
+			t.Errorf("analysis lost %q: %s", key, rec.Body)
+		}
+	}
+	if _, ok := body["scoreThreshold"]; ok {
+		t.Errorf("scoreThreshold must be omitted for an incremental analysis: %s", rec.Body)
+	}
+	w := body["windows"].([]any)[0].(map[string]any)
+	for _, key := range []string{"t", "n", "u", "valid", "baselineReady", "signals"} {
+		if _, ok := w[key]; !ok {
+			t.Errorf("window lost %q: %v", key, w)
+		}
+	}
+	for _, key := range []string{"clipStartMs", "clipEndMs", "evidenceIds", "evidenceTotal", "peak"} {
+		if _, ok := c[key]; !ok {
+			t.Errorf("candidate lost %q: %v", key, c)
+		}
+	}
 }
 
 func TestCollectValidatesBody(t *testing.T) {

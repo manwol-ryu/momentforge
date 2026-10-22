@@ -151,6 +151,7 @@ func TestLiveStreamErrors(t *testing.T) {
 		"bad host": {chatServer{routingHosts: []any{"evil.example"}}, &recorder{}, "LIVE_SCHEMA"},
 		"missing body": {chatServer{script: func(ctx context.Context, c *websocket.Conn) {
 			write(ctx, c, map[string]any{"cmd": cmdChat, "bdy": []any{map[string]any{"uid": "u"}}})
+			<-ctx.Done() // stay connected: only the bad frame may end the stream
 		}}, &recorder{}, "LIVE_SCHEMA"},
 		"no pong": {chatServer{script: func(ctx context.Context, c *websocket.Conn) { <-ctx.Done() }}, &recorder{}, "LIVE_TIMEOUT"},
 		"queue overflow": {chatServer{script: func(ctx context.Context, c *websocket.Conn) {

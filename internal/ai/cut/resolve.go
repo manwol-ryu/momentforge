@@ -10,7 +10,8 @@ import (
 // are not clipped; a chat message comes a few seconds after what it reacts
 // to, so a span that starts at a message starts earlier, and when that lands
 // inside an utterance the span moves to the utterance's start (no cut in the
-// middle of a sentence).
+// middle of a sentence). The padding stops at a neighbouring utterance:
+// utterances cut from one recognition result follow each other closely.
 const (
 	UtteranceLeadMs = 300
 	UtteranceTailMs = 500
@@ -82,18 +83,52 @@ func inside(utts []Evidence, ms int64) (Evidence, bool) {
 	return Evidence{}, false
 }
 
+// padStart is where a span starting at utterance u begins: UtteranceLeadMs
+// before it, but not back into the utterance before it (short utterances
+// cut from one recognition result touch each other).
+func padStart(u Evidence, utts []Evidence) (int64, string) {
+	at := StartOf(u)
+	prev := int64(-1)
+	for _, p := range utts {
+		if p.Ref != u.Ref && p.StartMs < u.StartMs {
+			prev = max(prev, utteranceEnd(p))
+		}
+	}
+	if prev > at {
+		return min(prev, u.StartMs), "앞 발언과 겹치지 않게 그 끝부터"
+	}
+	return at, "발언 시작 0.3초 전부터"
+}
+
+// padEnd is where a span ending at utterance u ends: UtteranceTailMs after
+// it, but not into the next utterance.
+func padEnd(u Evidence, utts []Evidence) (int64, string) {
+	end := utteranceEnd(u)
+	at := EndOf(u)
+	for _, n := range utts {
+		if n.Ref != u.Ref && n.StartMs > u.StartMs && n.StartMs < at {
+			at = max(end, n.StartMs)
+		}
+	}
+	if at < EndOf(u) {
+		return at, "다음 발언과 겹치지 않게 그 시작까지"
+	}
+	return at, "발언 끝 0.5초 뒤까지"
+}
+
 // spanStart resolves where a span starting at e begins and why it moved.
 func spanStart(e Evidence, utts []Evidence) (int64, []Adjustment) {
-	at := StartOf(e)
 	if e.Kind == KindUtterance {
+		at, why := padStart(e, utts)
 		if at == e.StartMs {
 			return at, nil
 		}
-		return at, []Adjustment{{Ref: e.Ref, FromMs: e.StartMs, ToMs: at, Why: "발언 시작 0.3초 전부터"}}
+		return at, []Adjustment{{Ref: e.Ref, FromMs: e.StartMs, ToMs: at, Why: why}}
 	}
+	at := StartOf(e)
 	adj := []Adjustment{{Ref: e.Ref, FromMs: e.StartMs, ToMs: at, Why: "채팅은 장면보다 늦으므로 6초 앞으로 당김"}}
 	if u, ok := inside(utts, at); ok && at-u.StartMs <= SnapMaxMs {
-		to := max(0, u.StartMs-UtteranceLeadMs)
+		to, _ := padStart(u, utts)
 		adj = append(adj, Adjustment{Ref: u.Ref, FromMs: at, ToMs: to, Why: "발언 중간에서 시작하지 않도록 그 발언 시작으로 당김"})
 		at = to
 	}
@@ -102,13 +137,14 @@ func spanStart(e Evidence, utts []Evidence) (int64, []Adjustment) {
 
 // spanEnd resolves where a span ending at e ends and why it moved.
 func spanEnd(e Evidence, utts []Evidence) (int64, []Adjustment) {
-	at := EndOf(e)
 	if e.Kind == KindUtterance {
-		return at, []Adjustment{{Ref: e.Ref, FromMs: utteranceEnd(e), ToMs: at, Why: "발언 끝 0.5초 뒤까지"}}
+		at, why := padEnd(e, utts)
+		return at, []Adjustment{{Ref: e.Ref, FromMs: utteranceEnd(e), ToMs: at, Why: why}}
 	}
+	at := EndOf(e)
 	adj := []Adjustment{{Ref: e.Ref, FromMs: e.StartMs, ToMs: at, Why: "채팅 뒤 3초까지"}}
 	if u, ok := inside(utts, at); ok && utteranceEnd(u)-at <= SnapMaxMs {
-		to := utteranceEnd(u) + UtteranceTailMs
+		to, _ := padEnd(u, utts)
 		adj = append(adj, Adjustment{Ref: u.Ref, FromMs: at, ToMs: to, Why: "발언 중간에서 끊지 않도록 그 발언 끝까지 늘림"})
 		at = to
 	}
@@ -228,7 +264,8 @@ type RefInfo struct {
 const refTextRunes = 120
 
 // IndexRefs records the cited evidence of a plan: causes, story origin,
-// event start, context and every boundary's ends.
+// event start, context, every boundary's ends and what the clip-only check
+// found unknown.
 func IndexRefs(p *Plan, known map[string]Evidence) {
 	idx := map[string]RefInfo{}
 	add := func(refs ...string) {
@@ -254,6 +291,11 @@ func IndexRefs(p *Plan, known map[string]Evidence) {
 	for _, c := range p.Boundaries.Candidates {
 		for _, s := range c.Spans {
 			add(s.StartRef, s.EndRef)
+		}
+	}
+	if v := p.Verification.ClipOnly; v != nil {
+		for _, f := range append(append([]ClipFinding{}, v.Gaps...), v.Asides...) {
+			add(f.Refs...)
 		}
 	}
 	p.Refs = idx

@@ -39,7 +39,8 @@ type cutBriefJSON struct {
 	Confirmed         bool          `json:"confirmed" jsonschema:"사용자가 확정한 버전"`
 	ConfirmedBoundary string        `json:"confirmed_boundary,omitempty" jsonschema:"확정한 경계 후보: short, context, full_event"`
 	KeptVersion       int           `json:"kept_version,omitempty" jsonschema:"더 새 버전일 때, 그대로 유지되는 확정 버전 번호"`
-	CandidateIDs      []string      `json:"candidate_ids" jsonschema:"분석한 후보 (mf_list_candidates의 candidate_id)"`
+	CandidateIDs      []string      `json:"candidate_ids" jsonschema:"이 계획이 다루는 지금 후보 (mf_list_candidates의 candidate_id). 세션을 다시 분석해 번호가 바뀌었으면 시간으로 다시 찾은 후보이고, 겹치는 후보가 없으면 빈 목록"`
+	AnalyzedIDs       []string      `json:"analyzed_candidate_ids,omitempty" jsonschema:"번호가 바뀌었을 때만: 이 계획을 만들 때의 후보 ID"`
 	Target            string        `json:"target" jsonschema:"시청자가 반응한 대상 (AI 판단)"`
 	Cause             string        `json:"cause" jsonschema:"가장 근거가 강한 원인 요약"`
 	EndingState       string        `json:"ending_state" jsonschema:"confirmed, pending, cut_off, insufficient, unresolved"`
@@ -69,7 +70,7 @@ func boundarySpans(d app.CutDetail, name string) []app.TimelineSpan {
 
 func cutBrief(d app.CutDetail) cutBriefJSON {
 	b := cutBriefJSON{PlanID: d.PlanID, Version: d.Version, State: d.State, Confirmed: d.Confirmed, ConfirmedBoundary: d.ConfirmedBoundary,
-		KeptVersion: d.KeptVersion, CandidateIDs: d.CandidateIDs, Target: d.Target, EndingState: d.Ending.State,
+		KeptVersion: d.KeptVersion, CandidateIDs: d.CandidateIDs, AnalyzedIDs: d.AnalyzedCandidateIDs, Target: d.Target, EndingState: d.Ending.State,
 		Spans: cutSpans(boundarySpans(d, effective(d))), NoteCount: len(d.Notes), Sources: d.Sources,
 		CreatedAt: d.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")}
 	if len(d.Causes) > 0 {
@@ -188,11 +189,26 @@ type cutBoundaryJSON struct {
 type cutVerifyJSON struct {
 	ClipOnlyPass      *bool             `json:"clip_only_pass" jsonschema:"클립만 보고 이해되는지 (검수하지 못했으면 null)"`
 	Answers           map[string]string `json:"answers" jsonschema:"what(무엇을), condition(조건), result(결과), references('아까'가 가리키는 것), why_reaction(왜 반응)"`
-	Gaps              []string          `json:"gaps" jsonschema:"클립만으로 알 수 없는 것"`
+	Gaps              []cutFindingJSON  `json:"gaps" jsonschema:"클립만으로 알 수 없고 반응을 이해하는 데 필요한 것 (실패 사유)"`
+	Asides            []cutFindingJSON  `json:"asides" jsonschema:"클립만으로 알 수 없지만 반응을 이해하는 데는 필요 없는 것 (실패 사유 아님)"`
+	ServerChanges     []string          `json:"server_changes" jsonschema:"서버가 근거 ref를 보고 검수 분류를 바꾼 내역"`
 	AgainstSourcePass *bool             `json:"against_source_pass" jsonschema:"원본과 비교해 잘림·누락이 없는지"`
 	Findings          []string          `json:"findings" jsonschema:"원본 비교에서 걸린 항목"`
 	Notes             []string          `json:"notes"`
 	Issues            []string          `json:"issues" jsonschema:"검수 실패 이유 (통과면 빈 목록)"`
+}
+
+type cutFindingJSON struct {
+	Text string       `json:"text"`
+	Refs []cutRefJSON `json:"refs" jsonschema:"그것을 드러내는 클립 안 근거"`
+}
+
+func cutFindings(list []app.CutFinding) []cutFindingJSON {
+	out := make([]cutFindingJSON, 0, len(list))
+	for _, f := range list {
+		out = append(out, cutFindingJSON{Text: f.Text, Refs: cutRefs(f.Refs)})
+	}
+	return out
 }
 
 type cutNoteJSON struct {
@@ -266,7 +282,8 @@ func (t *tools) getCutPlan(ctx context.Context, in cutPlanIn) (cutPlanOut, strin
 			Confirmed: d.Confirmed && b.Name == effective(d), Spans: cutSpans(b.Spans), Issues: b.Issues})
 	}
 	v := d.Verification
-	out.Verification = cutVerifyJSON{ClipOnlyPass: v.ClipPass, Answers: v.Answers, Gaps: v.Gaps, AgainstSourcePass: v.SourcePass,
+	out.Verification = cutVerifyJSON{ClipOnlyPass: v.ClipPass, Answers: v.Answers, Gaps: cutFindings(v.Gaps), Asides: cutFindings(v.Asides),
+		ServerChanges: v.ServerChanges, AgainstSourcePass: v.SourcePass,
 		Findings: v.Findings, Notes: v.Notes, Issues: v.Issues}
 	if out.Verification.Answers == nil {
 		out.Verification.Answers = map[string]string{}
@@ -315,6 +332,12 @@ func (t *tools) getCutPlan(ctx context.Context, in cutPlanIn) (cutPlanOut, strin
 		}
 		for _, s := range out.Verification.Issues {
 			fmt.Fprintf(&b, "- 실패 이유: %s\n", mdEscape(s))
+		}
+		for _, f := range out.Verification.Asides {
+			fmt.Fprintf(&b, "- 참고 (실패 사유 아님): %s · 근거 %s\n", mdEscape(f.Text), refsLine(f.Refs))
+		}
+		for _, s := range out.Verification.ServerChanges {
+			fmt.Fprintf(&b, "- 서버가 바꾼 분류: %s\n", mdEscape(s))
 		}
 		for _, q := range out.Unresolved {
 			fmt.Fprintf(&b, "- 미확정: %s\n", mdEscape(q))

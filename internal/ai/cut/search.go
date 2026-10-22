@@ -1,6 +1,7 @@
 package cut
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,7 +26,7 @@ const (
 const (
 	SearchMaxQueryRunes  = 40
 	SearchMaxResults     = 30
-	ReadMaxUtterances    = 60
+	ReadMaxUtterances    = 120 // split utterances are ~5 s apart: a 300 s read_around fits
 	ReadMaxChats         = 200
 	ReadAroundMaxWindowS = 300
 	ReadRangeMaxMs       = 10 * 60 * 1000
@@ -164,20 +165,26 @@ func SameRequest(a, b SearchRequest) bool {
 
 // Merge adds evidence found by a search to the input (marked, in time
 // order) and to known, skipping what is already there. It returns the refs
-// actually added.
+// actually added. The input gets a new evidence list: the old one may be
+// shared with the preview the user saw, which must not change.
 func Merge(in *Input, known map[string]Evidence, found []Evidence) []string {
 	var added []string
+	ev := in.Evidence
 	for _, e := range found {
 		if _, ok := known[e.Ref]; ok {
 			continue
 		}
+		if len(added) == 0 {
+			ev = slices.Clone(in.Evidence)
+		}
 		e.FoundBySearch = true
 		known[e.Ref] = e
-		in.Evidence = append(in.Evidence, e)
+		ev = append(ev, e)
 		added = append(added, e.Ref)
 	}
 	if len(added) > 0 {
-		sortEvidence(in.Evidence)
+		sortEvidence(ev)
+		in.Evidence = ev
 	}
 	return added
 }

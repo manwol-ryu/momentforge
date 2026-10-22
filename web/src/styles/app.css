@@ -1741,6 +1741,28 @@ textarea {
   animation: mf-rise-sm var(--dur-2) var(--ease-out) backwards;
 }
 
+.pick-bar-actions {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.pick-bar-clear {
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: inherit;
+  font: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  transition: opacity var(--dur-1) var(--ease-control);
+}
+
+.pick-bar-clear:hover {
+  opacity: 1;
+}
+
 .pick-bar .link-button {
   padding: 6px var(--space-3);
   border-radius: var(--radius-pill);
@@ -2021,6 +2043,26 @@ kbd {
   fill: var(--rule);
 }
 
+/* Scored by the usual for that time: columns at or past the candidate threshold take the candidate color, the threshold a dashed line. */
+.timeline-bars .bar-hot {
+  fill: var(--marker);
+}
+
+.timeline-bars .bar-threshold {
+  stroke: var(--marker-text);
+  stroke-dasharray: 3 3;
+  stroke-opacity: 0.55;
+  stroke-width: 1px;
+}
+
+/* Messages per window: the usual level for that time as a thin line over the bars. */
+.timeline-bars .bar-usual {
+  fill: none;
+  stroke: var(--ink);
+  stroke-opacity: 0.4;
+  stroke-width: 1px;
+}
+
 .timeline-band {
   position: absolute;
   top: 0;
@@ -2030,6 +2072,14 @@ kbd {
   transition:
     background-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out);
+}
+
+.timeline-band[data-strength="strong"] {
+  background: color-mix(in srgb, var(--marker) 16%, transparent);
+}
+
+.timeline-band[data-strength="weak"] {
+  background: color-mix(in srgb, var(--marker) 5%, transparent);
 }
 
 .timeline-band[data-selected] {
@@ -2107,6 +2157,31 @@ kbd {
   border-radius: var(--radius);
 }
 
+/* A candidate's marker says how strong it is: strong ones larger and on top, weak ones small and faint. */
+.timeline-marker[data-strength="strong"] {
+  z-index: 2;
+  top: -1px;
+  width: 20px;
+  height: 18px;
+  margin-left: -10px;
+}
+
+.timeline-marker[data-strength="weak"] {
+  top: 7px;
+  width: 12px;
+  height: 10px;
+  margin-left: -6px;
+  opacity: 0.55;
+}
+
+.timeline-marker[data-strength="weak"]:is(:hover, :focus-visible, [aria-pressed="true"]) {
+  opacity: 1;
+}
+
+.timeline-marker:is([aria-pressed="true"], :focus-visible) {
+  z-index: 3;
+}
+
 .timeline-axis {
   position: relative;
   height: 20px;
@@ -2145,6 +2220,10 @@ kbd {
   background: var(--marker);
 }
 
+.overview-mark[data-strength="weak"] {
+  opacity: 0.45;
+}
+
 .overview-window {
   position: absolute;
   top: 0;
@@ -2172,11 +2251,13 @@ kbd {
   align-items: center;
 }
 
-.timeline-tools .seg {
+.timeline-tools .seg,
+.list-tools .seg {
   margin: 0;
 }
 
-.timeline-tools .seg-opt {
+.timeline-tools .seg-opt,
+.list-tools .seg-opt {
   min-height: 1.75rem;
   padding: 0 var(--space-2);
   font-size: 12px;
@@ -2440,6 +2521,7 @@ button.chat-row:hover {
 }
 
 .candidate {
+  min-width: 0; /* a one-line AI result truncates instead of widening the panel */
   padding: var(--space-3);
   border-radius: var(--radius-md);
   transition:
@@ -2481,11 +2563,105 @@ button.chat-row:hover {
   cursor: pointer;
 }
 
+/* A ranked candidate's head is two lines: number, clip and strength; then source and reasons. */
+.candidate-line {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+/* The number as the timeline marks it, after a small copy of its marker (sized and colored the same way). */
+.candidate-no {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--marker-text);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.candidate-no::before {
+  content: "";
+  width: 10px;
+  height: 9px;
+  background: var(--marker);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.candidate[data-strength="strong"] .candidate-no::before {
+  width: 12px;
+  height: 11px;
+}
+
+.candidate[data-strength="weak"] .candidate-no::before {
+  width: 8px;
+  height: 7px;
+  opacity: 0.55;
+}
+
+.candidate[data-selected] .candidate-no::before {
+  background: var(--ink);
+}
+
 .candidate-time {
   margin-right: var(--space-1);
   font-size: var(--text-md);
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+.candidate[data-strength="weak"]:not([data-selected]) .candidate-time {
+  color: var(--muted);
+}
+
+/* Strength: strong in the candidate color, medium tinted, weak grey; the rank beside it. */
+.candidate-strength,
+.strength-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.375rem;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.candidate-strength {
+  margin-left: auto;
+}
+
+.candidate-strength[data-strength="strong"],
+.strength-count[data-strength="strong"] {
+  background: var(--marker-text);
+  color: var(--paper);
+}
+
+.candidate-strength[data-strength="medium"],
+.strength-count[data-strength="medium"] {
+  background: var(--marker-soft);
+  color: var(--marker-text);
+}
+
+.candidate-rank {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* What stood out at the peak: the count in ink, the usual beside it. */
+.measure strong {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .candidate-reasons {
@@ -2568,6 +2744,31 @@ button.chat-row:hover {
   display: none;
 }
 
+/* A ranked list's controls under its heading: order, strength filter, counts, and picking the strong ones for AI. */
+.list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  margin: calc(var(--space-1) * -1) 0 var(--space-3);
+}
+
+.strength-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+.strength-count[data-hidden] {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.list-pick {
+  font-size: var(--text-xs);
+}
+
 .evidence {
   margin-top: var(--space-3);
   font-size: var(--text-xs);
@@ -2648,6 +2849,46 @@ button.chat-row:hover {
   display: grid;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+/* An AI result in one line under a row that is not chosen; pressing it chooses the row. */
+.ai-notes:has(> .ai-brief) {
+  gap: 4px;
+}
+
+.ai-brief {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 3px var(--space-2);
+  border: 0;
+  border-left: 3px solid var(--ai);
+  border-radius: var(--radius);
+  background: var(--ai-soft);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-control);
+}
+
+.ai-brief:hover {
+  background: color-mix(in srgb, var(--ai) 20%, transparent);
+}
+
+.ai-brief > * {
+  flex: none;
+}
+
+.ai-brief > .ai-brief-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-note {
@@ -2909,6 +3150,14 @@ button.cut-ref:focus-visible {
 
 .cut-answers dd {
   margin: 0;
+}
+
+.cut-findings {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .cut-notes {

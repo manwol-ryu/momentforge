@@ -89,13 +89,15 @@ func (h *handler) aiPreview(w http.ResponseWriter, r *http.Request) {
 		CostCapUSD float64  `json:"costCapUsd"`
 		// Cut analysis: each search round's results wait for the user before they are sent.
 		ConfirmSearches bool `json:"confirmSearches"`
+		// Cut analysis: item ID → the plan whose versions the new analysis continues.
+		ContinuePlans map[string]string `json:"continuePlans"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
 	req := app.AIPreviewRequest{SessionID: body.SessionID, Provider: body.Provider, Model: body.Model, Kind: body.Kind,
 		StartMs: body.StartMs, EndMs: body.EndMs, ToEnd: body.ToEnd, Delivery: body.Delivery, CostCapUSD: body.CostCapUSD,
-		ConfirmSearches: body.ConfirmSearches}
+		ConfirmSearches: body.ConfirmSearches, ContinuePlans: body.ContinuePlans}
 	switch body.Mode {
 	case "all":
 		req.All = true

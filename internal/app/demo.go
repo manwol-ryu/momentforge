@@ -51,7 +51,11 @@ func (a *App) CreateDemo(ctx context.Context, sensitive bool) (SessionInfo, erro
 	if err := export.WriteReceived(a.exportDir(s.ID), events); err != nil {
 		a.logError("write demo received", err)
 	}
-	if err := a.writeChat(ctx, s.ID); err != nil {
+	chat, err := a.loadChat(ctx, s.ID)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	if err := writeChatFiles(a.exportDir(s.ID), chat); err != nil {
 		a.logError("write demo chat", err)
 	}
 	// The sample has a synthetic transcript too, so the cut analysis can be tried without speech recognition.
@@ -59,7 +63,7 @@ func (a *App) CreateDemo(ctx context.Context, sensitive bool) (SessionInfo, erro
 		Coverage: []domain.Gap{{StartMs: 0, EndMs: domain.DemoDurationMs}}}, domain.DemoUtterances()); err != nil {
 		return SessionInfo{}, err
 	}
-	if _, err := a.analyzeSession(ctx, s.ID, a.params(sensitive), job{}); err != nil {
+	if _, err := a.analyzeChat(ctx, chat, a.params(sensitive), job{}); err != nil {
 		return SessionInfo{}, err
 	}
 	return a.Session(ctx, s.ID)

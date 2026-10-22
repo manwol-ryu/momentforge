@@ -52,7 +52,11 @@ type Window struct {
 	Viewer        *ViewerState       `json:"viewerBaseline,omitempty"` // LIVE with viewer-count adaptation
 	Gate          int                `json:"gate,omitempty"`           // adaptive gate: messages that make a window busy for the broadcast
 	SpikeGate     int                `json:"spikeGate,omitempty"`      // adaptive gate: authors that make a window a sudden spike
-	Evidence      []string           `json:"-"`
+	// Whole-broadcast analysis (VOD): how unusual the window is for its
+	// time in the broadcast, on a z-score scale; the strongest of its
+	// reaction, chat and participant measures.
+	Score    *float64 `json:"score,omitempty"`
+	Evidence []string `json:"-"`
 }
 
 // ViewerState is the viewer-count baseline in effect at a window (LIVE).
@@ -76,6 +80,23 @@ type PeakStats struct {
 	SpikeGate     int                `json:"spikeGate,omitempty"` // adaptive gate at the peak (see Window)
 }
 
+// Candidate strengths (whole-broadcast analysis).
+const (
+	StrengthStrong = "strong"
+	StrengthMedium = "medium"
+	StrengthWeak   = "weak"
+)
+
+// Measure is one count at a candidate's peak next to what is usual for that
+// time in the broadcast: "laugh: 7 authors in 10 s, usually 0.6".
+type Measure struct {
+	Key      string  `json:"key"`      // signal key: laugh, emotion:surprise, repeat:<text>, reaction, surge, participants
+	Observed int     `json:"observed"` // in the peak 10 s window
+	Usual    float64 `json:"usual"`    // typical for a 10 s window around then
+	Z        float64 `json:"z"`        // how unusual (z-score scale)
+	WindowMs int64   `json:"windowMs"` // length of the counted window (10 s, or 20 s for a reaction that builds up)
+}
+
 // Candidate is a suggested editing moment.
 type Candidate struct {
 	ID              string    `json:"id"`      // m0001…
@@ -91,6 +112,12 @@ type Candidate struct {
 	BaselineReady   bool      `json:"baselineReady"`
 	EvidenceIDs     []string  `json:"evidenceIds"`
 	PartialContext  bool      `json:"partialContext"`
+
+	// Whole-broadcast analysis (VOD) only.
+	Score    float64   `json:"score,omitempty"`    // peak window's score (z-score scale)
+	Strength string    `json:"strength,omitempty"` // strong | medium | weak
+	Rank     int       `json:"rank,omitempty"`     // 1 = the strongest candidate of its analysis
+	Measures []Measure `json:"measures,omitempty"` // what stood out at the peak, strongest first
 
 	// LIVE only.
 	State              string       `json:"state,omitempty"` // generating | waiting_context | confirmed | partial

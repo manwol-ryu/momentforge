@@ -54,7 +54,7 @@ check: web/dist $(SPEECH_HELPER)
 	@out="$$($(GOFMT) -l cmd internal web/embed.go)"; \
 		if [ -n "$$out" ]; then echo "gofmt가 필요한 파일:"; echo "$$out"; exit 1; fi
 	$(GO) vet ./...
-	$(GO) vet -tags e2efake ./cmd/... ./internal/platform/e2efake/ ./internal/ai/e2efake/
+	$(GO) vet -tags e2efake ./cmd/... ./internal/platform/e2efake/ ./internal/ai/e2efake/ ./internal/asr/e2efake/
 
 test: check web/node_modules/.installed
 	$(GO) test ./...
@@ -83,10 +83,13 @@ e2e-deps: $(E2E_VENV)/.installed
 # The E2E binary adds a synthetic LIVE platform (build tag e2efake); releases never include it.
 e2e: web e2e-deps $(SPEECH_HELPER)
 	CGO_ENABLED=0 $(GO) build -trimpath -tags e2efake -ldflags "$(LDFLAGS)" -o $(E2E_BIN) ./cmd/momentforge
-	rm -rf e2e/.data
+	rm -rf e2e/.data && mkdir -p e2e/.data
 	# API keys from the environment are dropped: E2E never reaches a real AI service.
+	# with_server.py pipes the server's output without reading it (a full pipe
+	# would stall the server), so it goes to e2e/.data/server.log instead; exec
+	# keeps the server the process with_server.py stops.
 	$(E2E_PY) e2e/with_server.py \
-		--server "env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY ./$(E2E_BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data" --port $(E2E_PORT) \
+		--server "exec env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY ./$(E2E_BIN) serve --no-browser --port $(E2E_PORT) --data e2e/.data > e2e/.data/server.log 2>&1" --port $(E2E_PORT) \
 		-- $(E2E_PY) e2e/run.py --base-url http://127.0.0.1:$(E2E_PORT)
 
 clean:

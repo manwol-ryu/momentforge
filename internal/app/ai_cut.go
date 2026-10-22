@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/manwol-ryu/momentforge/internal/ai"
 	"github.com/manwol-ryu/momentforge/internal/ai/cut"
+	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/export"
 	"github.com/manwol-ryu/momentforge/internal/store"
@@ -27,6 +31,16 @@ const (
 	cutMaxReplans     = 1 // a plan that fails a check is redone once with the reasons
 	cutMaxOutputStep  = 4000
 	cutPlannedPerCand = 4 // steps without a re-plan or a search
+	// The chat kept first: the reaction with this much before and after it
+	// (chat comes seconds after what it reacts to, and the cause before that).
+	cutFocusBeforeMs = 60_000
+	cutFocusAfterMs  = 30_000
+	cutLoadMaxChats  = 20_000 // chat read for one window (the curve counts it; the evidence picks from it)
+	cutCurveBinMs    = 5000
+	cutCurveMaxBins  = 120
+	cutUsualAroundMs = 10 * 60_000 // the curve's usual level comes from this much on each side
+	cutMaxMeasures   = 4
+	cutMaxKeyRunes   = 20 // a repeat measure's words, cut to this
 )
 
 // CutPreview is the preview's cut part for the API (inputs and the budget)
@@ -52,6 +66,10 @@ type CutPreview struct {
 	TranscriptID string `json:"-"`
 	MaxSeq       int64  `json:"-"`
 	EndMs        int64  `json:"-"`
+	// The analysis the items' rule IDs belong to, and the plan lineage each
+	// item's new plan continues (by item ID; none: a new lineage).
+	AnalysisID string            `json:"-"`
+	Lineages   map[string]string `json:"-"`
 }
 
 // cutBudget is the search budget from the settings.
@@ -95,10 +113,14 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 	}
 	budget := a.cutBudget()
 	perCand := cut.MaxRequests(budget)
+	lineages, err := a.cutLineages(ctx, req.SessionID, newMomentHosts(src.analysisID, src.items))
+	if err != nil {
+		return ai.Plan{}, nil, err
+	}
 	pv := &CutPreview{RequestsPerCandidate: perCand, PlannedPerCandidate: cutPlannedPerCand, HasTranscript: hasTranscript,
 		SearchExecuted: budget.MaxRounds > 0, SearchRounds: budget.MaxRounds, SearchMaxKB: budget.MaxBytes / 1024,
 		ConfirmSearches: req.ConfirmSearches && budget.MaxRounds > 0, TranscriptID: transcript.ID, MaxSeq: src.maxSeq, EndMs: src.endMs,
-		Notes: map[string][]cut.UserNote{}}
+		Notes: map[string][]cut.UserNote{}, AnalysisID: src.analysisID, Lineages: map[string]string{}}
 	note := "입력 토큰은 UTF-8 바이트 수로 잡은 상한이며 실제 토큰 수는 보통 더 적습니다. 후보마다 분석·계획·검수 2회의 네 단계를 보내고, " +
 		"검수에 걸리면 계획과 검수를 한 번 더 보냅니다. "
 	if budget.MaxRounds > 0 {
@@ -132,7 +154,18 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 			return ai.Plan{}, nil, err
 		}
 		pv.Inputs = append(pv.Inputs, in)
-		notes, err := a.cutNotes(ctx, req.SessionID, []string{id})
+		lineage := lineages[id]
+		if planID := req.ContinuePlans[id]; planID != "" {
+			rec, err := a.cfg.Store.CutPlan(ctx, planID)
+			if err != nil || rec.SessionID != req.SessionID {
+				return ai.Plan{}, nil, domain.NewUserError("INPUT", "이어서 분석할 컷 분석 결과를 찾을 수 없습니다. 화면을 새로 고친 뒤 다시 시도해 주세요.")
+			}
+			lineage = rec.Lineage
+		}
+		if lineage != "" {
+			pv.Lineages[id] = lineage
+		}
+		notes, err := a.cutNotes(ctx, req.SessionID, lineage)
 		if err != nil {
 			return ai.Plan{}, nil, err
 		}
@@ -183,7 +216,9 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 }
 
 // cutInput reads the window around one timeline item: its utterances (when
-// the session has a transcript), its chat and, for a viewer item, the comment.
+// the session has a transcript), its chat with the reaction kept first, the
+// detector's account of the reaction with a chat curve over the clip and,
+// for a viewer item, the comment. Messages the platform hid are left out.
 func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, src aiSource, transcriptID string, hasTranscript bool) (cut.Input, error) {
 	from := max(0, it.ClipStartMs-cutWindowPadMs)
 	to := min(src.endMs, it.ClipEndMs+cutWindowPadMs)
@@ -192,7 +227,7 @@ func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, sr
 	}
 	in := cut.Input{WindowStartMs: from, WindowEndMs: to, DurationMs: s.DurationMs, Sources: []string{"chat"}}
 	in.Candidates = []cut.Candidate{{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs, ClipStartMs: it.ClipStartMs,
-		ClipEndMs: it.ClipEndMs, Title: it.Title, Statistics: src.stats[it.ID]}}
+		ClipEndMs: it.ClipEndMs, Title: it.Title, Statistics: peakStats(it), Reaction: cutReaction(it.rule)}}
 	if hasTranscript {
 		in.Sources = append([]string{"utterances"}, in.Sources...)
 		utts, err := a.cfg.Store.UtterancesBetween(ctx, transcriptID, from, to, cutMaxUtterances)
@@ -201,11 +236,30 @@ func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, sr
 		}
 		in.Evidence = append(in.Evidence, utteranceEvidence(utts)...)
 	}
-	chats, _, err := a.cfg.Store.ChatsBetween(ctx, s.ID, from, to, src.maxSeq, cutMaxChats, 0)
+	loaded, total, err := a.cfg.Store.ChatsBetween(ctx, s.ID, from, to, src.maxSeq, cutLoadMaxChats, 0)
 	if err != nil {
 		return in, err
 	}
-	in.Evidence = append(in.Evidence, chatEvidence(chats)...)
+	chats := make([]domain.ChatEvent, 0, len(loaded))
+	for _, c := range loaded {
+		if !c.Hidden {
+			chats = append(chats, c)
+		}
+	}
+	// The reaction (a viewer item: its clip) with what led to it comes first.
+	focusFrom, focusTo := it.ClipStartMs, it.ClipEndMs
+	if r := it.rule; r != nil {
+		focusFrom, focusTo = r.ReactionStartMs, r.ReactionEndMs
+	}
+	picked := pickChats(chats, focusFrom-cutFocusBeforeMs, focusTo+cutFocusAfterMs, cutMaxChats)
+	in.ChatsLeftOut = total - (len(loaded) - len(chats)) - len(picked)
+	in.Evidence = append(in.Evidence, chatEvidence(picked)...)
+	curve, err := a.chatCurve(ctx, s.ID, max(from, min(it.ClipStartMs, focusFrom)), min(to, max(it.ClipEndMs, focusTo)), src.endMs,
+		src.maxSeq, chats, len(loaded) < total)
+	if err != nil {
+		return in, err
+	}
+	in.Curve = curve
 	if it.Source == SourceViewer && it.CommentText != "" {
 		in.Sources = append(in.Sources, "comment")
 		in.Evidence = append(in.Evidence, cut.Evidence{Ref: "comment:" + it.OriginID, Kind: cut.KindComment, StartMs: it.AnchorMs, Text: it.CommentText})
@@ -215,6 +269,238 @@ func (a *App) cutInput(ctx context.Context, s store.Session, it TimelineItem, sr
 		in.Evidence = []cut.Evidence{}
 	}
 	return in, nil
+}
+
+// cutReaction is the detector's account of a rule candidate for the cut
+// input: where the chat reacted and peaked, how strong it was for the
+// broadcast and the few counts that stood out most (nil for other items).
+func cutReaction(c *domain.Candidate) *cut.Reaction {
+	if c == nil {
+		return nil
+	}
+	r := &cut.Reaction{StartMs: c.ReactionStartMs, EndMs: c.ReactionEndMs, PeakMs: c.PeakMs, Strength: c.Strength, Score: c.Score}
+	for _, m := range c.Measures[:min(len(c.Measures), cutMaxMeasures)] {
+		key := m.Key
+		if words, ok := strings.CutPrefix(key, "repeat:"); ok && utf8.RuneCountInString(words) > cutMaxKeyRunes {
+			key = "repeat:" + string([]rune(words)[:cutMaxKeyRunes]) + "…"
+		}
+		r.Measures = append(r.Measures, cut.Measure{Key: key, Observed: m.Observed, Usual: m.Usual, WindowS: m.WindowMs / 1000})
+	}
+	return r
+}
+
+// pickChats chooses at most n of a window's messages (time order) for the
+// evidence: donations and subscriptions, then every message of the focus
+// span [focusFrom, focusTo), then the rest nearest to it first, so the
+// reaction is never what is cut off. A focus span with more than room
+// takes messages from each 5 s of it in turn, so its rise and fall stay
+// visible. The result is in time order.
+func pickChats(chats []domain.ChatEvent, focusFrom, focusTo int64, n int) []domain.ChatEvent {
+	if len(chats) <= n {
+		return chats
+	}
+	keep := make([]bool, len(chats))
+	room := n
+	take := func(i int) {
+		if room > 0 && !keep[i] {
+			keep[i] = true
+			room--
+		}
+	}
+	for i, c := range chats {
+		if k := c.KindOrChat(); k == domain.ChatKindDonation || k == domain.ChatKindSubscription {
+			take(i)
+		}
+	}
+	lo := sort.Search(len(chats), func(i int) bool { return chats[i].OffsetMs >= focusFrom })
+	hi := sort.Search(len(chats), func(i int) bool { return chats[i].OffsetMs >= focusTo })
+	var bins [][]int
+	for i := lo; i < hi; i++ {
+		if keep[i] {
+			continue
+		}
+		b := int((chats[i].OffsetMs - focusFrom) / cutCurveBinMs)
+		for len(bins) <= b {
+			bins = append(bins, nil)
+		}
+		bins[b] = append(bins[b], i)
+	}
+	for k, more := 0, true; room > 0 && more; k++ {
+		more = false
+		for _, b := range bins {
+			if k < len(b) {
+				take(b[k])
+				more = true
+			}
+		}
+	}
+	// Outward from the focus span: whichever side is nearer next.
+	before, after := lo-1, hi
+	for room > 0 && (before >= 0 || after < len(chats)) {
+		if after >= len(chats) || (before >= 0 && focusFrom-chats[before].OffsetMs <= chats[after].OffsetMs-focusTo) {
+			take(before)
+			before--
+		} else {
+			take(after)
+			after++
+		}
+	}
+	out := make([]domain.ChatEvent, 0, n)
+	for i, c := range chats {
+		if keep[i] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// chatCurve counts the chat of [from, to) in bins (5 s, longer for a long
+// span): messages, authors, and authors who share a reaction key with
+// another author in the bin, as the detector counts (system notices are
+// not counted; chats holds no hidden message and covers the span unless
+// truncated, when the curve ends where the reading did). The usual level is
+// the median bin of the ten minutes on each side, up to endMs, counted the
+// same way (viewers' messages stored up to maxSeq).
+func (a *App) chatCurve(ctx context.Context, sid string, from, to, endMs, maxSeq int64, chats []domain.ChatEvent, truncated bool) (*cut.Curve, error) {
+	if to <= from {
+		return nil, nil
+	}
+	bin := int64(cutCurveBinMs)
+	if span := to - from; span > cutCurveMaxBins*bin {
+		bin = (span + cutCurveMaxBins*cutCurveBinMs - 1) / (cutCurveMaxBins * cutCurveBinMs) * cutCurveBinMs
+	}
+	start := from / bin * bin
+	curve := &cut.Curve{BinMs: bin, Bins: []cut.CurveBin{}}
+	if n := len(chats); truncated && n > 0 && chats[n-1].OffsetMs < to {
+		to, curve.Partial = chats[n-1].OffsetMs+1, true
+	}
+	var rules []detect.MessageRule
+	for _, r := range a.cfg.Rules {
+		if mr, ok := r.(detect.MessageRule); ok {
+			rules = append(rules, mr)
+		}
+	}
+	i := sort.Search(len(chats), func(i int) bool { return chats[i].OffsetMs >= start })
+	for t := start; t < to; t += bin {
+		var in []domain.ChatEvent
+		for ; i < len(chats) && chats[i].OffsetMs < t+bin; i++ {
+			if k := chats[i].KindOrChat(); k == domain.ChatKindChat || k == domain.ChatKindDonation {
+				in = append(in, chats[i])
+			}
+		}
+		curve.Bins = append(curve.Bins, curveBin(t, in, rules))
+	}
+	aroundFrom, aroundTo := max(0, start-cutUsualAroundMs), min(endMs, to+cutUsualAroundMs)
+	buckets, err := a.cfg.Store.CountedActivity(ctx, sid, bin, aroundFrom, aroundTo, maxSeq)
+	if err != nil {
+		return nil, err
+	}
+	byIndex := make(map[int64]store.ActivityBucket, len(buckets))
+	for _, b := range buckets {
+		byIndex[b.Index] = b
+	}
+	var chatsAround, authorsAround []float64
+	for idx := aroundFrom / bin; idx*bin < aroundTo; idx++ {
+		if idx*bin+bin > start && idx*bin < to {
+			continue // the curve itself
+		}
+		chatsAround = append(chatsAround, float64(byIndex[idx].Chats))
+		authorsAround = append(authorsAround, float64(byIndex[idx].Authors))
+	}
+	curve.UsualChats, curve.UsualAuthors = median(chatsAround), median(authorsAround)
+	return curve, nil
+}
+
+// curveBin counts one bin's messages for the curve.
+func curveBin(start int64, chats []domain.ChatEvent, rules []detect.MessageRule) cut.CurveBin {
+	b := cut.CurveBin{StartMs: start, Chats: len(chats)}
+	authors := map[string]bool{}
+	byKey := map[string]map[string]bool{} // reaction key → its authors
+	for _, c := range chats {
+		if c.AuthorKey == "" {
+			continue
+		}
+		authors[c.AuthorKey] = true
+		text := detect.Normalize(c.Text)
+		if text == "" || strings.HasPrefix(text, "!") || strings.HasPrefix(text, "/") {
+			continue // empty or a bot command, as the detector skips
+		}
+		for _, r := range rules {
+			for _, k := range r.Keys(text) {
+				if byKey[k] == nil {
+					byKey[k] = map[string]bool{}
+				}
+				byKey[k][c.AuthorKey] = true
+			}
+		}
+	}
+	reacting := map[string]bool{}
+	for _, by := range byKey {
+		if len(by) >= 2 {
+			for author := range by {
+				reacting[author] = true
+			}
+		}
+	}
+	b.Authors, b.Reacting = len(authors), len(reacting)
+	return b
+}
+
+// median is the middle value, to one decimal (0 for none).
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	xs = slices.Clone(xs)
+	slices.Sort(xs)
+	m := xs[len(xs)/2]
+	if len(xs)%2 == 0 {
+		m = (xs[len(xs)/2-1] + m) / 2
+	}
+	return math.Round(m*10) / 10
+}
+
+// CutClipEvidence is a stored plan with the evidence inside its chosen
+// spans, read again from the session (its latest transcript and the saved
+// chat), for development checks that send the clip-only check again
+// (cmd/momentforge's strictness test). It only reads and sends nothing.
+func (a *App) CutClipEvidence(ctx context.Context, planID string) (cut.Plan, []cut.Evidence, error) {
+	rec, err := a.cfg.Store.CutPlan(ctx, planID)
+	if err != nil {
+		return cut.Plan{}, nil, err
+	}
+	p, ok := decodePlan(rec)
+	if !ok {
+		return cut.Plan{}, nil, domain.NewUserError("INPUT", "이 컷 분석 결과를 읽지 못했습니다.")
+	}
+	transcript, hasTranscript, err := a.cfg.Store.LatestTranscript(ctx, rec.SessionID)
+	if err != nil {
+		return p, nil, err
+	}
+	seen := map[string]bool{}
+	ev := []cut.Evidence{}
+	for _, s := range p.SelectedSpans {
+		var found []cut.Evidence
+		if hasTranscript {
+			utts, err := a.cfg.Store.UtterancesBetween(ctx, transcript.ID, s.StartMs, s.EndMs+1, cutMaxUtterances)
+			if err != nil {
+				return p, nil, err
+			}
+			found = utteranceEvidence(utts)
+		}
+		chats, _, err := a.cfg.Store.ChatsBetween(ctx, rec.SessionID, s.StartMs, s.EndMs+1, math.MaxInt64, cutMaxChats, 0)
+		if err != nil {
+			return p, nil, err
+		}
+		for _, e := range append(found, chatEvidence(chats)...) {
+			if !seen[e.Ref] {
+				seen[e.Ref] = true
+				ev = append(ev, e)
+			}
+		}
+	}
+	sort.SliceStable(ev, func(i, j int) bool { return ev[i].StartMs < ev[j].StartMs })
+	return p, ev, nil
 }
 
 // sentLogEntry records what one step sent (the run's sent_log): how many
@@ -311,9 +597,12 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPrevie
 		}
 	}
 
-	var failure error
+	var failure error    // ends the run
+	var skipped []string // candidates whose steps failed, with why
+	skipCode := ""
 	done := 0
 	for _, in := range inputs {
+		cand := in.Candidates[0]
 		sentRefs, round = map[string]bool{}, 0
 		// The preview's refs are what the user saw; the first step is not "new".
 		for _, e := range in.Evidence {
@@ -321,13 +610,22 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPrevie
 		}
 		searcher := &cutSearcher{a: a, sid: run.SessionID, transcriptID: cp.TranscriptID, maxSeq: cp.MaxSeq, endMs: cp.EndMs,
 			budget: cut.Budget{MaxRounds: plan.SearchRounds, MaxRequestsPerRound: cut.DefaultSearchRequestsPerRound, MaxBytes: plan.SearchMaxBytes}}
-		cr := cutRun{act: act, run: run, plan: plan, searcher: searcher, round: &round, notes: cp.Notes[in.Candidates[0].ID]}
+		cr := cutRun{act: act, run: run, plan: plan, searcher: searcher, round: &round, notes: cp.Notes[cand.ID]}
 		p, err := a.analyzeCandidate(ctx, cr, in, send)
 		if err != nil {
-			failure = err
-			break
+			if cutRunStops(err) {
+				failure = err
+				break
+			}
+			// One candidate's answer failed: say so and go on with the others.
+			code, msg := errorText(err)
+			if skipCode == "" {
+				skipCode = code
+			}
+			skipped = append(skipped, export.Stamp(cand.ClipStartMs)[:8]+" 후보: "+msg)
+			continue
 		}
-		rec, err := a.saveCutPlan(bg, run, p)
+		rec, err := a.saveCutPlan(bg, run, p, cp.Lineages[cand.ID])
 		if err != nil {
 			a.logError("save cut plan", err)
 			failure = err
@@ -341,16 +639,23 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPrevie
 	}
 	switch {
 	case failure != nil:
-		run.ErrorCode, run.ErrorMessage = "AI_ERROR", "AI 작업을 완료하지 못했습니다."
-		if ue, ok := domain.AsUserError(failure); ok {
-			run.ErrorCode, run.ErrorMessage = ue.Code, ue.Message
-		}
+		run.ErrorCode, run.ErrorMessage = errorText(failure)
 		run.State = store.AIFailed
 		if run.ErrorCode == "CANCELLED" {
 			run.State = store.AICancelled
 		} else if done > 0 {
 			run.State = store.AIPartial
 		}
+		if len(skipped) > 0 {
+			run.ErrorMessage += " 그 전에 분석하지 못한 후보: " + strings.Join(skipped, " · ")
+		}
+	case len(skipped) > 0:
+		run.State = store.AIFailed
+		if done > 0 {
+			run.State = store.AIPartial
+		}
+		run.ErrorCode = skipCode
+		run.ErrorMessage = fmt.Sprintf("후보 %d개 중 %d개를 분석하지 못했습니다. %s", len(inputs), len(skipped), strings.Join(skipped, " · "))
 	default:
 		run.State = store.AICompleted
 	}
@@ -358,6 +663,32 @@ func (a *App) runCut(act *aiActive, run store.AIRun, plan ai.Plan, cp *CutPrevie
 	save()
 	a.writeUnified(bg, run.SessionID)
 	a.publishAI(run, nil)
+}
+
+// cutRunStops says whether a step error ends the whole cut run rather than
+// one candidate: the user cancelled, the request or cost limit was reached,
+// or the provider cannot answer anyone (key, permission, model, program).
+// Other answers (a malformed one, a refusal, a server error after the
+// retries) fail their candidate alone.
+func cutRunStops(err error) bool {
+	ue, ok := domain.AsUserError(err)
+	if !ok {
+		return true // not from the provider: the store or a bug
+	}
+	switch ue.Code {
+	case "CANCELLED", "REQUEST_BUDGET", "COST_CAP", "CREDENTIALS", "AI_UNAVAILABLE", "AI_FREE_TIER",
+		"AI_HTTP_401", "AI_HTTP_403", "AI_HTTP_404":
+		return true
+	}
+	return false
+}
+
+// errorText is an error's code and message for the run record.
+func errorText(err error) (code, message string) {
+	if ue, ok := domain.AsUserError(err); ok {
+		return ue.Code, ue.Message
+	}
+	return "AI_ERROR", "AI 작업을 완료하지 못했습니다."
 }
 
 // stepRefs lists the evidence refs a step sends.
@@ -408,6 +739,8 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 	send func(string, ai.StepRequest) (json.RawMessage, error)) (cut.Plan, error) {
 	run, plan := cr.run, cr.plan
 	cand := in.Candidates[0].ID
+	// in shares its lists with the preview the user saw: searches replace
+	// them (cut.Merge, withoutRefs, cutSearcher.run), never write into them.
 	known := cut.Known(in.Evidence)
 	out := cut.Plan{RunID: run.ID, SessionID: run.SessionID, State: cut.StateFailed, Sources: in.Sources,
 		SearchedRanges: []cut.SearchRequest{}, Searches: []cut.SearchResult{}, UnresolvedQuestions: []string{}, UserNotes: []cut.UserNote{},
@@ -416,7 +749,12 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 	for _, c := range in.Candidates {
 		out.CandidateIDs = append(out.CandidateIDs, c.ID)
 	}
-	out.Reaction.PeakMs = in.Candidates[0].AnchorMs
+	c0 := in.Candidates[0]
+	out.Reaction.PeakMs = c0.AnchorMs // a viewer item: the comment's time
+	if c0.Reaction != nil {
+		out.Reaction.PeakMs = c0.Reaction.PeakMs
+	}
+	out.CandidateClip = &cut.ClipRange{StartMs: c0.ClipStartMs, EndMs: c0.ClipEndMs}
 	out.AnalysisVersion = cut.Version{Pipeline: cut.PipelineVersion, Prompts: cut.PromptVersions, Provider: plan.Provider,
 		Model: plan.Model, Sources: in.Sources}
 	out.Verification = cut.Verification{EvidenceMatch: "all_read", Issues: []string{}}
@@ -484,52 +822,73 @@ func (a *App) analyzeCandidate(ctx context.Context, cr cutRun, in cut.Input,
 		out.UnresolvedQuestions = append(out.UnresolvedQuestions, "검색 결과를 보내지 않아 그 근거 없이 계획함")
 	}
 
+	// Each attempt keeps its own plan, checks and verdicts; the plan saved is
+	// the last one that passed the structural checks (verified, with what
+	// the checks found), or the last attempt when none did.
+	var best *cutAttempt
 	var issues []string
-	var answer cut.PlanAnswer
-	var checked cut.Checked
-	for attempt := 0; attempt <= cutMaxReplans; attempt++ {
+	for i := 0; i <= cutMaxReplans; i++ {
 		raw, err := send(cand, cut.PlanStep(in, an, issues, cr.notes))
 		if err != nil {
 			return out, err
 		}
-		answer, err = cut.ParsePlan(raw)
+		answer, err := cut.ParsePlan(raw)
 		if err != nil {
 			return out, err
 		}
-		checked, issues = cut.CheckPlan(&answer, known, in.DurationMs)
-		if checked.Dropped > 0 {
-			out.Verification.EvidenceMatch = "some_unread"
+		at := &cutAttempt{answer: answer}
+		at.checked, at.issues = cut.CheckPlan(&at.answer, known, in.DurationMs)
+		if len(at.issues) == 0 && len(at.checked.Spans) == 0 {
+			at.issues = []string{"고른 후보의 span을 시각으로 바꾸지 못했습니다"}
 		}
-		if len(issues) > 0 || len(checked.Spans) == 0 {
-			if len(checked.Spans) == 0 && len(issues) == 0 {
-				issues = []string{"고른 후보의 span을 시각으로 바꾸지 못했습니다"}
+		if len(at.issues) == 0 {
+			// The structure holds: verify the clip alone, then against the source.
+			at.usable = true
+			clipSpans := cut.ClipSpans(at.checked.Spans, in.Evidence, cut.KeyRefs(an, at.answer))
+			clipRaw, err := send(cand, cut.VerifyClipStep(an.Target, clipSpans))
+			if err != nil {
+				return out, err
 			}
-			continue // a structural problem: re-plan with the reasons, or give up after the retries
+			clip, err := cut.ParseClipVerification(clipRaw, clipSpans)
+			if err != nil {
+				return out, err
+			}
+			srcRaw, err := send(cand, cut.VerifySourceStep(an.Target, at.answer.Chosen, at.checked.Spans, at.answer.RequiredContextRefs,
+				at.answer.Ending, in.Evidence))
+			if err != nil {
+				return out, err
+			}
+			src, err := cut.ParseSourceVerification(srcRaw)
+			if err != nil {
+				return out, err
+			}
+			at.clip, at.src = &clip, &src
+			at.issues = cut.Issues(&clip, &src)
 		}
-		clipRaw, err := send(cand, cut.VerifyClipStep(an.Target, checked.Spans, in.Evidence, cut.KeyRefs(an, answer)))
-		if err != nil {
-			return out, err
+		if best == nil || at.usable || !best.usable {
+			best = at
 		}
-		clip, err := cut.ParseClipVerification(clipRaw)
-		if err != nil {
-			return out, err
-		}
-		srcRaw, err := send(cand, cut.VerifySourceStep(an.Target, answer.Chosen, checked.Spans, answer.RequiredContextRefs, answer.Ending, in.Evidence))
-		if err != nil {
-			return out, err
-		}
-		src, err := cut.ParseSourceVerification(srcRaw)
-		if err != nil {
-			return out, err
-		}
-		out.Verification.ClipOnly, out.Verification.AgainstSource = &clip, &src
-		issues = cut.Issues(&clip, &src)
-		if len(issues) == 0 {
+		if issues = at.issues; len(issues) == 0 {
 			break
 		}
+		// Re-plan with the reasons, or give up after the retries.
 	}
-	fillPlan(&out, answer, checked, known, issues, in.DurationMs)
+	if best.checked.Dropped > 0 {
+		out.Verification.EvidenceMatch = "some_unread"
+	}
+	out.Verification.ClipOnly, out.Verification.AgainstSource = best.clip, best.src
+	fillPlan(&out, best.answer, best.checked, known, best.issues, in.DurationMs)
 	return out, nil
+}
+
+// cutAttempt is one plan step's answer with what checked it.
+type cutAttempt struct {
+	answer  cut.PlanAnswer
+	checked cut.Checked
+	clip    *cut.ClipVerification // nil when the structure failed (not verified)
+	src     *cut.SourceVerification
+	issues  []string
+	usable  bool // passed the structural checks
 }
 
 func activityIn(results []cut.SearchResult) bool {
@@ -556,12 +915,13 @@ func pendingOf(cand string, round int, refs []string, known map[string]cut.Evide
 	return p
 }
 
+// withoutRefs is ev without refs, as a new list (ev may be shared).
 func withoutRefs(ev []cut.Evidence, refs []string) []cut.Evidence {
 	drop := map[string]bool{}
 	for _, r := range refs {
 		drop[r] = true
 	}
-	out := ev[:0]
+	out := make([]cut.Evidence, 0, len(ev))
 	for _, e := range ev {
 		if !drop[e.Ref] {
 			out = append(out, e)
@@ -667,9 +1027,11 @@ func fillPlan(out *cut.Plan, p cut.PlanAnswer, checked cut.Checked, known map[st
 	}
 }
 
-// saveCutPlan stores the plan as the next version and writes its files.
-func (a *App) saveCutPlan(ctx context.Context, run store.AIRun, p cut.Plan) (store.CutPlan, error) {
-	rec := store.CutPlan{RunID: run.ID, SessionID: run.SessionID, CandidateIDs: p.CandidateIDs, State: p.State}
+// saveCutPlan stores the plan as the next version of lineage ("" a new
+// one) and writes its files.
+func (a *App) saveCutPlan(ctx context.Context, run store.AIRun, p cut.Plan, lineage string) (store.CutPlan, error) {
+	rec := store.CutPlan{RunID: run.ID, SessionID: run.SessionID, CandidateIDs: p.CandidateIDs, AnalysisID: run.AnalysisID,
+		Lineage: lineage, State: p.State}
 	if len(p.SelectedSpans) > 0 {
 		rec.StartMs, rec.EndMs = p.SelectedSpans[0].StartMs, p.SelectedSpans[len(p.SelectedSpans)-1].EndMs
 	}
@@ -759,9 +1121,10 @@ func (a *App) CutPlan(ctx context.Context, id string) (CutPlanView, json.RawMess
 
 // cutTimelineItems are the current plans as timeline items, folded under
 // their candidates by the screen: the confirmed version and, when there is
-// a later one, the newest too (CurrentCutPlans). A failed plan has no spans
-// and is left out.
-func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem, error) {
+// a later one, the newest too (CurrentCutPlans). A plan made against an
+// earlier analysis is folded under the candidate it is about now (hosts).
+// A failed plan has no spans and is left out.
+func (a *App) cutTimelineItems(ctx context.Context, sid string, hosts momentHosts) ([]TimelineItem, error) {
 	plans, err := a.cfg.Store.CurrentCutPlans(ctx, sid)
 	if err != nil {
 		return nil, err
@@ -775,9 +1138,10 @@ func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem,
 		}
 		d := cutDetail(rec, p)
 		d.KeptVersion = kept.of(rec)
+		d.placeUnder(hosts.planHosts(rec, p))
 		spans := p.EffectiveSpans()
 		it := TimelineItem{ID: "cut:" + rec.ID, Source: SourceAI, Kind: "cut", OriginID: rec.ID, AnchorMs: spans[0].StartMs,
-			ClipStartMs: spans[0].StartMs, ClipEndMs: spans[len(spans)-1].EndMs, Title: p.Reaction.Target, SourceCandidateIDs: rec.CandidateIDs,
+			ClipStartMs: spans[0].StartMs, ClipEndMs: spans[len(spans)-1].EndMs, Title: p.Reaction.Target, SourceCandidateIDs: d.CandidateIDs,
 			CutPlanID: rec.ID, Verified: rec.State == cut.StateOK, Version: rec.Version, Cut: &d}
 		if len(p.Causes) > 0 {
 			it.Rationale = p.Causes[0].Summary
@@ -795,6 +1159,34 @@ func (a *App) cutTimelineItems(ctx context.Context, sid string) ([]TimelineItem,
 			it.Spans = append(it.Spans, TimelineSpan{StartMs: s.StartMs, EndMs: s.EndMs, Role: s.Role})
 		}
 		out = append(out, it)
+	}
+	return out, nil
+}
+
+// cutLineages says, for each current timeline item, which plan lineage its
+// next cut plan continues: that of the newest current plan shown under it
+// (hosts), so "다시 분석" makes a new version of the plan the user sees even
+// after the session was analysed again and the candidate was renumbered.
+func (a *App) cutLineages(ctx context.Context, sid string, hosts momentHosts) (map[string]string, error) {
+	plans, err := a.cfg.Store.CurrentCutPlans(ctx, sid)
+	if err != nil {
+		return nil, err
+	}
+	newest := map[string]store.CutPlan{}
+	for _, rec := range plans {
+		p, ok := decodePlan(rec)
+		if !ok {
+			continue
+		}
+		for _, host := range hosts.planHosts(rec, p) {
+			if cur, seen := newest[host]; !seen || rec.CreatedAt.After(cur.CreatedAt) {
+				newest[host] = rec
+			}
+		}
+	}
+	out := make(map[string]string, len(newest))
+	for host, rec := range newest {
+		out[host] = rec.Lineage
 	}
 	return out, nil
 }

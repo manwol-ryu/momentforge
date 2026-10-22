@@ -40,6 +40,7 @@ Desktop.ini
 .momentforge/
 e2e/.data/
 e2e/cut-eval/drafts/
+e2e/detect-eval/labels/
 bin/
 node_modules/
 .claude/settings.local.json

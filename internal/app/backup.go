@@ -186,18 +186,23 @@ func (a *App) importBackup(ctx context.Context, h job, b backup.Broadcast, req I
 			}
 		}
 	}
+	// The chat is read once for the received file, the chat files and the analysis.
+	chat, err := a.loadChat(ctx, sess.ID)
+	if err != nil {
+		return err
+	}
 	dir := a.exportDir(sess.ID)
 	warning := ""
-	if received, rerr := st.Chats(ctx, sess.ID, store.AllSeq, true); rerr != nil || export.WriteReceived(dir, received) != nil {
+	if export.WriteReceived(dir, chat.byArrival()) != nil {
 		warning = "수신 TXT를 쓰지 못했습니다. DB 저장은 끝났습니다."
 	}
-	if err := a.writeChat(ctx, sess.ID); err != nil {
+	if err := writeChatFiles(dir, chat); err != nil {
 		warning = "채팅 파일을 쓰지 못했습니다. 저장된 채팅으로 다시 분석할 수 있습니다."
 	}
 	h.update(func(s *JobStatus) {
 		s.Phase, s.Message, s.Warning, s.PositionMs, s.Pages = "analyzing", "편집 후보를 찾는 중입니다.", warning, durationMs, 1
 	})
-	an, err := a.analyzeSession(ctx, sess.ID, a.params(req.Sensitive), h)
+	an, err := a.analyzeChat(ctx, chat, a.params(req.Sensitive), h)
 	if err != nil {
 		return err
 	}

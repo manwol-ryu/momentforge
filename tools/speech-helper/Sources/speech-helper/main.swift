@@ -4,7 +4,7 @@
 //   speech-helper locales                       → {"supported":[…],"installed":[…],"korean":{"supported":b,"installed":b}}
 //   speech-helper probe <media>                 → {"duration_ms":n,"audio":b,"video":b,"width":n,"height":n}
 //   speech-helper transcribe <audio> [--from S] [--seconds N] [--locale ko-KR] [--install]
-//                                               → one {"start_ms","end_ms","text"} per final result, then {"done":true,…}
+//                                               → one {"start_ms","end_ms","text","words":[{"s","e","t"}]} per final result, then {"done":true,…}
 //
 // Nothing leaves the machine: the model is Apple's system asset, downloaded
 // and managed by macOS (--install asks the OS to fetch it when missing).
@@ -135,18 +135,23 @@ func transcribe(_ a: Args) async {
                 // Per-run audio time ranges when the model gives them; the result's own range otherwise.
                 var startMs = ms(result.range.start) + offsetMs
                 var endMs = ms(result.range.end) + offsetMs
+                // Each run is a word; its time lets MomentForge cut the result
+                // (often 10–20 s) into shorter utterances.
+                var words: [[String: Any]] = []
                 var first = true
                 for run in result.text.runs {
                     if let r = run.audioTimeRange {
                         if first { startMs = ms(r.start) + offsetMs; first = false }
                         endMs = ms(r.end) + offsetMs
+                        words.append(["s": ms(r.start) + offsetMs, "e": ms(r.end) + offsetMs,
+                                      "t": String(result.text[run.range].characters)])
                     }
                 }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty { continue }
                 count += 1
                 chars += trimmed.count
-                emit(["start_ms": startMs, "end_ms": endMs, "text": trimmed])
+                emit(["start_ms": startMs, "end_ms": endMs, "text": trimmed, "words": words])
             }
         } catch {
             emit(["error": "results: \(error)"])

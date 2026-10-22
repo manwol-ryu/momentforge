@@ -90,7 +90,7 @@ func (laughRule) Keys(text string) []string {
 	return nil
 }
 
-func newTestApp(t *testing.T, src platform.Platform) (*App, *events.Bus) {
+func newTestApp(t testing.TB, src platform.Platform) (*App, *events.Bus) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), dir, "test")

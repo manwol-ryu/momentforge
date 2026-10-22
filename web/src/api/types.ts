@@ -122,10 +122,27 @@ export interface DetectWindow {
   valid: boolean;
   signals: string[];
   reactionRatios?: Record<string, number>;
+  /** LIVE with viewer-count adaptation: the baseline in effect at this window. */
+  viewerBaseline?: ViewerBaseline;
   /** Adaptive gate: messages that make a window busy for the broadcast (2-hour median × 3.75). */
   gate?: number;
   /** Adaptive gate: chatters that make a window a sudden spike (15-minute median × 5). */
   spikeGate?: number;
+  /**
+   * Whole-broadcast analysis (VOD): how unusual the window is for its time in
+   * the broadcast, on a z-score scale (the strongest of its reaction, chat and
+   * participant measures). Absent for LIVE and older analyses.
+   */
+  score?: number;
+}
+
+/** The viewer-count baseline in effect (LIVE with viewer-count adaptation). */
+export interface ViewerBaseline {
+  mode: "viewer_adaptive" | "chat_only";
+  epochStartMs: number;
+  reference: number | null;
+  average: number | null;
+  status: "active" | "warming_up" | "missing";
 }
 
 export interface Chat {
@@ -203,6 +220,21 @@ export interface ContextChat extends Chat {
 
 export type CandidateState = "generating" | "waiting_context" | "confirmed" | "partial";
 
+/** How a whole-broadcast candidate ranks among its analysis' candidates. */
+export type Strength = "strong" | "medium" | "weak";
+
+/** One count at a candidate's peak next to what is usual for that time in the broadcast. */
+export interface Measure {
+  /** laugh, emotion:surprise, emotion:sadness, repeat:<text>, reaction (all reacting authors), surge (messages), participants (authors). */
+  key: string;
+  observed: number;
+  usual: number;
+  /** How unusual (z-score scale). */
+  z: number;
+  /** Length of the counted window: 10 s, or 20 s for a reaction that builds up. */
+  windowMs: number;
+}
+
 export interface Candidate {
   id: string;
   groupId: string;
@@ -220,8 +252,16 @@ export interface Candidate {
   evidence: EvidenceChat[];
   evidenceTotal: number;
   watchUrl?: string;
+  /** Whole-broadcast analysis (VOD) only: the peak window's score, strength, rank (1 = strongest) and what stood out, strongest first. */
+  score?: number;
+  strength?: Strength;
+  rank?: number;
+  measures?: Measure[];
   /** LIVE only: how settled the candidate is. */
   state?: CandidateState;
+  /** LIVE only: the viewer-count baseline at the peak, and whether it changed during the reaction. */
+  viewerBaseline?: ViewerBaseline;
+  baselineTransition?: boolean;
 }
 
 export interface Analysis {
@@ -231,6 +271,11 @@ export interface Analysis {
   durationMs: number;
   rulesVersion: string;
   sensitive: boolean;
+  /** Length each window counts and the step between windows (0 in analyses saved before they were recorded). */
+  windowMs: number;
+  stepMs: number;
+  /** Whole-broadcast analyses: the window score a candidate's peak needs (absent for the incremental engine). */
+  scoreThreshold?: number;
   windows: DetectWindow[];
   candidates: Candidate[];
 }
@@ -398,6 +443,12 @@ export interface CutEvidence {
   text?: string;
 }
 
+/** One thing the clip-only check found unknown, with the clip evidence pointing at it. */
+export interface CutFinding {
+  text: string;
+  refs: CutEvidence[];
+}
+
 export interface CutCause {
   kind: "broadcast_event" | "callback_to_earlier" | "viewer_joke" | "donation" | "unknown";
   summary: string;
@@ -439,9 +490,12 @@ export interface CutDetail {
   verification: {
     clipPass?: boolean;
     answers?: Partial<Record<"what" | "condition" | "result" | "references" | "why_reaction", string>>;
-    gaps: string[];
+    /** What the clip leaves unknown that the target needs: these fail the check. */
+    gaps: CutFinding[];
     /** Unknowns the clip check judged not needed for the target; never a failure. */
-    asides: string[];
+    asides: CutFinding[];
+    /** How the server re-sorted the findings by their refs (key evidence, authors), in words. */
+    serverChanges: string[];
     sourcePass?: boolean;
     findings: string[];
     notes: string[];

@@ -10,20 +10,42 @@ import (
 )
 
 // aiSource is what a session offers to an AI review: its candidates as
-// timeline items (never AI ones), their peak statistics, the chat to read
-// (up to maxSeq) and how far a chat range may reach.
+// timeline items (never AI ones; rule items carry their detector
+// candidate), the chat to read (up to maxSeq), how far a chat range may
+// reach and the analysis the rule items belong to.
 type aiSource struct {
-	items   []TimelineItem
-	stats   map[string]map[string]any // by item ID; rule candidates only
-	pending map[string]bool           // LIVE candidates still forming, not offered yet
-	maxSeq  int64
-	endMs   int64
+	items      []TimelineItem
+	pending    map[string]bool // LIVE candidates still forming, not offered yet
+	maxSeq     int64
+	endMs      int64
+	analysisID string // "" without one (LIVE, comments only)
 	// What to tell the user when nothing can be picked, or a range is off.
 	none, badRange string
 }
 
-func peakStats(c domain.Candidate) map[string]any {
+// peakStats are a rule candidate's peak window numbers (nil for other items).
+func peakStats(it TimelineItem) map[string]any {
+	c := it.rule
+	if c == nil {
+		return nil
+	}
 	return map[string]any{"n": c.Peak.N, "u": c.Peak.U, "ratio": c.Peak.Ratio, "z": c.Peak.Z, "baseline_n": c.Peak.BaselineN}
+}
+
+// explainStats are the review's statistics of a rule candidate: the peak
+// numbers, where the chat reacted and peaked and, from a whole-broadcast
+// analysis, how strong the reaction was for the broadcast.
+func explainStats(it TimelineItem) map[string]any {
+	st := peakStats(it)
+	if st == nil {
+		return nil
+	}
+	c := it.rule
+	st["reaction_start_ms"], st["reaction_end_ms"], st["peak_ms"] = c.ReactionStartMs, c.ReactionEndMs, c.PeakMs
+	if c.Strength != "" {
+		st["strength"], st["score"] = c.Strength, c.Score
+	}
+	return st
 }
 
 func (a *App) aiSource(ctx context.Context, sid string) (aiSource, error) {
@@ -32,7 +54,7 @@ func (a *App) aiSource(ctx context.Context, sid string) (aiSource, error) {
 		return aiSource{}, err
 	}
 	if s.Kind == string(platform.KindLive) {
-		return a.liveAISource(ctx, sid)
+		return a.liveAISource(ctx, s)
 	}
 	return a.vodAISource(ctx, sid)
 }
@@ -43,17 +65,10 @@ func (a *App) vodAISource(ctx context.Context, sid string) (aiSource, error) {
 	if err != nil {
 		return aiSource{}, err
 	}
-	src := aiSource{stats: map[string]map[string]any{}, maxSeq: store.AllSeq, endMs: tl.DurationMs,
+	src := aiSource{maxSeq: store.AllSeq, endMs: tl.DurationMs, analysisID: tl.AnalysisID,
 		none: "검토할 후보가 없습니다. 먼저 분석하거나 영상 댓글을 읽어 주세요.", badRange: "채팅 탐색 범위를 확인해 주세요."}
 	if tl.AnalysisID != "" {
-		an, err := a.cfg.Store.Analysis(ctx, tl.AnalysisID)
-		if err != nil {
-			return aiSource{}, err
-		}
-		src.maxSeq = an.MaxSeq
-		for _, c := range an.Candidates {
-			src.stats[SourceRule+":"+c.ID] = peakStats(c)
-		}
+		src.maxSeq = tl.maxSeq
 	}
 	for _, it := range tl.Items {
 		if it.Source != SourceAI {
@@ -68,8 +83,10 @@ func (a *App) vodAISource(ctx context.Context, sid string) (aiSource, error) {
 // chat arriving after the preview is never part of the plan. A candidate
 // still forming grows its clip range, so it is offered once confirmed (or
 // closed with partial context). A range may reach as far as the analysis.
-func (a *App) liveAISource(ctx context.Context, sid string) (aiSource, error) {
-	st := a.cfg.Store
+// LIVE candidate IDs do not change, so results keep them while the
+// session's analysis (normally none) stays the same.
+func (a *App) liveAISource(ctx context.Context, s store.Session) (aiSource, error) {
+	st, sid := a.cfg.Store, s.ID
 	ls, err := st.LiveState(ctx, sid)
 	if err != nil {
 		return aiSource{}, err
@@ -84,7 +101,7 @@ func (a *App) liveAISource(ctx context.Context, sid string) (aiSource, error) {
 	if err != nil {
 		return aiSource{}, err
 	}
-	src := aiSource{stats: map[string]map[string]any{}, pending: map[string]bool{}, maxSeq: maxSeq, endMs: ls.WatermarkMs,
+	src := aiSource{pending: map[string]bool{}, maxSeq: maxSeq, endMs: ls.WatermarkMs, analysisID: s.LatestAnalysisID,
 		none:     "검토할 확정 후보가 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 후보가 확정됩니다.",
 		badRange: "채팅 탐색 범위를 확인해 주세요. 분석을 마친 " + export.Stamp(ls.WatermarkMs)[:8] + "까지 지정할 수 있습니다."}
 	for _, c := range cands {
@@ -94,7 +111,6 @@ func (a *App) liveAISource(ctx context.Context, sid string) (aiSource, error) {
 			continue
 		}
 		src.items = append(src.items, it)
-		src.stats[it.ID] = peakStats(c)
 	}
 	return src, nil
 }

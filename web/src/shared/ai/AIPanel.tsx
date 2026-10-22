@@ -77,6 +77,8 @@ interface Props {
   s: Session;
   /** Timeline item IDs ticked in the candidate list. */
   selection: string[];
+  /** Cut analysis: item ID → the plan a cut box's "다시 분석" continues. */
+  continuePlans?: Record<string, string>;
   /**
    * A LIVE capture's analysed point: a range ends by it (an empty end asks
    * the server for its own), and the help says a plan holds only the chat
@@ -97,7 +99,7 @@ interface Props {
  * with its most possible cost. Nothing is sent until the user confirms that
  * exact plan; the answers appear under the candidates they explain.
  */
-export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, askKind, onShowCandidates }: Props) {
+export function AIPanel({ s, selection, continuePlans, liveEndMs, previewAsk = 0, askKind, onShowCandidates }: Props) {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
@@ -145,8 +147,8 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, askKind, onSh
   }, [current?.id, firstModel, current?.canBatch, current?.hasPrices]);
   // Any change to what would be sent drops the preview.
   const inputs = useMemo(
-    () => JSON.stringify([current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches]),
-    [current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches],
+    () => JSON.stringify([current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches, continuePlans]),
+    [current?.id, model, kind, mode, from, to, selection, delivery, cap, confirmSearches, continuePlans],
   );
   useEffect(() => {
     setPreview(null);
@@ -182,6 +184,7 @@ export function AIPanel({ s, selection, liveEndMs, previewAsk = 0, askKind, onSh
         delivery,
         costCapUsd: capValue,
         confirmSearches: kind === "cut" ? confirmSearches : undefined,
+        continuePlans: kind === "cut" && mode === "candidates" ? continuePlans : undefined,
       }),
     onSuccess: setPreview,
   });

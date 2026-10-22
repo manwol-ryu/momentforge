@@ -127,6 +127,8 @@ export const api = {
     costCapUsd?: number;
     /** Cut analysis: each search round's results wait for the user before they are sent. */
     confirmSearches?: boolean;
+    /** Cut analysis: item ID → the plan whose versions the new analysis continues. */
+    continuePlans?: Record<string, string>;
   }) => postJSON<AIPreview>("/api/ai/preview", req),
   aiCount: (previewId: string, fingerprint: string) =>
     postJSON<AITokenCount>("/api/ai/preview/count", { previewId, fingerprint }),

@@ -26,6 +26,14 @@ def open_sample(page: Page, base_url: str) -> None:
     page.wait_for_selector(READY, timeout=10_000)
 
 
+def select_row(row) -> None:
+    """AI results open in full only under the chosen row: choose it (pressing a chosen row closes it)."""
+    head = row.locator(".candidate-head")
+    if head.get_attribute("aria-pressed") != "true":
+        head.click()
+    expect(head).to_have_attribute("aria-pressed", "true")
+
+
 def pick_provider(page: Page, provider: str) -> None:
     open_destination(page)
     page.get_by_label("AI 제공자").select_option(label=provider)
@@ -60,6 +68,10 @@ def test_cut_analysis_keeps_the_promise_as_setup(page: Page, base_url: str) -> N
     expect(page.locator(".ai-done")).to_contain_text("AI 컷 분석")
     page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
 
+    # Until the row is chosen the plan is one line; chosen, the whole result box.
+    expect(first.locator(".ai-brief", has_text="AI 컷").first).to_contain_text("검수 통과")
+    expect(first.locator(".cut-note")).to_have_count(0)
+    select_row(first)
     note = first.locator(".cut-note")
     expect(note).to_contain_text("검수 통과")
     expect(note.locator(".cut-search")).to_have_count(0)  # the promise was inside the window: nothing to search
@@ -92,6 +104,7 @@ def test_cut_analysis_reports_why_a_plan_failed(page: Page, base_url: str) -> No
     expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=15_000)
     page.get_by_role("tab", name=re.compile("^후보")).click()
     # The newest plan replaces the earlier one under the same candidate.
+    select_row(first)
     note = first.locator(".cut-note")
     expect(note).to_have_count(1)
     expect(note).to_contain_text("검수 실패")
@@ -115,6 +128,7 @@ def add_note(box, text: str) -> None:
 def test_cut_result_box_notes_confirm_and_new_version(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
     first = page.locator("ol.candidates > li").first
+    select_row(first)  # the row stays chosen through the steps below
     note = first.locator(".cut-note")
     expect(note).to_contain_text("검수 실패")  # the plain fake's v2 from the test above
 

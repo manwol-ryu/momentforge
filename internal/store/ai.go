@@ -40,6 +40,7 @@ type AIRun struct {
 	State               string
 	Kind                string // explain | cut
 	Delivery            string // single | batch
+	AnalysisID          string // the rule analysis whose candidate IDs the inputs name ("" none)
 	BatchID             string // provider batch ID once submitted
 	RequestCount        int
 	PlanJSON            []byte // empty when listed with AIRuns
@@ -73,9 +74,9 @@ func (s *Store) CreateAIRun(ctx context.Context, r AIRun) (AIRun, error) {
 	r.CreatedAt = time.Now().UTC()
 	r.UpdatedAt = r.CreatedAt
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_runs (id, session_id, provider, model, fingerprint, state, kind, delivery,
-		request_count, cost_cap_usd, plan_json, recommendations_json, usage_json, sent_log_json, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,'[]','[]','[]',?,?)`,
-		r.ID, r.SessionID, r.Provider, r.Model, r.Fingerprint, r.State, r.Kind, r.Delivery, r.RequestCount, r.CostCapUSD,
+		analysis_id, request_count, cost_cap_usd, plan_json, recommendations_json, usage_json, sent_log_json, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]','[]',?,?)`,
+		r.ID, r.SessionID, r.Provider, r.Model, r.Fingerprint, r.State, r.Kind, r.Delivery, r.AnalysisID, r.RequestCount, r.CostCapUSD,
 		string(r.PlanJSON), r.CreatedAt.Format(time.RFC3339Nano), r.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return r, fmt.Errorf("create AI run: %w", err)
@@ -94,7 +95,7 @@ func (s *Store) SaveAIRun(ctx context.Context, r AIRun) error {
 	return err
 }
 
-const aiColumns = `id, session_id, provider, model, fingerprint, state, kind, delivery, COALESCE(batch_id,''), request_count,
+const aiColumns = `id, session_id, provider, model, fingerprint, state, kind, delivery, analysis_id, COALESCE(batch_id,''), request_count,
 	plan_json, recommendations_json, usage_json, sent_log_json, completed_requests, attempts, rejected, input_tokens, cache_read_tokens,
 	cache_write_tokens, output_tokens, cost_usd, cost_cap_usd, COALESCE(error_code,''), COALESCE(error_message,''),
 	created_at, updated_at`
@@ -106,7 +107,7 @@ func scanAIRun(row interface{ Scan(...any) error }) (AIRun, error) {
 	var r AIRun
 	var plan, recs, usage, sent, created, updated string
 	var cost, limit sql.NullFloat64
-	err := row.Scan(&r.ID, &r.SessionID, &r.Provider, &r.Model, &r.Fingerprint, &r.State, &r.Kind, &r.Delivery, &r.BatchID,
+	err := row.Scan(&r.ID, &r.SessionID, &r.Provider, &r.Model, &r.Fingerprint, &r.State, &r.Kind, &r.Delivery, &r.AnalysisID, &r.BatchID,
 		&r.RequestCount, &plan, &recs, &usage, &sent, &r.CompletedRequests, &r.Attempts, &r.Rejected, &r.InputTokens,
 		&r.CacheReadTokens, &r.CacheWriteTokens, &r.OutputTokens, &cost, &limit, &r.ErrorCode, &r.ErrorMessage,
 		&created, &updated)

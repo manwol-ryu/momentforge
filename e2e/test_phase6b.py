@@ -66,7 +66,7 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     page.get_by_role("button", name="AI 검토로 이동").click()
     page.get_by_role("radio", name="컷 분석").check()
     page.get_by_label("검색 결과를 보내기 전에 매번 확인").check()
-    from test_phase6 import pick_provider
+    from test_phase6 import pick_provider, select_row
 
     pick_provider(page, "E2E 가짜 AI")
     page.get_by_role("button", name="보낼 내용 미리보기").click()
@@ -88,6 +88,7 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     expect(status).to_contain_text("AI 완료", timeout=15_000)
     expect(status).to_contain_text("5/11회 완료")  # analyze twice, plan, two checks
     page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
+    select_row(first)
     note = first.locator(".cut-note")
     expect(note).to_contain_text("검수 통과")
     expect(note.locator(".cut-search")).to_contain_text("검색 1단계로 근거 1건을 더 읽음")

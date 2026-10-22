@@ -6,6 +6,7 @@ import { AIComparePanel } from "../../shared/ai/AIComparePanel";
 import { AIPanel } from "../../shared/ai/AIPanel";
 import { useAppState } from "../../shared/appState";
 import { foldAI } from "../../shared/candidates/foldAI";
+import { candidateNumbers } from "../../shared/candidates/strength";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
 import { ChatList } from "../../shared/chat/ChatList";
 import { formatSize, timecode } from "../../shared/format";
@@ -187,6 +188,7 @@ function Workspace({ v, feed, tab, onTab, previewAsk, onAskAI }: WorkspaceProps)
   const timeline = useQuery({ queryKey: ["timeline", sid], queryFn: () => api.timeline(sid) });
   const aiItems = useMemo(() => (timeline.data?.items ?? []).filter((i) => i.source === "ai"), [timeline.data]);
   const candidates = useMemo(() => new Map(feed.candidates.map((c) => [c.id, c])), [feed.candidates]);
+  const numbers = useMemo(() => candidateNumbers(feed.candidates), [feed.candidates]);
   const items: TimelineItem[] = useMemo(
     () =>
       [
@@ -210,9 +212,13 @@ function Workspace({ v, feed, tab, onTab, previewAsk, onAskAI }: WorkspaceProps)
   );
   const longForm = durationMs >= 3_600_000;
   const basis = v.timeBasis === "broadcast_elapsed" ? "방송 시작 후" : "수집 시작 후";
-  const aiMarkers = folded.rows.filter((i) => i.source === "ai").map((i, n) => ({
-    id: i.id, ms: i.anchorMs, kind: "ai" as const, label: `${sourceLabel.ai} ${n + 1}, ${timecode(i.anchorMs, longForm)}`,
-  }));
+  // The timeline marks what the list shows.
+  const aiMarkers = filter === "all" || filter === "ai"
+    ? folded.rows.filter((i) => i.source === "ai").map((i, n) => ({
+        id: i.id, ms: i.anchorMs, kind: "ai" as const, label: `${sourceLabel.ai} ${n + 1}, ${timecode(i.anchorMs, longForm)}`,
+      }))
+    : [];
+  const ruleMarkers = filter === "all" || filter === "rule" ? feed.candidates : [];
 
   return (
     <>
@@ -251,7 +257,8 @@ function Workspace({ v, feed, tab, onTab, previewAsk, onAskAI }: WorkspaceProps)
               stepMs={density.data?.bucketMs ?? 5000}
               windowMs={density.data?.bucketMs ?? 5000}
               gaps={v.gaps}
-              candidates={feed.candidates}
+              candidates={ruleMarkers}
+              numbers={numbers}
               extraMarkers={aiMarkers}
               selectedId={selectedId?.startsWith("rule:") ? selectedId.slice(5) : selectedId}
               onSelect={(markerId) => select(markerId.includes(":") ? markerId : "rule:" + markerId)}
@@ -305,6 +312,7 @@ function Workspace({ v, feed, tab, onTab, previewAsk, onAskAI }: WorkspaceProps)
                       <UnifiedList
                         items={shown}
                         candidates={candidates}
+                        numbers={numbers}
                         aiFor={folded.aiFor}
                         selectedId={selectedId}
                         onSelect={select}

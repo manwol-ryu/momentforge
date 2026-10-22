@@ -34,6 +34,9 @@ type Options struct {
 	// FromMs and DurationMs select a part of the file (0: the whole file).
 	FromMs     int64
 	DurationMs int64
+	// Split cuts results into utterances for engines that give word times
+	// (zero values: DefaultSplit).
+	Split SplitParams
 }
 
 // Progress is how far a transcription has come.

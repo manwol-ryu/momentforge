@@ -227,7 +227,7 @@ func TestMCPToolsAreReadOnlyPagedAndHelpful(t *testing.T) {
 	call(t, cs, "mf_list_candidates", map[string]any{"session_id": sid}, &cands)
 	for _, c := range cands.Candidates {
 		switch {
-		case c.ID == "rule:m0003" && (c.Evidence == nil || *c.Evidence != 210):
+		case c.ID == "rule:m0003" && (c.Evidence == nil || *c.Evidence != 180):
 			t.Fatalf("evidence of %s: %v", c.ID, c.Evidence)
 		case c.Source == "ai" && c.RunID == "":
 			t.Fatalf("%s has no run", c.ID)
