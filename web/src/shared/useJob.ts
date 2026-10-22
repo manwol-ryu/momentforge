@@ -4,6 +4,11 @@ import { api } from "../api/client";
 import type { JobStatus } from "../api/types";
 import { useEvents } from "./events";
 
+/** Whether a is a later state of the same job than b (a finished job never runs again). */
+function later(a: JobStatus, b: JobStatus): boolean {
+  return a.id === b.id && ((!a.busy && b.busy) || Date.parse(a.updatedAt) > Date.parse(b.updatedAt));
+}
+
 /**
  * The current background job. Loaded once, then kept fresh by "job" server
  * events. A job's new session appears in the saved list as soon as it is
@@ -12,7 +17,16 @@ import { useEvents } from "./events";
 export function useJob() {
   const queryClient = useQueryClient();
   const { subscribe } = useEvents();
-  const job = useQuery({ queryKey: ["job"], queryFn: api.job });
+  const job = useQuery({
+    queryKey: ["job"],
+    // An event may bring a later state of the job while this request is out
+    // (a job that ends within milliseconds): an answer must not undo it.
+    queryFn: async () => {
+      const fresh = await api.job();
+      const known = queryClient.getQueryData<JobStatus>(["job"]);
+      return known && fresh && later(known, fresh) ? known : fresh;
+    },
+  });
   const wasBusy = useRef(false);
   const lastSession = useRef<string | undefined>(undefined);
   const lastPhase = useRef<string | undefined>(undefined);

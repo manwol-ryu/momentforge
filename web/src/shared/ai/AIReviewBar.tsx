@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Session } from "../../api/types";
 import { ConfirmAction } from "../confirm/ConfirmAction";
@@ -22,14 +22,11 @@ interface Props {
  * results appear under the candidates they explain.
  */
 export function AIReviewBar({ s, hasCandidates, busy }: Props) {
-  const queryClient = useQueryClient();
   const settings = useSettings();
   const providers = useQuery({ queryKey: ["aiProviders"], queryFn: api.aiProviders });
   const runs = useQuery({ queryKey: ["aiRuns", s.id], queryFn: () => api.aiRuns(s.id) });
-  const review = useMutation({
-    mutationFn: () => api.startAIReview(s.id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["job"] }),
-  });
+  // The job's progress arrives as "job" events (useJob); asking for it here could answer after it ended.
+  const review = useMutation({ mutationFn: () => api.startAIReview(s.id) });
   const list = providers.data?.providers ?? [];
   const provider = list.find((p) => p.id === settings.data?.aiProvider) ?? list[0];
   const running = (runs.data?.runs ?? []).filter((r) => r.state === "running");
