@@ -47,6 +47,12 @@ type Params struct {
 	GateWarmupBins int     `json:"gateWarmupBins"`
 	GateSpikeRatio float64 `json:"gateSpikeRatio"`
 
+	// A LIVE capture's early candidates (예비, REDESIGN 6.2.3) come from
+	// the incremental engine with both adaptive gate ratios times this, so
+	// a reaction shows before the whole-broadcast analysis can judge it.
+	// 0 (CzzEdit, captures before rules 3.1.0): one tier, the gate as set.
+	EarlyGateScale float64 `json:"earlyGateScale,omitempty"`
+
 	// Rule thresholds.
 	SurgeRatio            float64 `json:"surgeRatio"`
 	SurgeZ                float64 `json:"surgeZ"`
@@ -146,6 +152,9 @@ func DefaultParams() Params {
 	// (late night) without treating a hot half hour as normal; the spike gate
 	// catches reactions in quiet stretches. From REDESIGN 6.2.1's experiments.
 	p.GateBusyRatio, p.GateLookbackMs, p.GateWarmupBins, p.GateSpikeRatio = 3.75, 7_200_000, 18, 5
+	// Early LIVE candidates open at two thirds of the gate: 2.5× the usual
+	// chat or 3.35× the usual authors.
+	p.EarlyGateScale = 0.67
 	b := DefaultBroadcastParams()
 	p.Broadcast = &b
 	return p
@@ -203,6 +212,25 @@ func (p Params) Gate() (messages, authors, reaction int) {
 	return p.MinMessages, p.MinAuthors, p.MinReactionAuthors
 }
 
+// Early returns the thresholds of a LIVE capture's early candidates: the
+// adaptive gate eased by EarlyGateScale (the fixed and sensitive gates stay).
+func (p Params) Early() Params {
+	if p.EarlyGateScale > 0 && p.GateBusyRatio > 0 {
+		p.GateBusyRatio *= p.EarlyGateScale
+		p.GateSpikeRatio *= p.EarlyGateScale
+	}
+	return p
+}
+
+// LiveTiers says whether a LIVE capture judges its candidates in tiers
+// (REDESIGN 6.2.3): early ones from the incremental engine, then the
+// whole-broadcast analysis of the chat stored so far.
+func (p Params) LiveTiers() bool { return p.EarlyGateScale > 0 && p.Broadcast != nil }
+
+// LiveJudgeSpanMs is how much chat before its end one LIVE judgment reads:
+// a moment settled then has the slower flow (TrendMs) on both sides.
+func (p Params) LiveJudgeSpanMs() int64 { return 2 * (p.Broadcast.TrendMs + p.Broadcast.LocalMs) }
+
 // Validate checks user-adjustable values with CzzEdit's messages.
 func (p Params) Validate() error {
 	for name, v := range map[string]int64{
@@ -217,7 +245,7 @@ func (p Params) Validate() error {
 	}
 	if p.GateBusyRatio < 0 || p.GateSpikeRatio < 0 ||
 		(p.GateBusyRatio > 0 && (p.GateWarmupBins < 1 || p.GateLookbackMs < p.WindowMs)) ||
-		p.SensitiveMinMessages > p.MinMessages || p.SensitiveMinMessages < 1 {
+		p.SensitiveMinMessages > p.MinMessages || p.SensitiveMinMessages < 1 || p.EarlyGateScale < 0 || p.EarlyGateScale > 1 {
 		return domain.NewUserError("CONFIG", "판정 시작 기준 설정이 올바르지 않습니다. 기본값으로 되돌린 뒤 다시 시도하세요.")
 	}
 	if b := p.Broadcast; b != nil {

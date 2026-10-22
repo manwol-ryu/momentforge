@@ -113,6 +113,15 @@ export function useLiveFeed(id: string) {
     };
   }, [id, subscribe, sync, append, queryClient]);
 
-  const sorted = useMemo(() => [...candidates.values()].sort((a, b) => a.clipStartMs - b.clipStartMs), [candidates]);
-  return { chats, received, candidates: sorted, error, loaded, retry: sync };
+  // A judgment drops candidates it does not keep (REDESIGN 6.2.3): they leave the list, and a dropped early
+  // candidate says which judged one took its place.
+  const sorted = useMemo(
+    () => [...candidates.values()].filter((c) => c.state !== "dropped").sort((a, b) => a.clipStartMs - b.clipStartMs),
+    [candidates],
+  );
+  const replacedBy = useMemo(
+    () => new Map([...candidates.values()].filter((c) => c.state === "dropped").map((c) => [c.id, c.replacedBy ?? ""])),
+    [candidates],
+  );
+  return { chats, received, candidates: sorted, replacedBy, error, loaded, retry: sync };
 }

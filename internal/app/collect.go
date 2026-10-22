@@ -178,7 +178,8 @@ func (a *App) collect(ctx context.Context, h job, p platform.Platform, src platf
 		}
 	}
 	h.update(func(s *JobStatus) { s.Message, s.Warning = "저장과 분석이 끝났습니다.", warning })
-	return nil
+	// Then what 일반 설정 turned on: the broadcast's transcript, its AI fix and the scenes' explanations.
+	return a.runAfter(ctx, h, sess.ID, a.autoStepsFor(), "저장과 분석이 끝났습니다.")
 }
 
 // toEvents pseudonymizes a page. Identical (offset, author, text) messages in

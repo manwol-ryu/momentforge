@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/manwol-ryu/momentforge/internal/detect"
 	"github.com/manwol-ryu/momentforge/internal/domain"
 	"github.com/manwol-ryu/momentforge/internal/export"
 	"github.com/manwol-ryu/momentforge/internal/platform"
@@ -15,7 +17,7 @@ import (
 // reach and the analysis the rule items belong to.
 type aiSource struct {
 	items      []TimelineItem
-	pending    map[string]bool // LIVE candidates still forming, not offered yet
+	pending    map[string]string // LIVE candidates not offered yet, and why
 	maxSeq     int64
 	endMs      int64
 	analysisID string // "" without one (LIVE, comments only)
@@ -82,7 +84,9 @@ func (a *App) vodAISource(ctx context.Context, sid string) (aiSource, error) {
 // its settled candidates, and its chat up to the newest stored message, so
 // chat arriving after the preview is never part of the plan. A candidate
 // still forming grows its clip range, so it is offered once confirmed (or
-// closed with partial context). A range may reach as far as the analysis.
+// closed with partial context); in a capture with tiers (REDESIGN 6.2.3)
+// once judged, as early ones are candidates for candidates. A range may
+// reach as far as the analysis.
 // LIVE candidate IDs do not change, so results keep them while the
 // session's analysis (normally none) stays the same.
 func (a *App) liveAISource(ctx context.Context, s store.Session) (aiSource, error) {
@@ -101,16 +105,24 @@ func (a *App) liveAISource(ctx context.Context, s store.Session) (aiSource, erro
 	if err != nil {
 		return aiSource{}, err
 	}
-	src := aiSource{pending: map[string]bool{}, maxSeq: maxSeq, endMs: ls.WatermarkMs, analysisID: s.LatestAnalysisID,
+	var p detect.Params
+	json.Unmarshal(ls.ParamsJSON, &p)
+	src := aiSource{pending: map[string]string{}, maxSeq: maxSeq, endMs: ls.WatermarkMs, analysisID: s.LatestAnalysisID,
 		none:     "검토할 확정 후보가 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 후보가 확정됩니다.",
 		badRange: "채팅 탐색 범위를 확인해 주세요. 분석을 마친 " + export.Stamp(ls.WatermarkMs)[:8] + "까지 지정할 수 있습니다."}
-	for _, c := range cands {
+	if p.LiveTiers() {
+		src.none = "검토할 후보가 없습니다. 반응이 끝나고 5분이 지나 판정한 후보부터 검토합니다."
+	}
+	for _, c := range shownLive(cands) {
 		it := ruleItem(c, func(int64) string { return "" })
-		if c.State != domain.CandidateConfirmed && c.State != domain.CandidatePartial {
-			src.pending[it.ID] = true
-			continue
+		switch {
+		case c.Tier == domain.TierEarly:
+			src.pending[it.ID] = "예비 후보는 반응 5분 뒤 판정을 받은 다음 보낼 수 있습니다."
+		case c.State != domain.CandidateConfirmed && c.State != domain.CandidatePartial:
+			src.pending[it.ID] = "아직 반응이 이어지는 후보는 보낼 수 없습니다. 후보가 확정되면 다시 미리보기를 만들어 주세요."
+		default:
+			src.items = append(src.items, it)
 		}
-		src.items = append(src.items, it)
 	}
 	return src, nil
 }

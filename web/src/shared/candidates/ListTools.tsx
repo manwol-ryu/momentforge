@@ -8,19 +8,16 @@ interface Props {
   onSort: (order: SortOrder) => void;
   filter: StrengthFilter;
   onFilter: (filter: StrengthFilter) => void;
-  /** The strong and medium candidates in the list that can go to the AI review, and how many are not picked yet; absent where there is no AI review. */
-  pick?: { total: number; unpicked: number; onPick: () => void };
 }
 
 const strengths: Strength[] = ["strong", "medium", "weak"];
 
 /**
  * Controls for a ranked candidate list (whole-broadcast analyses): the
- * order (time or strength), whether weak candidates are kept, how many
- * there are of each strength, and a way to pick every strong and medium
- * one for the AI review at once.
+ * order (time or strength), whether weak candidates are kept, and how many
+ * there are of each strength.
  */
-export function ListTools({ counts, sort, onSort, filter, onFilter, pick }: Props) {
+export function ListTools({ counts, sort, onSort, filter, onFilter }: Props) {
   return (
     <div className="list-tools">
       <Segmented
@@ -53,11 +50,6 @@ export function ListTools({ counts, sort, onSort, filter, onFilter, pick }: Prop
           </span>
         ))}
       </p>
-      {pick && pick.total > 0 && (
-        <button type="button" className="link-button list-pick" onClick={pick.onPick} disabled={pick.unpicked === 0}>
-          {pick.unpicked > 0 ? `강함·보통 ${pick.unpicked}개 AI 검토에 고르기` : "강함·보통 후보를 모두 골랐습니다"}
-        </button>
-      )}
     </div>
   );
 }

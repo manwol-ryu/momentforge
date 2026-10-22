@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/manwol-ryu/momentforge/internal/app"
+	"github.com/manwol-ryu/momentforge/internal/domain"
 )
 
 // scanBackups lists the broadcasts in a backup folder (docs/AI-CUT-ANALYSIS.md 2.5a).
@@ -58,6 +59,39 @@ func (h *handler) transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, st)
+}
+
+// startAIReview runs the automatic AI work for one session now (the user
+// pressed "AI 장면 설명 받기"): the transcript fix and the explanations.
+func (h *handler) startAIReview(w http.ResponseWriter, r *http.Request) {
+	st, err := h.cfg.Core.StartAIReview(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, st)
+}
+
+// startCut runs one candidate's cut analysis now (its "AI 컷 분석" button,
+// or a result box's "다시 분석" with the plan it continues).
+func (h *handler) startCut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ItemID string `json:"itemId"`
+		PlanID string `json:"planId"`
+	}
+	if !readBody(w, r, &body) {
+		return
+	}
+	if body.ItemID == "" {
+		writeAppError(w, domain.NewUserError("INPUT", "분석할 후보를 골라 주세요."))
+		return
+	}
+	id, err := h.cfg.Core.StartCut(r.Context(), chi.URLParam(r, "id"), body.ItemID, body.PlanID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
 }
 
 // transcript summarises the newest transcript (null when there is none).
@@ -110,6 +144,8 @@ type utteranceJSON struct {
 	EndMs   int64  `json:"endMs"`
 	Speaker string `json:"speaker"`
 	Text    string `json:"text"`
+	// What speech recognition heard, when AI fixed the text (absent: unchanged).
+	RawText string `json:"rawText,omitempty"`
 }
 
 // utterances returns the transcript's lines in [from, to) (ms; to defaults to from + 10 minutes).
@@ -128,7 +164,7 @@ func (h *handler) utterances(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]utteranceJSON, len(utts))
 	for i, u := range utts {
-		out[i] = utteranceJSON{ID: u.ID, StartMs: u.StartMs, EndMs: u.EndMs, Speaker: u.Speaker, Text: u.Text}
+		out[i] = utteranceJSON{ID: u.ID, StartMs: u.StartMs, EndMs: u.EndMs, Speaker: u.Speaker, Text: u.Text, RawText: u.RawText}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"utterances": out})
 }

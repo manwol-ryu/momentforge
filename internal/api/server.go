@@ -62,6 +62,8 @@ type Core interface {
 	ScanBackups(ctx context.Context, dir string) ([]app.BackupView, error)
 	StartImportBackup(req app.ImportRequest) (app.JobStatus, error)
 	StartTranscribe(ctx context.Context, sid string) (app.JobStatus, error)
+	StartAIReview(ctx context.Context, sid string) (app.JobStatus, error)
+	StartCut(ctx context.Context, sid, itemID, planID string) (string, error)
 	Bundle(ctx context.Context, sid string) (app.BundleView, error)
 	StartBundle(ctx context.Context, req app.BundleRequest) (app.JobStatus, error)
 	ASREngines(ctx context.Context) []app.ASREngineView
@@ -163,7 +165,9 @@ func (h *handler) apiRoutes(r chi.Router) {
 			r.Get("/comments", h.comments)
 			r.Get("/timeline", h.timeline)
 			r.Get("/ai/runs", h.aiRuns)
+			r.Post("/ai/review", h.startAIReview)
 			r.Get("/cuts", h.cutPlans)
+			r.Post("/cuts", h.startCut)
 			r.Post("/transcribe", h.transcribe)
 			r.Get("/bundle", h.bundle)
 			r.Post("/bundle", h.startBundle)

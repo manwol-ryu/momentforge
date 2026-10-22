@@ -13,6 +13,8 @@ const phaseText: Record<string, string> = {
   comments: "영상 댓글 읽기",
   downloading: "방송 음성 받기",
   transcribing: "방송 내용 인식",
+  fixing: "AI 대본 다듬기",
+  reviewing: "AI 장면 설명",
   bundling: "백업 묶음 만들기",
   video: "백업 묶음 영상 받기",
   done: "완료",

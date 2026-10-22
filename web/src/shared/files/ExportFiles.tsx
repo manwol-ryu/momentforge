@@ -58,6 +58,24 @@ export function aiGroup(files: ExportFile[], aiRunId: string | undefined): FileG
   };
 }
 
+const transcriptText: Record<string, string> = { srt: "대본 SRT", vtt: "대본 VTT", json: "대본 JSON" };
+
+/**
+ * The current transcript's caption files. A transcript recognised again or
+ * replaced by a caption file leaves its files in the folder, unlisted.
+ */
+export function transcriptGroup(files: ExportFile[], transcriptId: string | undefined): FileGroup {
+  return {
+    id: "transcript",
+    title: "대본",
+    entries: files.flatMap((f) => {
+      const label = transcriptText[fileName(f).split(".").pop() ?? ""];
+      const current = !transcriptId || fileName(f).startsWith(transcriptId + ".");
+      return /^transcript\/[^/]+$/.test(f.path) && label && current ? [{ file: f, label }] : [];
+    }),
+  };
+}
+
 /** Cut analysis folders whose analysis the candidate list no longer shows (replaced by a newer version). */
 export function olderCutFolders(files: ExportFile[], items: TimelineItem[]): string[] {
   const shown = new Set(items.flatMap((it) => (it.kind === "cut" && it.cut ? [it.cut.planId] : [])));

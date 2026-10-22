@@ -31,6 +31,9 @@ type Config struct {
 	// AIBatchPoll is the first wait before checking a submitted batch
 	// (30 s when 0; the E2E binary shortens it).
 	AIBatchPoll time.Duration
+	// LiveAutoEvery is how long a LIVE capture gathers judged candidates
+	// before their automatic work (2 min when 0; the E2E binary shortens it).
+	LiveAutoEvery time.Duration
 }
 
 // App is the application core.
@@ -61,6 +64,9 @@ func New(cfg Config) *App {
 	ctx, stop := context.WithCancel(context.Background())
 	a := &App{cfg: cfg, startedAt: time.Now().UTC(), ctx: ctx, stop: stop, jobs: &jobs{bus: cfg.Bus},
 		liveTiming: defaultLiveTiming()}
+	if cfg.LiveAutoEvery > 0 {
+		a.liveTiming.autoEvery = cfg.LiveAutoEvery
+	}
 	a.initSettings()
 	a.initAI()
 	a.applyEndpoints()

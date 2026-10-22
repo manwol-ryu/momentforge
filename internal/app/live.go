@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,11 +31,14 @@ type liveTiming struct {
 	giveUpAfter  time.Duration // stop reconnecting after failing this long (10 min)
 	maxBackoff   time.Duration // (60 s)
 	delayMs      int64         // analysis trails the newest healthy time by this (5 s)
+	judgeEvery   time.Duration // the whole-broadcast analysis runs again once analysis moved on this much (60 s, REDESIGN 6.2.3)
+	autoEvery    time.Duration // judged candidates are gathered this long before their automatic work (2 min)
 }
 
 func defaultLiveTiming() liveTiming {
 	return liveTiming{queue: 10000, publishEvery: time.Second, publishBatch: 200, metaEvery: 60 * time.Second,
-		closedWait: 60 * time.Second, giveUpAfter: 10 * time.Minute, maxBackoff: 60 * time.Second, delayMs: 5000}
+		closedWait: 60 * time.Second, giveUpAfter: 10 * time.Minute, maxBackoff: 60 * time.Second, delayMs: 5000,
+		judgeEvery: time.Minute, autoEvery: 2 * time.Minute}
 }
 
 // fatalLive codes end the capture instead of reconnecting.
@@ -63,6 +67,10 @@ type liveRun struct {
 	channel string
 	cancel  context.CancelFunc
 	done    chan struct{}
+
+	// Set by the capture once it has read its settings (under liveJobs.mu).
+	audio *liveAudio // nil: not recording
+	auto  *liveAuto  // nil: one tier (captures before rules 3.1.0)
 }
 
 type liveJobs struct {
@@ -210,7 +218,7 @@ func (a *App) launchLive(sid string, src platform.LiveSource, t platform.Target)
 	go func() {
 		defer close(run.done)
 		defer cancel()
-		w := &liveWorker{a: a, sid: sid, src: src, target: t, timing: a.liveTiming}
+		w := &liveWorker{a: a, sid: sid, src: src, target: t, timing: a.liveTiming, liveRun: run}
 		if err := w.run(ctx); err != nil {
 			a.logError("live capture", err)
 		}
@@ -303,6 +311,13 @@ type liveWorker struct {
 	fatal       error
 	lostFrom    int64
 	stopReceive context.CancelFunc
+
+	// Tiers (REDESIGN 6.2.3): how far the whole-broadcast analysis last
+	// read (nil: not yet), and where judged candidates go for their
+	// automatic work.
+	liveRun  *liveRun
+	judgedTo *int64
+	auto     *liveAuto
 }
 
 func (w *liveWorker) emit(m liveMsg) error {
@@ -490,7 +505,12 @@ func (w *liveWorker) run(ctx context.Context) error {
 		}
 	}
 	start := max(0, time.Now().UnixMilli()-w.ls.OriginMs)
-	if w.analyzer, err = detect.NewLiveAnalyzer(start, w.params, w.a.cfg.Rules, w.ls.ViewerAdaptive); err != nil {
+	// With tiers the incremental engine shows early candidates, its gate eased.
+	early := w.params
+	if w.params.LiveTiers() {
+		early = w.params.Early()
+	}
+	if w.analyzer, err = detect.NewLiveAnalyzer(start, early, w.a.cfg.Rules, w.ls.ViewerAdaptive); err != nil {
 		return err
 	}
 	prev, _, err := st.LiveCandidates(bg, w.sid, 0)
@@ -498,9 +518,16 @@ func (w *liveWorker) run(ctx context.Context) error {
 		return err
 	}
 	for _, c := range prev {
-		if n, err := strconv.Atoi(c.ID[1:]); err == nil {
-			w.analyzer.ContinueNumbering(n)
+		if rest, ok := strings.CutPrefix(c.ID, "m"); ok {
+			if n, err := strconv.Atoi(rest); err == nil {
+				w.analyzer.ContinueNumbering(n)
+			}
 		}
+	}
+	if w.params.LiveTiers() {
+		ended := make(chan struct{})
+		defer close(ended)
+		w.startAuto(ctx, ended)
 	}
 	if w.ls.LastHealthyAtMs > 0 {
 		w.gapStart = max(0, w.ls.LastHealthyAtMs-w.ls.OriginMs)
@@ -764,8 +791,18 @@ func (w *liveWorker) publish(ctx context.Context, final bool) {
 		w.a.logError("live analysis", err)
 	}
 	previews, _ := w.analyzer.Previews()
-	if rev, err := st.UpsertLiveCandidates(ctx, w.sid, append(released, previews...)); err == nil {
+	shown := append(released, previews...)
+	tiers := w.params.LiveTiers()
+	if tiers {
+		for i := range shown {
+			shown[i].Tier = domain.TierEarly
+		}
+	}
+	if rev, err := st.UpsertLiveCandidates(ctx, w.sid, shown); err == nil {
 		w.ls.Revision = rev
+	}
+	if tiers && (final || w.judgedTo == nil || w.analyzer.Watermark()-*w.judgedTo >= w.timing.judgeEvery.Milliseconds()) {
+		w.judge(ctx, final)
 	}
 	w.ls.WatermarkMs = w.analyzer.Watermark()
 	if lw := w.analyzer.LastWindow(); lw != nil {

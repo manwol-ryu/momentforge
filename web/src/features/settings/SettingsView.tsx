@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { AIModel, AIProvider, AIService, ASREngine, Settings, SettingsInfo } from "../../api/types";
+import type { AIModel, AIProvider, AIService, AITask, ASREngine, Settings, SettingsInfo } from "../../api/types";
 import { AIKeyField } from "../../shared/ai/AIKeyField";
 import { queryState, useAppState } from "../../shared/appState";
 import { RevealWords } from "../../shared/motion/RevealWords";
@@ -32,6 +32,20 @@ function filledPaths(m: Record<string, Record<string, string>> | undefined): Rec
   return out;
 }
 
+/** Only the non-empty models per task of each provider, providers without any left out. */
+function filledTasks(m: Settings["aiTaskModels"] | undefined): Settings["aiTaskModels"] {
+  const out: Settings["aiTaskModels"] = {};
+  for (const id of Object.keys(m ?? {}).sort()) {
+    const tasks: Partial<Record<AITask, string>> = {};
+    for (const task of aiTasks) {
+      const v = m![id]?.[task]?.trim();
+      if (v) tasks[task] = v;
+    }
+    if (Object.keys(tasks).length > 0) out[id] = tasks;
+  }
+  return out;
+}
+
 /** Only the values, with empty models, addresses and paths left out. */
 function valuesOf(s: Settings): Settings {
   return {
@@ -45,11 +59,28 @@ function valuesOf(s: Settings): Settings {
     asrPaths: filledPaths(s.asrPaths),
     cutSearchRounds: s.cutSearchRounds ?? 4,
     cutSearchKb: s.cutSearchKb ?? 80,
+    cutConfirmSearches: s.cutConfirmSearches ?? false,
     backupDir: (s.backupDir ?? "").trim(),
     backupVideo: s.backupVideo ?? true,
     backupVideoHeight: s.backupVideoHeight || 720,
+    autoAI: s.autoAI ?? false,
+    autoAIMaxRequests: s.autoAIMaxRequests || 60,
+    autoAICostCapUsd: s.autoAICostCapUsd || 3,
+    autoTranscriptFix: s.autoTranscriptFix ?? true,
+    autoTranscribe: s.autoTranscribe ?? true,
+    liveAudio: s.liveAudio ?? true,
+    aiTaskModels: filledTasks(s.aiTaskModels),
   };
 }
+
+const aiTasks: AITask[] = ["transcript", "explain", "cut"];
+
+/** Each task's name and what kind of model fits it, as the settings say it. */
+const taskText: Record<AITask, { name: string; help: string }> = {
+  transcript: { name: "대본 다듬기", help: "요청이 많고 짧아 빠르고 싼 모델이 맞습니다." },
+  explain: { name: "장면 설명", help: "채팅과 발언을 함께 읽는 균형 잡힌 모델이 맞습니다." },
+  cut: { name: "컷 분석", help: "근거를 따져 구간을 정하는 가장 강한 모델이 맞습니다." },
+};
 
 /**
  * The settings screen: the AI provider and models the AI review starts
@@ -74,7 +105,7 @@ export function SettingsView() {
           <RevealWords text="설정" />
         </h1>
         <p className="page-lede">
-          <RevealWords text="새 작업과 AI 검토가 시작할 기본값을 정합니다." start={1} />
+          <RevealWords text="편집 후보가 나오면 저절로 할 일과 새 작업·AI 검토의 기본값을 정합니다." start={1} />
         </p>
       </header>
 
@@ -129,8 +160,8 @@ export function SettingsView() {
             </dl>
             <p className="field-help">
               두 파일 모두 데이터 폴더 안에 있어 Git에 올라가지 않고, 나만 읽을 수 있는 권한으로 씁니다. API 키는 앱이 실행되는 동안
-              메모리에 두고, ‘이 컴퓨터에도 저장’을 고른 키만 .env 파일에 평문으로 남습니다. 키를 넣어도 AI로 보내기 전에는 늘 보낼
-              내용과 비용을 먼저 보여 드립니다.
+              메모리에 두고, ‘이 컴퓨터에도 저장’을 고른 키만 .env 파일에 평문으로 남습니다. 키를 넣어도 일반 설정에서 AI 검토 자동
+              실행을 켜거나 작업 화면에서 직접 보내기 전에는 아무것도 보내지 않습니다.
             </p>
           </section>
         </aside>
@@ -142,7 +173,7 @@ export function SettingsView() {
 function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AIProvider[] }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Settings>(() => valuesOf(saved));
-  const [section, setSection] = useState<Section>("ai");
+  const [section, setSection] = useState<Section>("collect");
   const save = useMutation({
     mutationFn: () => api.saveSettings(valuesOf(draft)),
     onSuccess: (s) => {
@@ -173,105 +204,11 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
         onChange={setSection}
         tabs={[
           {
-            id: "ai",
-            label: "AI 검토",
-            content: (
-              <div className="settings-ai">
-                {providers.length > 1 && (
-                  <Segmented
-                    name="shown-provider"
-                    legend="설정할 AI 제공자"
-                    value={shown?.id ?? defaultProvider}
-                    onChange={setViewing}
-                    options={providers.map((p) => ({
-                      value: p.id,
-                      label: (
-                        <>
-                          {p.name}
-                          {p.id === defaultProvider && (
-                            <span className="seg-mark" aria-hidden="true">
-                              기본
-                            </span>
-                          )}
-                        </>
-                      ),
-                    }))}
-                  />
-                )}
-                <p className="field-help">
-                  제공자를 고르면 그 제공자의 주소·모델·키를 정합니다. 작업 화면의 AI 검토는 ‘기본’ 표시가 붙은 제공자와 그 기본
-                  모델로 시작하고, 탭에서 바꾼 값은 그 검토에만 씁니다.
-                </p>
-                {saved.aiProviderAuto && draft.aiProvider === saved.aiProvider && (
-                  <p className="auto-note" role="note">
-                    이 컴퓨터에서 바로 쓸 수 있는 {defaultName}을(를) 자동으로 골랐습니다. 다른 제공자의 ‘기본 제공자로 쓰기’를 누르고
-                    기본값을 저장하면 그것을 씁니다.
-                  </p>
-                )}
-                <div className="providers">
-                  {shown && (
-                    <ProviderSettings
-                      key={shown.id}
-                      p={shown}
-                      isDefault={shown.id === defaultProvider}
-                      defaultName={defaultName}
-                      onMakeDefault={() => change({ aiProvider: shown.id })}
-                      model={draft.aiModels[shown.id] ?? ""}
-                      onModel={(m) => change({ aiModels: { ...draft.aiModels, [shown.id]: m } })}
-                      endpoint={draft.aiEndpoints[shown.id] ?? ""}
-                      onEndpoint={(u) => change({ aiEndpoints: { ...draft.aiEndpoints, [shown.id]: u } })}
-                    />
-                  )}
-                </div>
-                <fieldset className="settings-group search-budget">
-                  <legend className="field-label">컷 분석의 검색 예산 (후보당)</legend>
-                  <p className="field-help">
-                    컷 분석이 "아까"·약속 같은 앞선 맥락을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 분석을 다시 합니다. 미리보기에
-                    보인 범위 밖에서 얼마나 더 보낼 수 있는지의 상한입니다. 검색 단계를 0으로 두면 검색하지 않습니다.
-                  </p>
-                  <div className="search-budget-fields">
-                    <NumberField
-                      label="검색 단계"
-                      unit="회 (0~10, 기본 4)"
-                      min={0}
-                      max={10}
-                      step={1}
-                      value={draft.cutSearchRounds}
-                      onChange={(n) => change({ cutSearchRounds: n })}
-                    />
-                    <NumberField
-                      label="검색으로 더 보내는 글"
-                      unit="KB (0~1024, 기본 80)"
-                      min={0}
-                      max={1024}
-                      step={10}
-                      value={draft.cutSearchKb}
-                      onChange={(n) => change({ cutSearchKb: n })}
-                    />
-                  </div>
-                </fieldset>
-              </div>
-            ),
-          },
-          {
-            id: "asr",
-            label: "방송 내용 인식",
-            content: (
-              <ASRSettings
-                engine={draft.asrEngine}
-                onEngine={(id) => change({ asrEngine: id })}
-                paths={draft.asrPaths}
-                onPath={(id, key, value) =>
-                  change({ asrPaths: { ...draft.asrPaths, [id]: { ...(draft.asrPaths[id] ?? {}), [key]: value } } })
-                }
-              />
-            ),
-          },
-          {
             id: "collect",
-            label: "새 작업 기본값",
+            label: "일반 설정",
             content: (
               <div className="settings-collect">
+                <AutoSettings draft={draft} saved={saved} providers={providers} change={change} />
                 <fieldset className="settings-group">
                   <legend className="field-label">다시보기와 생방송</legend>
                   <label className="check check-option">
@@ -312,6 +249,116 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
                 </fieldset>
                 <p className="field-help">새 작업의 수집 양식이 이 값으로 시작합니다. 양식에서 바꾼 값은 그 작업에만 씁니다.</p>
               </div>
+            ),
+          },
+          {
+            id: "ai",
+            label: "AI 검토",
+            content: (
+              <div className="settings-ai">
+                {providers.length > 1 && (
+                  <Segmented
+                    name="shown-provider"
+                    legend="설정할 AI 제공자"
+                    value={shown?.id ?? defaultProvider}
+                    onChange={setViewing}
+                    options={providers.map((p) => ({
+                      value: p.id,
+                      label: (
+                        <>
+                          {p.name}
+                          {p.id === defaultProvider && (
+                            <span className="seg-mark" aria-hidden="true">
+                              기본
+                            </span>
+                          )}
+                        </>
+                      ),
+                    }))}
+                  />
+                )}
+                <p className="field-help">
+                  제공자를 고르면 그 제공자의 주소·모델·키를 정합니다. 자동 AI 검토, AI 장면 설명 받기, AI 컷 분석은 모두 ‘기본’ 표시가
+                  붙은 제공자로 보내고, 작업마다 그 제공자의 작업별 모델을 씁니다.
+                </p>
+                {saved.aiProviderAuto && draft.aiProvider === saved.aiProvider && (
+                  <p className="auto-note" role="note">
+                    이 컴퓨터에서 바로 쓸 수 있는 {defaultName}을(를) 자동으로 골랐습니다. 다른 제공자의 ‘기본 제공자로 쓰기’를 누르고
+                    기본값을 저장하면 그것을 씁니다.
+                  </p>
+                )}
+                <div className="providers">
+                  {shown && (
+                    <ProviderSettings
+                      key={shown.id}
+                      p={shown}
+                      isDefault={shown.id === defaultProvider}
+                      defaultName={defaultName}
+                      onMakeDefault={() => change({ aiProvider: shown.id })}
+                      model={draft.aiModels[shown.id] ?? ""}
+                      onModel={(m) => change({ aiModels: { ...draft.aiModels, [shown.id]: m } })}
+                      taskModels={draft.aiTaskModels[shown.id] ?? {}}
+                      onTaskModel={(task, m) =>
+                        change({ aiTaskModels: { ...draft.aiTaskModels, [shown.id]: { ...draft.aiTaskModels[shown.id], [task]: m } } })
+                      }
+                      endpoint={draft.aiEndpoints[shown.id] ?? ""}
+                      onEndpoint={(u) => change({ aiEndpoints: { ...draft.aiEndpoints, [shown.id]: u } })}
+                    />
+                  )}
+                </div>
+                <fieldset className="settings-group search-budget">
+                  <legend className="field-label">컷 분석의 검색 예산 (후보당)</legend>
+                  <p className="field-help">
+                    컷 분석이 "아까"·약속 같은 앞선 맥락을 물으면 이 방송 안의 발언·채팅을 검색해 더 보내고 분석을 다시 합니다. 처음 보내는
+                    범위(편집 구간 앞뒤 1분) 밖에서 얼마나 더 보낼 수 있는지의 상한입니다. 검색 단계를 0으로 두면 검색하지 않습니다.
+                  </p>
+                  <div className="search-budget-fields">
+                    <NumberField
+                      label="검색 단계"
+                      unit="회 (0~10, 기본 4)"
+                      min={0}
+                      max={10}
+                      step={1}
+                      value={draft.cutSearchRounds}
+                      onChange={(n) => change({ cutSearchRounds: n })}
+                    />
+                    <NumberField
+                      label="검색으로 더 보내는 글"
+                      unit="KB (0~1024, 기본 80)"
+                      min={0}
+                      max={1024}
+                      step={10}
+                      value={draft.cutSearchKb}
+                      onChange={(n) => change({ cutSearchKb: n })}
+                    />
+                  </div>
+                  <label className="check check-option">
+                    <input
+                      type="checkbox"
+                      checked={draft.cutConfirmSearches}
+                      onChange={(e) => change({ cutConfirmSearches: e.target.checked })}
+                    />
+                    <span>
+                      검색 결과를 보내기 전에 매번 확인
+                      <span className="check-help">검색이 찾은 발언·채팅을 후보 목록 위 AI 작업 줄에 보여 주고, 보낼지 고를 때까지 기다립니다.</span>
+                    </span>
+                  </label>
+                </fieldset>
+              </div>
+            ),
+          },
+          {
+            id: "asr",
+            label: "방송 내용 인식",
+            content: (
+              <ASRSettings
+                engine={draft.asrEngine}
+                onEngine={(id) => change({ asrEngine: id })}
+                paths={draft.asrPaths}
+                onPath={(id, key, value) =>
+                  change({ asrPaths: { ...draft.asrPaths, [id]: { ...(draft.asrPaths[id] ?? {}), [key]: value } } })
+                }
+              />
             ),
           },
           {
@@ -388,6 +435,141 @@ function SettingsForm({ saved, providers }: { saved: SettingsInfo; providers: AI
   );
 }
 
+interface AutoProps {
+  draft: Settings;
+  saved: SettingsInfo;
+  providers: AIProvider[];
+  change: (patch: Partial<Settings>) => void;
+}
+
+/**
+ * What runs by itself once candidates are found (docs/REDESIGN.md 15,
+ * 2026-10-22): a VOD's transcript, a capture's audio for its candidates,
+ * and the AI review. Turning the AI review on asks first, in place, what
+ * it will send and within which limits: from then on nothing is previewed.
+ */
+function AutoSettings({ draft, saved, providers, change }: AutoProps) {
+  const [asking, setAsking] = useState(false);
+  const provider = providers.find((p) => p.id === draft.aiProvider) ?? providers[0];
+  const priced = provider?.hasPrices ?? false;
+  return (
+    <fieldset className="settings-group auto-settings">
+      <legend className="field-label">편집 후보가 나오면 자동으로</legend>
+      <label className="check check-option">
+        <input type="checkbox" checked={draft.autoTranscribe} onChange={(e) => change({ autoTranscribe: e.target.checked })} />
+        <span>
+          다시보기 방송 내용 인식
+          <span className="check-help">
+            수집과 분석이 끝나면 방송 음성을 가장 낮은 화질로 받아 이 컴퓨터에서 대본으로 만듭니다(3시간 방송에 약 8분, 받은 음성은
+            인식 뒤 지움). AI 검토가 이 대본을 함께 읽습니다.
+          </span>
+        </span>
+      </label>
+      <label className="check check-option">
+        <input type="checkbox" checked={draft.liveAudio} onChange={(e) => change({ liveAudio: e.target.checked })} />
+        <span>
+          생방송 음성도 받아 후보 구간 인식
+          <span className="check-help">
+            수집하는 동안 방송 음성을 가장 낮은 화질로 받아 최근 25분만 이 컴퓨터에 두고, 반응 5분 뒤 판정한 후보의 구간을 대본으로
+            만듭니다. 수집이 끝나면 음성은 지웁니다.
+          </span>
+        </span>
+      </label>
+      <label className="check check-option">
+        <input
+          type="checkbox"
+          checked={draft.autoAI || asking}
+          onChange={(e) => {
+            if (!e.target.checked) {
+              setAsking(false);
+              change({ autoAI: false });
+            } else if (saved.autoAI) {
+              change({ autoAI: true });
+            } else {
+              setAsking(true);
+            }
+          }}
+        />
+        <span>
+          AI 검토 자동 실행
+          <span className="check-help">
+            편집 후보가 나오면 묻지 않고 기본 AI 제공자{provider ? `(${provider.name})` : ""}로 보내 후보마다 장면 설명을 받습니다(생방송은
+            반응 5분 뒤 판정한 후보부터). 끄면 작업 화면의 &lsquo;AI 장면 설명 받기&rsquo;로 작업마다 받습니다.
+          </span>
+        </span>
+      </label>
+      {asking && !draft.autoAI && (
+        <div className="confirm auto-consent" role="group" aria-label="AI 검토 자동 실행 확인">
+          <div className="confirm-question">
+            <p>켜면 편집 후보가 나올 때마다 묻지 않고 보냅니다.</p>
+            <ul>
+              <li>보내는 것: 후보 앞뒤의 채팅(작성자는 가명), 방송 대본(인식한 발언), 대본을 다듬을 때 방송 제목과 시청자가 많이 쓴 낱말</li>
+              <li>보내지 않는 것: 영상·음성, 원래 아이디·닉네임, API 키 밖의 계정 정보</li>
+              <li>
+                한도: 작업마다 요청 {draft.autoAIMaxRequests}회{priced ? `, 비용 ${draft.autoAICostCapUsd}달러` : ""}까지. 아래에서
+                바꿀 수 있습니다.
+              </li>
+            </ul>
+          </div>
+          <span className="confirm-actions">
+            <button type="button" className="button button-quiet" onClick={() => setAsking(false)}>
+              켜지 않기
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setAsking(false);
+                change({ autoAI: true });
+              }}
+            >
+              동의하고 켜기
+            </button>
+          </span>
+        </div>
+      )}
+      {(draft.autoAI || asking) && (
+        <div className="auto-ai-options">
+          <label className="check check-option">
+            <input
+              type="checkbox"
+              checked={draft.autoTranscriptFix}
+              onChange={(e) => change({ autoTranscriptFix: e.target.checked })}
+            />
+            <span>
+              AI로 대본 다듬기
+              <span className="check-help">
+                인식한 대본을 앞뒤 발언, 방송 제목, 시청자가 쓴 낱말과 함께 보내 잘못 들은 말을 고칩니다. 인식한 원문은 함께 남깁니다.
+              </span>
+            </span>
+          </label>
+          <div className="search-budget-fields">
+            <NumberField
+              label="작업마다 최대 요청"
+              unit="회 (1~500, 기본 60)"
+              min={1}
+              max={500}
+              step={10}
+              value={draft.autoAIMaxRequests}
+              onChange={(n) => change({ autoAIMaxRequests: n })}
+            />
+            <NumberField
+              label="작업마다 비용 한도"
+              unit="미국 달러 (가격을 아는 모델만, 기본 3)"
+              min={0.01}
+              max={1000}
+              step={0.5}
+              decimals
+              value={draft.autoAICostCapUsd}
+              onChange={(n) => change({ autoAICostCapUsd: n })}
+            />
+          </div>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 interface NumberFieldProps {
   label: string;
   unit: string;
@@ -396,6 +578,8 @@ interface NumberFieldProps {
   step: number;
   value: number;
   onChange: (value: number) => void;
+  /** Takes fractions too (a dollar limit); whole numbers otherwise. */
+  decimals?: boolean;
 }
 
 /**
@@ -404,12 +588,15 @@ interface NumberFieldProps {
  * number in range is taken as it is typed, and leaving the field puts the
  * value in use back in it.
  */
-function NumberField({ label, unit, min, max, step, value, onChange }: NumberFieldProps) {
+function NumberField({ label, unit, min, max, step, value, onChange, decimals = false }: NumberFieldProps) {
   const [text, setText] = useState(String(value));
   const [editing, setEditing] = useState(false);
   const shownText = editing ? text : String(value);
-  const n = Number(text);
-  const invalid = editing && (text.trim() === "" || !Number.isInteger(n) || n < min || n > max);
+  const fits = (t: string) => {
+    const v = Number(t);
+    return t.trim() !== "" && Number.isFinite(v) && (decimals || Number.isInteger(v)) && v >= min && v <= max;
+  };
+  const invalid = editing && !fits(text);
   return (
     <label className="field">
       <span className="field-label">{label}</span>
@@ -429,12 +616,11 @@ function NumberField({ label, unit, min, max, step, value, onChange }: NumberFie
         onChange={(e) => {
           const t = e.target.value;
           setText(t);
-          const v = Number(t);
-          if (t.trim() !== "" && Number.isInteger(v) && v >= min && v <= max) onChange(v);
+          if (fits(t)) onChange(Number(t));
         }}
       />
       <span className={invalid ? "field-help field-invalid" : "field-help"}>
-        {invalid ? `${min}~${max} 사이의 정수를 넣으세요. 지금 쓰는 값은 ${value}입니다.` : unit}
+        {invalid ? `${min}~${max} 사이의 ${decimals ? "숫자" : "정수"}를 넣으세요. 지금 쓰는 값은 ${value}입니다.` : unit}
       </span>
     </label>
   );
@@ -563,6 +749,9 @@ interface ProviderProps {
   onMakeDefault: () => void;
   model: string;
   onModel: (model: string) => void;
+  /** The model set per task (empty: the recommendation, else model). */
+  taskModels: Partial<Record<AITask, string>>;
+  onTaskModel: (task: AITask, model: string) => void;
   endpoint: string;
   onEndpoint: (url: string) => void;
 }
@@ -571,7 +760,7 @@ interface ProviderProps {
  * One provider: where it sends (for a proxy), its default model and its key
  * (or, for a provider without one, whether it is ready).
  */
-function ProviderSettings({ p, isDefault, defaultName, onMakeDefault, model, onModel, endpoint, onEndpoint }: ProviderProps) {
+function ProviderSettings({ p, isDefault, defaultName, onMakeDefault, model, onModel, taskModels, onTaskModel, endpoint, onEndpoint }: ProviderProps) {
   const [models, setModels] = useState<AIModel[]>([]);
   const loadModels = useMutation({ mutationFn: () => api.aiModels(p.id), onSuccess: (r) => setModels(r.models) });
   const titleId = `provider-${p.id}`;
@@ -596,7 +785,7 @@ function ProviderSettings({ p, isDefault, defaultName, onMakeDefault, model, onM
       <div className="provider-body">
         {isDefault ? (
           <p className="provider-default" data-default>
-            기본 제공자입니다. 작업 화면의 AI 검토가 이 제공자로 시작합니다.
+            기본 제공자입니다. AI 검토를 이 제공자로 보냅니다.
           </p>
         ) : (
           <p className="provider-default">
@@ -645,8 +834,34 @@ function ProviderSettings({ p, isDefault, defaultName, onMakeDefault, model, onM
           </datalist>
         </label>
         <p className="field-help">
-          {p.defaultModel ? `비우면 ${p.defaultModel}을 씁니다.` : "비우면 AI 검토에서 모델 ID를 직접 입력합니다."}
+          {p.defaultModel ? `비우면 ${p.defaultModel}을 씁니다.` : "작업별 모델을 정하지 않은 작업이 이 모델로 보냅니다."}
         </p>
+        <fieldset className="settings-group task-models">
+          <legend className="field-label">작업별 모델</legend>
+          <p className="field-help">
+            작업마다 맞는 모델이 다릅니다. 비우면 {Object.keys(p.taskModels).length > 0 ? `${p.name}이(가) 추천하는 모델을` : "위의 기본 모델을"}{" "}
+            씁니다.
+          </p>
+          {aiTasks.map((task) => {
+            const fallback = p.taskModels[task] || model.trim() || p.defaultModel;
+            return (
+              <label key={task} className="field">
+                <span className="field-label">{taskText[task].name} 모델</span>
+                <input
+                  type="text"
+                  value={taskModels[task] ?? ""}
+                  onChange={(e) => onTaskModel(task, e.target.value)}
+                  list={listId}
+                  placeholder={fallback || "모델 ID"}
+                />
+                <span className="field-help">
+                  {taskText[task].help}
+                  {fallback ? ` 비우면 ${fallback}.` : ""}
+                </span>
+              </label>
+            );
+          })}
+        </fieldset>
         {p.selfAuth ? (
           <div className="provider-auth">
             <p className="ai-auth" data-ready={p.configured || undefined}>

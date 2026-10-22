@@ -19,7 +19,8 @@ func init() {
 	extraPlatforms = append(extraPlatforms, e2efake.New())
 	extraAI = append(extraAI, aifake.New(), aifake.NewSecond())
 	extraASR = append(extraASR, asrfake.New())
-	extraBatchPoll = 200 * time.Millisecond // the fake batch ends at once
+	extraBatchPoll = 200 * time.Millisecond     // the fake batch ends at once
+	extraLiveAutoEvery = 500 * time.Millisecond // the fake broadcast runs twice as fast as real time
 	opencodeOptions = append(opencodeOptions, opencode.WithCommand("/nonexistent/momentforge-e2e/opencode"))
 	codexOptions = append(codexOptions, codex.WithCommand("/nonexistent/momentforge-e2e/codex"))
 	cliproxyOptions = append(cliproxyOptions, cliproxy.WithHome("/nonexistent/momentforge-e2e/cli-proxy-api"),

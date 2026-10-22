@@ -24,6 +24,8 @@ metadata:
 | `LinkSource` | 권장 | 플랫폼 자체 플레이어의 해당 시각 링크 |
 | `LiveSource` | 3단계 | 생방송 채팅 스트림 |
 | `LivePlaybackSource` | 생방송 앱 안 재생 시 | 채널의 지금 방송 공개 HLS 주소. 방송 중이 아니면 `LIVE_OFFLINE`. 저장하지 않으며, 영상 CDN이 여러 곳이면 모두 `MediaOrigins()`에 넣음 |
+| `AudioSource` | 다시보기 전사 시 | 가장 가벼운 렌디션의 음성을 한 파일로 (`VODAudio`). 앱이 전사 뒤 지움 |
+| `LiveAudioSource` | 생방송 후보 구간 전사 시 | `RecordLiveAudio`: 지금 방송의 가장 가벼운 렌디션을 조각마다 파일로 받아 시각(`PROGRAM-DATE-TIME`, 없으면 받은 시각 − 남은 길이)과 함께 알림. 방송이 끝나면(`LIVE_OFFLINE`) nil, 서명 주소는 실패 때 새로 받음. `AssembleAudio`: 조각을 0초부터 시작하는 한 파일로(fMP4는 다시 씀). 보관·삭제는 app |
 
 ## 2. 구현 규칙
 

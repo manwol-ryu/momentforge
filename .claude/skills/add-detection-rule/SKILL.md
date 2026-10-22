@@ -28,7 +28,7 @@ metadata:
 - 그때의 기준은 창과 후보 정점의 `gate`, `spikeGate`에 남습니다.
 - 민감도를 켜거나 `CzzEditParams()`를 쓰면 고정값입니다. 판정 방식 자체를 바꿔야 하면 창 규칙으로 만들거나, 엔진 변경으로 보고 사용자와 먼저 상의합니다.
 
-위 판정 시작 조건과 `Share`·`Fires`는 **LIVE 증분 엔진**의 방식입니다. 다시보기·NAS 백업·다시 분석(저장된 타임라인)은 **방송 전체 분석**(`detect.AnalyzeBroadcast`, REDESIGN.md 6.2.2)으로 판정합니다.
+위 판정 시작 조건과 `Share`·`Fires`는 **LIVE 증분 엔진**의 방식입니다. 다시보기·NAS 백업·다시 분석(저장된 타임라인)은 **방송 전체 분석**(`detect.AnalyzeBroadcast`, REDESIGN.md 6.2.2)으로 판정합니다. 규칙 3.1.0부터 LIVE는 둘 다 씁니다(REDESIGN.md 6.2.3): 증분 엔진은 판정 시작 조건의 두 비율에 `EarlyGateScale`(0.67)을 곱한 **예비** 후보만 띄우고, 저장된 최근 70분 채팅에 방송 전체 분석을 다시 해 반응 5분 뒤 **5분 판정**, 30분 뒤 **확정**합니다(`detect.JudgeLive`). 판정 시작 조건을 바꾸면 예비 후보도 함께 바뀝니다.
 - 메시지 규칙은 등록하면 측정 하나가 됩니다. 창마다 그 규칙의 키를 쓴 작성자 수(키별 최댓값)를 앞뒤 ±5분·±30분 중 조용한 쪽의 평소 값과 비교해 점수(z)를 냅니다. 3명 미만이면 세지 않습니다. 둘 이상이 함께 쓴 키는 "반응한 사람" 측정에도 들어갑니다.
 - `Share`, 창 규칙의 `Fires`, 판정 시작 조건은 쓰지 않습니다. 새 창 규칙은 LIVE에만 적용되므로, 다시보기에도 필요하면 `broadcast.go`의 측정으로 넣을지 사용자와 먼저 상의합니다.
 - 임계값은 `detect.BroadcastParams`(`Params.Broadcast`)에 있습니다. `DefaultBroadcastParams()`를 바꾸면 `TestDetectEvalReport`로 실제 다시보기에서 전후를 비교합니다(5절).

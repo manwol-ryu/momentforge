@@ -109,7 +109,7 @@ func (a *App) Timeline(ctx context.Context, sid string) (*UnifiedTimeline, error
 		if err != nil {
 			return nil, err
 		}
-		for _, c := range cands {
+		for _, c := range shownLive(cands) {
 			t.Items = append(t.Items, ruleItem(c, watch))
 		}
 	}
@@ -264,7 +264,7 @@ func (a *App) currentHosts(ctx context.Context, s store.Session) (momentHosts, e
 		if err != nil {
 			return h, err
 		}
-		cands = live
+		cands = shownLive(live)
 	case string(platform.KindVOD):
 	default:
 		return h, nil

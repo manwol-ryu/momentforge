@@ -2,17 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Candidate, CutBoundaryName, ExportFile, LiveState, LiveStatus, TimelineItem, TimelineSource } from "../../api/types";
-import { AIComparePanel } from "../../shared/ai/AIComparePanel";
-import { AIPanel } from "../../shared/ai/AIPanel";
-import { useAIReview, type AIReview } from "../../shared/ai/useAIReview";
+import { AIReviewBar } from "../../shared/ai/AIReviewBar";
+import { useAIEvents } from "../../shared/ai/useAIEvents";
 import { useAppState } from "../../shared/appState";
 import { foldAI, type FoldedItems } from "../../shared/candidates/foldAI";
 import { candidateNumbers } from "../../shared/candidates/strength";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
+import { CutRequest } from "../../shared/candidates/CutRequest";
 import { useCutView } from "../../shared/candidates/useCutView";
 import { ChatList } from "../../shared/chat/ChatList";
 import { ConfirmAction } from "../../shared/confirm/ConfirmAction";
-import { aiGroup, cutGroups, entriesIn, ExportFiles, olderCutFolders, type FileGroup } from "../../shared/files/ExportFiles";
+import { aiGroup, cutGroups, entriesIn, ExportFiles, olderCutFolders, transcriptGroup, type FileGroup } from "../../shared/files/ExportFiles";
 import { timecode } from "../../shared/format";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
 import { Segmented } from "../../shared/motion/Segmented";
@@ -28,22 +28,25 @@ import { useLiveFeed } from "./useLiveFeed";
 
 const viewerText = { active: "적용 중", warming_up: "학습 중", missing: "자료 부족", "": "준비 중" } as const;
 
-type PanelTab = "candidates" | "ai" | "status" | "files";
+type PanelTab = "candidates" | "status" | "files";
 
 type SourceFilter = "all" | TimelineSource;
 
 /** How much of the timeline is drawn: from where the chat was first received, or the whole broadcast. */
 type TimelineView = "captured" | "all";
 
-/** A candidate that stopped growing; only these can be sent for an AI review (REDESIGN 15). */
-const settled = (c: Candidate) => c.state === "confirmed" || c.state === "partial";
+/**
+ * A candidate that can go to AI: judged (or final) in a capture with tiers,
+ * else one that stopped growing (REDESIGN 6.2.3, 15).
+ */
+const settled = (c: Candidate) => (c.tier ? c.tier !== "early" : c.state === "confirmed" || c.state === "partial");
 
 const NO_ITEMS: TimelineItem[] = [];
 
 /**
  * A LIVE capture as a workbench: state and controls on top, the broadcast,
- * the incoming chat and the reaction timeline held in view, and candidates,
- * AI review, capture state and files in tabs beside them.
+ * the incoming chat and the reaction timeline held in view, and candidates
+ * (with their AI review), capture state and files in tabs beside them.
  */
 export function LiveView({ id }: { id: string }) {
   const queryClient = useQueryClient();
@@ -66,7 +69,8 @@ export function LiveView({ id }: { id: string }) {
   );
   // The summary, the tab and the list count the same rows (AI explanations sit under their candidates).
   const folded = useMemo(() => foldAI(items), [items]);
-  const review = useAIReview(id);
+  // AI runs (automatic, or asked for) refresh what they change when they end.
+  useAIEvents(id);
   const showTab = (t: PanelTab) => {
     setTab(t);
     // The received-order file grows while capturing: its size is asked again whenever the files are looked at.
@@ -118,7 +122,6 @@ export function LiveView({ id }: { id: string }) {
         aiItems={aiItems}
         folded={folded}
         aiRunId={timeline.data?.aiRunId}
-        review={review}
         tab={tab}
         onTab={showTab}
       />
@@ -217,29 +220,25 @@ interface WorkspaceProps {
   aiItems: TimelineItem[];
   folded: FoldedItems;
   aiRunId?: string;
-  review: AIReview;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
 }
 
-function Workspace({ v, feed, items, aiItems, folded, aiRunId, review, tab, onTab }: WorkspaceProps) {
+function Workspace({ v, feed, items, aiItems, folded, aiRunId, tab, onTab }: WorkspaceProps) {
   const sid = v.session.id;
   // Timeline item IDs: "rule:<candidate>" or "ai:<recommendation>".
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const select = (itemId: string) => setSelectedId((cur) => (cur === itemId ? null : itemId));
+  // A chosen early candidate that a judgment replaced stays chosen as the judged one.
+  const replacement = selectedId?.startsWith("rule:") ? feed.replacedBy.get(selectedId.slice(5)) : undefined;
+  useEffect(() => {
+    if (replacement !== undefined) setSelectedId(replacement ? "rule:" + replacement : null);
+  }, [replacement]);
   const [filter, setFilter] = useState<SourceFilter>("all");
   const cut = useCutView(items, folded.aiFor, selectedId);
   const chooseCut = (planId: string, name: CutBoundaryName, itemId: string) => {
     cut.choose(planId, name);
     setSelectedId(itemId);
-  };
-  const askPicks = () => {
-    review.askPicks();
-    onTab("ai");
-  };
-  const reanalyzeCut = (itemId: string, label: string, planId?: string) => {
-    review.askReanalysis({ itemId, planId, label });
-    onTab("ai");
   };
   // The density timeline refreshes per 10 s of analysed broadcast, not per event.
   const step = Math.floor(v.watermarkMs / 10_000);
@@ -297,7 +296,8 @@ function Workspace({ v, feed, items, aiItems, folded, aiRunId, review, tab, onTa
               />
             </div>
             <p className="card-foot">
-              &lsquo;늦게 받음&rsquo;은 연결 전에 보냈거나 분석이 지난 뒤 도착한 채팅입니다. 저장하지만 확정한 후보 계산에는 넣지 않습니다.
+              &lsquo;늦게 받음&rsquo;은 연결 전에 보냈거나 분석이 지난 뒤 도착한 채팅입니다.{" "}
+              {v.tiered ? "저장하고 5분 판정에는 넣지만 예비 후보 계산에는 넣지 않습니다." : "저장하지만 확정한 후보 계산에는 넣지 않습니다."}
             </p>
           </div>
         </div>
@@ -385,12 +385,23 @@ function Workspace({ v, feed, items, aiItems, folded, aiRunId, review, tab, onTa
                         />
                       )}
                     </div>
+                    {v.tiered && (
+                      <p className="tier-legend">
+                        채팅이 몰리면 <span className="candidate-tier" data-tier="early">예비</span>로 먼저 띄우고, 반응 5분 뒤
+                        다시보기와 같은 기준으로 <span className="candidate-tier" data-tier="judged">5분 판정</span>, 30분 뒤{" "}
+                        <span className="candidate-tier" data-tier="final">확정</span>합니다. 판정에서 빠진 예비 후보는 목록에서
+                        사라집니다.
+                      </p>
+                    )}
+                    <AIReviewBar s={v.session} hasCandidates={feed.candidates.some(settled)} busy={false} />
                     {shown.length === 0 ? (
                       <p className="empty">
                         {folded.rows.length > 0
                           ? "고른 출처에 맞는 후보가 없습니다. 위에서 모든 출처를 고르세요."
                           : v.running
-                            ? "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
+                            ? v.tiered
+                              ? "아직 반응이 몰린 구간이 없습니다. 채팅이 몰리면 예비 후보로 바로 나타납니다."
+                              : "아직 반응이 몰린 구간이 없습니다. 반응이 끝나고 뒤 채팅까지 받으면 여기에 나타납니다."
                             : "반응이 몰린 구간을 찾지 못했습니다."}
                       </p>
                     ) : (
@@ -406,53 +417,20 @@ function Workspace({ v, feed, items, aiItems, folded, aiRunId, review, tab, onTa
                         platformName={v.session.platformName}
                         cutChoice={cut.choice}
                         onCutChoice={chooseCut}
-                        onReanalyzeCut={reanalyzeCut}
-                        aiSelection={review.selection}
-                        onToggleAI={review.toggle}
-                        canPick={(it) => {
+                        renderCut={(it, name, planId) => {
+                          // A candidate still forming grows its range, and an early one may be dropped: analysed once settled.
                           const c = candidates.get(it.originId);
-                          return !!c && settled(c);
+                          if (it.source === "rule" && !(c && settled(c))) return null;
+                          return (
+                            <CutRequest sessionId={sid} itemId={it.id} name={name} planId={planId} label={planId ? "다시 분석" : "AI 컷 분석"} />
+                          );
                         }}
                         renderRuleDetail={(c) => <CandidateContext sessionId={sid} c={c} longForm={longForm} />}
                       />
                     )}
                   </section>
-                  {review.selection.size > 0 && (
-                    <p className="pick-bar">
-                      <span>AI 검토에 고른 후보 {review.selection.size}개</span>
-                      <span className="pick-bar-actions">
-                        <button type="button" className="pick-bar-clear" onClick={review.clear}>
-                          고른 후보 비우기
-                        </button>
-                        <button type="button" className="link-button" onClick={askPicks}>
-                          AI 검토로 이동
-                        </button>
-                      </span>
-                    </p>
-                  )}
                 </>
               ),
-            },
-            {
-              id: "ai",
-              label: "AI 검토",
-              content:
-                v.session.chatCount > 0 ? (
-                  <>
-                    <AIPanel
-                      s={v.session}
-                      selection={review.picked}
-                      reanalysis={review.reanalysis}
-                      onEndReanalysis={review.endReanalysis}
-                      liveEndMs={v.watermarkMs}
-                      previewAsk={review.asked}
-                      onShowCandidates={() => onTab("candidates")}
-                    />
-                    <AIComparePanel s={v.session} />
-                  </>
-                ) : (
-                  <p className="empty">채팅을 받으면 고른 후보나 지정한 구간을 AI로 검토할 수 있습니다.</p>
-                ),
             },
             { id: "status", label: "수집 상태", content: <Facts v={v} /> },
             { id: "files", label: "파일", content: <Files v={v} aiRunId={aiRunId} items={aiItems} longForm={longForm} /> },
@@ -492,6 +470,13 @@ function LiveVideo({ v }: { v: LiveStatus }) {
 }
 
 function CandidateContext({ sessionId, c, longForm }: { sessionId: string; c: Candidate; longForm: boolean }) {
+  // What the broadcaster said there, once a judged candidate's range was transcribed (생방송 음성).
+  const speech = useQuery({
+    queryKey: ["utterances", sessionId, "clip", c.clipStartMs, c.clipEndMs],
+    queryFn: () => api.utterances(sessionId, c.clipStartMs, c.clipEndMs, 200),
+    enabled: c.tier !== undefined && c.tier !== "early",
+  });
+  const lines = speech.data?.utterances ?? [];
   const chats = useInfiniteQuery({
     // The clip range grows while a candidate is still forming.
     queryKey: ["liveCandidateChats", sessionId, c.id, c.state, c.clipEndMs],
@@ -503,6 +488,29 @@ function CandidateContext({ sessionId, c, longForm }: { sessionId: string; c: Ca
   const total = chats.data?.pages[0]?.total ?? 0;
   return (
     <div className="context">
+      {lines.length > 0 && (
+        <>
+          <p className="evidence-title">편집 구간 방송 내용 {lines.length.toLocaleString("ko-KR")}줄 (이 컴퓨터에서 인식)</p>
+          <ol className="chatlog transcript-lines" aria-label="편집 구간 발언">
+            {lines.map((u) => (
+              <li key={u.id}>
+                <span className="chat-row" title={u.rawText ? `인식한 원문: ${u.rawText}` : undefined}>
+                  <span className="chat-time timecode">{timecode(u.startMs, longForm)}</span>
+                  <span className="chat-author" data-tone={3}>
+                    {u.speaker}
+                  </span>
+                  <span className="chat-text">{u.text}</span>
+                  {u.rawText && (
+                    <span className="chat-fixed" aria-label={`AI가 다듬음. 인식한 원문: ${u.rawText}`}>
+                      다듬음
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
       <p className="evidence-title">편집 구간 채팅 {total.toLocaleString("ko-KR")}건 (* 판정 근거)</p>
       <ChatList chats={all} longForm={longForm} label="편집 구간 채팅" />
       {chats.hasNextPage && (
@@ -550,11 +558,32 @@ function Facts({ v }: { v: LiveStatus }) {
           )}
         </dd>
         <dt>늦게 받은 채팅</dt>
-        <dd>{v.lateCount.toLocaleString("ko-KR")}건 (저장만 하고 확정 후보 계산에서 뺌)</dd>
+        <dd>
+          {v.lateCount.toLocaleString("ko-KR")}건{" "}
+          {v.tiered ? "(예비 후보에서는 빼고 5분 판정에는 넣음)" : "(저장만 하고 확정 후보 계산에서 뺌)"}
+        </dd>
         <dt>다시 받은 채팅</dt>
         <dd>{v.duplicateCount.toLocaleString("ko-KR")}건 (재연결 때 다시 온 채팅이라 버림)</dd>
-        <dt>판정 시작 기준</dt>
+        <dt>{v.tiered ? "예비 후보 기준" : "판정 시작 기준"}</dt>
         <dd>{gateText(v)}</dd>
+        {v.tiered && (
+          <>
+            <dt>후보 판정</dt>
+            <dd>반응 5분 뒤 다시보기와 같은 기준(앞뒤 5분·30분과 비교)으로 판정, 30분 뒤 또는 수집을 마칠 때 확정</dd>
+          </>
+        )}
+        {v.running && v.audio && (
+          <>
+            <dt>방송 음성</dt>
+            <dd>{audioText(v)}</dd>
+          </>
+        )}
+        {v.autoNote && (
+          <>
+            <dt>자동 작업</dt>
+            <dd className="error">{v.autoNote}</dd>
+          </>
+        )}
       </dl>
     </section>
   );
@@ -565,7 +594,23 @@ function gateText(v: LiveStatus): string {
   if (!v.adaptiveGate) return "10초에 15건 (고정 기준으로 시작한 기록)";
   const w = v.lastWindow;
   if (!w?.gate) return "채널을 지켜보는 중 (처음 3분)";
-  return `10초에 채팅 ${w.gate}건(최근 2시간 평소의 3.75배) 또는 채팅한 사람 ${w.spikeGate ?? "-"}명(최근 15분 평소의 5배)`;
+  // Early candidates open at two thirds of the usual gate (detect.Params.EarlyGateScale).
+  const [busy, spike] = v.tiered ? ["2.5", "3.35"] : ["3.75", "5"];
+  return `10초에 채팅 ${w.gate}건(최근 2시간 평소의 ${busy}배) 또는 채팅한 사람 ${w.spikeGate ?? "-"}명(최근 15분 평소의 ${spike}배)`;
+}
+
+/** The capture's audio recording for candidate transcripts. */
+function audioText(v: LiveStatus): string {
+  switch (v.audio) {
+    case "recording":
+      return "받는 중 (가장 낮은 화질, 최근 25분만 이 컴퓨터에 두고 수집을 마치면 삭제). 판정한 후보 구간만 인식합니다.";
+    case "ended":
+      return "방송 스트림이 끝나 더 받지 않습니다.";
+    case "failed":
+      return v.audioNote || "방송 음성을 받지 못했습니다.";
+    default:
+      return "받지 않음 (설정 > 일반 설정에서 켤 수 있음)";
+  }
 }
 
 const savedText: Record<string, string> = {
@@ -605,6 +650,7 @@ function Files({ v, aiRunId, items, longForm }: { v: LiveStatus; aiRunId?: strin
     enabled: older.length > 0,
   });
   const [confirmed, ...plans] = cutGroups(all, items, longForm, cutPlans.data?.plans);
+  const transcript = useQuery({ queryKey: ["transcript", v.session.id], queryFn: () => api.transcript(v.session.id) });
   const record = entriesIn(all, saved, { "manifest.json": "수집 상태 JSON" });
   const groups: FileGroup[] = [
     confirmed!,
@@ -619,6 +665,8 @@ function Files({ v, aiRunId, items, longForm }: { v: LiveStatus; aiRunId?: strin
     },
     aiGroup(all, aiRunId),
     ...plans,
+    // The candidates' ranges recognised from the broadcast's audio while capturing.
+    transcriptGroup(all, transcript.data?.id),
     { id: "record", title: "수집 기록", entries: record },
   ];
   return (

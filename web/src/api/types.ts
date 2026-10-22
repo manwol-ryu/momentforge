@@ -27,6 +27,8 @@ export type JobPhase =
   | "comments"
   | "downloading"
   | "transcribing"
+  | "fixing"
+  | "reviewing"
   | "bundling"
   | "video"
   | "done"
@@ -35,7 +37,7 @@ export type JobPhase =
 
 export interface JobStatus {
   id: string;
-  kind: "collect" | "analyze" | "comments" | "import" | "transcribe" | "bundle" | "";
+  kind: "collect" | "analyze" | "comments" | "import" | "transcribe" | "bundle" | "review" | "";
   busy: boolean;
   phase: JobPhase | "";
   message: string;
@@ -164,6 +166,8 @@ export interface Utterance {
   endMs: number;
   speaker: string;
   text: string;
+  /** What speech recognition heard, when AI fixed the text. */
+  rawText?: string;
 }
 
 export interface TranscriptInfo {
@@ -173,6 +177,9 @@ export interface TranscriptInfo {
   utterances: number;
   coverage: { StartMs: number; EndMs: number }[];
   createdAt: string;
+  /** The AI run that fixed its text, and how many lines it changed. */
+  fixedBy?: string;
+  fixed: number;
 }
 
 export interface ASREngine {
@@ -218,7 +225,10 @@ export interface ContextChat extends Chat {
   isEvidence: boolean;
 }
 
-export type CandidateState = "generating" | "waiting_context" | "confirmed" | "partial";
+export type CandidateState = "generating" | "waiting_context" | "confirmed" | "partial" | "dropped";
+
+/** How far a LIVE capture judged a moment (REDESIGN 6.2.3): early (예비), judged 5 minutes after (5분 판정), final (확정). */
+export type CandidateTier = "early" | "judged" | "final";
 
 /** How a whole-broadcast candidate ranks among its analysis' candidates. */
 export type Strength = "strong" | "medium" | "weak";
@@ -257,8 +267,11 @@ export interface Candidate {
   strength?: Strength;
   rank?: number;
   measures?: Measure[];
-  /** LIVE only: how settled the candidate is. */
+  /** LIVE only: how settled the candidate is ("dropped": a judgment did not keep it; screens hide it). */
   state?: CandidateState;
+  /** LIVE captures from rules 3.1.0 on: how far it was judged, and the judged candidate that took a dropped one's place. */
+  tier?: CandidateTier;
+  replacedBy?: string;
   /** LIVE only: the viewer-count baseline at the peak, and whether it changed during the reaction. */
   viewerBaseline?: ViewerBaseline;
   baselineTransition?: boolean;
@@ -345,6 +358,12 @@ export interface LiveStatus {
   closedReason?: string;
   gaps: Gap[];
   lastWindow: DetectWindow | null;
+  /** Candidates come in tiers (예비 → 5분 판정 → 확정); false for captures before rules 3.1.0. */
+  tiered: boolean;
+  /** While capturing: the audio recording for candidate transcripts and why it stopped, and the last automatic step that could not run. */
+  audio?: "recording" | "ended" | "failed" | "off";
+  audioNote?: string;
+  autoNote?: string;
 }
 
 export interface LiveChat extends Chat {
@@ -561,7 +580,12 @@ export interface AIProvider {
   keyFoundIn?: string;
   /** Sends to a local program MomentForge can start and stop (CLIProxyAPI, OpenCodex). */
   hasService: boolean;
+  /** The model the provider recommends per task (transcript, explain, cut); absent ones use the provider's model. */
+  taskModels: Partial<Record<AITask, string>>;
 }
+
+/** What MomentForge sends to AI: fixing a transcript, explaining scenes, the cut analysis. */
+export type AITask = "transcript" | "explain" | "cut";
 
 /** How a provider's local program stands (CLIProxyAPI, OpenCodex). */
 export interface AIService {
@@ -602,10 +626,24 @@ export interface Settings {
   /** Cut analysis: search rounds per candidate (0 = no searching) and the KB of evidence searches may add. */
   cutSearchRounds: number;
   cutSearchKb: number;
+  /** Cut analysis: each search round's results wait for the user (send or go on without) before they are sent. */
+  cutConfirmSearches: boolean;
   /** Session backup bundles: their folder ("" = the data folder's backups), whether a new one includes the video, its quality. */
   backupDir: string;
   backupVideo: boolean;
   backupVideoHeight: number;
+  /** 일반 설정: send to AI by itself once candidates are found (the user agreed when turning it on), within limits per session. */
+  autoAI: boolean;
+  autoAIMaxRequests: number;
+  autoAICostCapUsd: number;
+  /** With autoAI: fix a recognised transcript from its context first. */
+  autoTranscriptFix: boolean;
+  /** Transcribe a collected VOD right after its analysis. */
+  autoTranscribe: boolean;
+  /** A LIVE capture keeps the broadcast's audio to transcribe its candidates. */
+  liveAudio: boolean;
+  /** Provider ID → task → model; missing ones use the provider's recommendation or model. */
+  aiTaskModels: Record<string, Partial<Record<AITask, string>>>;
 }
 
 export interface SettingsInfo extends Settings {
@@ -627,80 +665,6 @@ export interface AIModel {
 }
 
 export type AIDelivery = "single" | "batch";
-
-/** List price in US dollars per million tokens. */
-export interface AIPrice {
-  input: number;
-  output: number;
-  cache_read: number;
-  cache_write: number;
-  batch_share: number;
-  as_of: string;
-}
-
-/** Exactly what an AI run will send (snake_case as sent). */
-export interface AIPlan {
-  /** explain (recommendations) or cut (the cut analysis); absent means explain. */
-  kind?: "explain" | "cut";
-  provider: string;
-  model: string;
-  delivery: AIDelivery;
-  prompt: string;
-  ranges: { start_ms: number; end_ms: number }[];
-  chunks: unknown[];
-  omitted: { start_ms: number; end_ms: number; reason: string }[];
-  request_count: number;
-  planned_input_token_estimate: number;
-  input_token_upper_estimate: number;
-  output_token_limit: number;
-  request_attempt_limit: number;
-  estimate_note: string;
-  /** Absent when the model's price is unknown. */
-  price?: AIPrice;
-  cost_upper_usd?: number;
-  cost_cap_usd?: number;
-  fingerprint: string;
-}
-
-export interface AITokenCount {
-  inputTokens: number;
-  costUpperUsd: number;
-  hasPrice: boolean;
-}
-
-/** The cut analysis' part of a preview: what each candidate's steps start from. */
-export interface AICutPreview {
-  inputs: {
-    candidates: { id: string; source_type: string; anchor_ms: number; clip_start_ms: number; clip_end_ms: number; title: string }[];
-    window_start_ms: number;
-    window_end_ms: number;
-    duration_ms: number;
-    sources: string[];
-    evidence: { ref: string; kind: string; start_ms: number; end_ms?: number; speaker?: string; author?: string; text: string }[];
-  }[];
-  requestsPerCandidate: number;
-  plannedPerCandidate: number;
-  /** Searches run: the budget allows at least one round. */
-  searchExecuted: boolean;
-  searchRounds: number;
-  searchMaxKb: number;
-  /** Each search round's results wait for the user before they are sent. */
-  confirmSearches: boolean;
-  hasTranscript: boolean;
-  utteranceCount: number;
-  chatCount: number;
-  evidenceBytes: number;
-  /** Notes left on earlier versions, by candidate; the plan step reads them. */
-  notes: Record<string, CutNoteEntry[]>;
-  noteCount: number;
-}
-
-export interface AIPreview {
-  previewId: string;
-  expiresAt: string;
-  plan: AIPlan;
-  cut?: AICutPreview;
-}
 
 /** A cut plan in lists. */
 export interface CutPlanSummary {
@@ -725,7 +689,9 @@ export interface AIRun {
   sessionId: string;
   provider: string;
   model: string;
-  kind: "explain" | "cut";
+  kind: "explain" | "cut" | "transcript";
+  /** Who started it: the user (a preview, a button) or the automatic review of 일반 설정. */
+  origin: "user" | "auto";
   delivery: AIDelivery;
   state: AIRunState;
   requestCount: number;
@@ -760,23 +726,3 @@ export interface AIPending {
   evidence: { ref: string; kind: string; start_ms: number; end_ms?: number; speaker?: string; author?: string; text: string }[];
 }
 
-export interface AIRecommendation {
-  id: string;
-  sourceCandidateIds: string[];
-  startMs: number;
-  endMs: number;
-  title: string;
-  rationale: string;
-  uncertainty: string;
-  priority: "high" | "medium" | "low";
-}
-
-export interface AIComparison {
-  a: AIRun;
-  b: AIRun;
-  /** Both runs sent exactly the same chats. */
-  sameInput: boolean;
-  matched: { a: AIRecommendation; b: AIRecommendation; overlapMs: number }[];
-  onlyA: AIRecommendation[];
-  onlyB: AIRecommendation[];
-}

@@ -80,6 +80,7 @@ type aiActive struct {
 	cancel     context.CancelFunc // stops the work: sending (single) or waiting (batch; on shutdown)
 	userCancel chan struct{}      // batch: closed when the user cancels the batch
 	once       sync.Once
+	done       chan struct{} // closed when the run's work has ended
 }
 
 type aiPreview struct {
@@ -168,6 +169,9 @@ type AIProvider struct {
 	DefaultEndpoint string
 	EndpointHelp    string // what the address is
 	HasService      bool   // sends to a local program MomentForge can start and stop
+	// TaskModels: task (ai.Tasks) → the model the provider recommends for it
+	// (absent: none, the provider's model in the settings is used).
+	TaskModels map[string]string
 }
 
 // AIProviders lists providers (the default first) and whether each has a key.
@@ -184,6 +188,14 @@ func (a *App) AIProviders() []AIProvider {
 			DefaultModel: p.DefaultModel(), CanCount: count, CanListModels: models, CanBatch: batch, HasPrices: priced,
 			KeySource: a.ai.keySource[p.ID()], KeyName: keyName(p), KeyFoundIn: a.ai.keyWhere[p.ID()]}
 		_, v.HasService = p.(ai.Service)
+		v.TaskModels = map[string]string{}
+		if tm, ok := p.(ai.TaskModeler); ok {
+			for _, task := range ai.Tasks {
+				if m := tm.TaskModel(task); m != "" {
+					v.TaskModels[task] = m
+				}
+			}
+		}
 		if e, ok := p.(ai.Endpointed); ok {
 			v.Endpoint, v.DefaultEndpoint, v.EndpointHelp = e.Endpoint(), e.DefaultEndpoint(), e.EndpointHelp()
 		}
@@ -402,6 +414,14 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 		chats, _, err := a.cfg.Store.ChatsBetween(ctx, req.SessionID, from, to, src.maxSeq, 1_000_000, 0)
 		return chats, err
 	}
+	// What the broadcaster said goes with the chat when there is a transcript.
+	if t, ok, err := a.cfg.Store.LatestTranscript(ctx, req.SessionID); err != nil {
+		return AIPreview{}, err
+	} else if ok {
+		in.Utterances = func(from, to int64) ([]domain.Utterance, error) {
+			return a.cfg.Store.UtterancesBetween(ctx, t.ID, from, to, 2000)
+		}
+	}
 	add := func(it TimelineItem) {
 		in.Candidates = append(in.Candidates, ai.Candidate{ID: it.ID, SourceType: it.Source, AnchorMs: it.AnchorMs,
 			Title: it.Title, Statistics: explainStats(it)})
@@ -435,8 +455,8 @@ func (a *App) PreviewAI(ctx context.Context, req AIPreviewRequest) (AIPreview, e
 			}
 		}
 		for id := range want {
-			if src.pending[id] {
-				return AIPreview{}, domain.NewUserError("INPUT", "아직 반응이 이어지는 후보는 보낼 수 없습니다. 후보가 확정되면 다시 미리보기를 만들어 주세요.")
+			if why := src.pending[id]; why != "" {
+				return AIPreview{}, domain.NewUserError("INPUT", why)
 			}
 		}
 		if len(want) > 0 {
@@ -557,6 +577,12 @@ func (a *App) CountAIPreview(ctx context.Context, previewID, fingerprint string)
 // StartAI sends a confirmed preview. The fingerprint must match what the
 // user saw; the same completed plan is reused unless regenerate is set.
 func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regenerate bool) (string, error) {
+	return a.startAI(ctx, previewID, fingerprint, regenerate, store.AIOriginUser)
+}
+
+// startAI sends a preview for the user (a confirmed preview, a button) or
+// for the automatic work the user turned on (origin auto).
+func (a *App) startAI(ctx context.Context, previewID, fingerprint string, regenerate bool, origin string) (string, error) {
 	a.ai.mu.Lock()
 	defer a.ai.mu.Unlock()
 	pv, err := a.confirmedPreview(previewID, fingerprint)
@@ -601,7 +627,7 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 		return "", domain.NewUserError("BUSY", "결과를 기다리는 배치가 너무 많습니다. 끝난 뒤 다시 시도해 주세요.")
 	}
 	run := store.AIRun{SessionID: plan.SessionID, Provider: plan.Provider, Model: plan.Model, Fingerprint: plan.Fingerprint,
-		Delivery: plan.Delivery, AnalysisID: pv.analysisID, RequestCount: plan.RequestCount, PlanJSON: ai.Encode(plan)}
+		Delivery: plan.Delivery, AnalysisID: pv.analysisID, RequestCount: plan.RequestCount, PlanJSON: ai.Encode(plan), Origin: origin}
 	if plan.CostCapUSD > 0 {
 		run.CostCapUSD = &plan.CostCapUSD
 	}
@@ -642,7 +668,7 @@ func (a *App) StartAI(ctx context.Context, previewID, fingerprint string, regene
 // startActive registers work for a run; the caller holds a.ai.mu.
 func (a *App) startActive(runID string, batch bool) *aiActive {
 	ctx, cancel := context.WithCancel(a.ctx)
-	act := &aiActive{batch: batch, ctx: ctx, cancel: cancel, userCancel: make(chan struct{})}
+	act := &aiActive{batch: batch, ctx: ctx, cancel: cancel, userCancel: make(chan struct{}), done: make(chan struct{})}
 	a.ai.active[runID] = act
 	a.ai.wg.Add(1)
 	return act
@@ -655,7 +681,39 @@ func (a *App) endActive(runID string, act *aiActive) {
 		delete(a.ai.active, runID)
 	}
 	a.ai.mu.Unlock()
+	close(act.done)
 	a.ai.wg.Done()
+}
+
+// awaitRun waits for a run's work to end. When ctx ends first (the job
+// waiting for it was stopped) the run is cancelled and waited for.
+func (a *App) awaitRun(ctx context.Context, runID string) error {
+	a.ai.mu.Lock()
+	act := a.ai.active[runID]
+	a.ai.mu.Unlock()
+	if act == nil {
+		return nil
+	}
+	select {
+	case <-act.done:
+		return nil
+	case <-ctx.Done():
+		a.CancelAI(runID)
+		<-act.done
+		return ctx.Err()
+	}
+}
+
+// singleRunActive says whether a run sent request by request is going (only one at a time).
+func (a *App) singleRunActive() bool {
+	a.ai.mu.Lock()
+	defer a.ai.mu.Unlock()
+	for _, act := range a.ai.active {
+		if !act.batch {
+			return true
+		}
+	}
+	return false
 }
 
 // CancelAI asks a review to stop: a single run after the current request,
@@ -865,7 +923,8 @@ type AIRunView struct {
 	SessionID         string   `json:"sessionId"`
 	Provider          string   `json:"provider"`
 	Model             string   `json:"model"`
-	Kind              string   `json:"kind"`     // explain | cut
+	Kind              string   `json:"kind"`     // explain | cut | transcript
+	Origin            string   `json:"origin"`   // user | auto
 	Delivery          string   `json:"delivery"` // single | batch
 	State             string   `json:"state"`
 	RequestCount      int      `json:"requestCount"`
@@ -903,8 +962,9 @@ func (a *App) aiRunView(run store.AIRun, recs int) AIRunView {
 	if kind == "" {
 		kind = store.AIKindExplain
 	}
-	v := AIRunView{ID: run.ID, SessionID: run.SessionID, Provider: run.Provider, Model: run.Model, Kind: kind, Delivery: run.Delivery,
-		State: run.State, RequestCount: run.RequestCount, CompletedRequests: run.CompletedRequests, Attempts: run.Attempts,
+	v := AIRunView{ID: run.ID, SessionID: run.SessionID, Provider: run.Provider, Model: run.Model, Kind: kind, Origin: run.Origin,
+		Delivery: run.Delivery,
+		State:    run.State, RequestCount: run.RequestCount, CompletedRequests: run.CompletedRequests, Attempts: run.Attempts,
 		Rejected: run.Rejected, Recommendations: recs, InputTokens: run.InputTokens + run.CacheReadTokens + run.CacheWriteTokens,
 		CacheReadTokens: run.CacheReadTokens, CacheWriteTokens: run.CacheWriteTokens, OutputTokens: run.OutputTokens,
 		CostUSD: run.CostUSD, CostCapUSD: run.CostCapUSD, ErrorCode: run.ErrorCode, ErrorMessage: run.ErrorMessage,
@@ -966,20 +1026,41 @@ func (a *App) AIRuns(ctx context.Context, sid string) ([]AIRunView, error) {
 	return out, nil
 }
 
-// aiTimelineItems are the newest review's recommendations, each under the
-// current candidates it explains (hostsFor: found by time when the session
-// was analysed again after the review).
+// aiTimelineItems are the reviews' recommendations, each under the current
+// candidates it explains (hostsFor: found by time when the session was
+// analysed again after the review). Reviews come one after another (the
+// automatic review explains new candidates as they appear), so every
+// review counts, the newest first: a candidate keeps its newest
+// explanation, and new moments are kept once each.
 func (a *App) aiTimelineItems(ctx context.Context, sid string, watch func(int64) string, hosts momentHosts) (aiItems, error) {
-	run, ok, err := a.cfg.Store.LatestAIRun(ctx, sid)
-	if err != nil || !ok {
+	runs, err := a.cfg.Store.ExplainRuns(ctx, sid)
+	if err != nil || len(runs) == 0 {
 		return aiItems{}, err
 	}
-	out := aiItems{runID: run.ID}
-	for _, r := range runRecs(run) {
-		out.items = append(out.items, TimelineItem{ID: SourceAI + ":" + r.ID, Source: SourceAI, OriginID: r.ID,
-			AnchorMs: r.StartMs, ClipStartMs: r.StartMs, ClipEndMs: r.EndMs, Title: r.Title, Rationale: r.Rationale,
-			Uncertainty: r.Uncertainty, Priority: r.Priority, WatchURL: watch(r.StartMs),
-			SourceCandidateIDs: hosts.hostsFor(r.SourceCandidateIDs, run.AnalysisID, r.StartMs, r.EndMs, -1)})
+	out := aiItems{runID: runs[0].ID}
+	explained, kept := map[string]bool{}, map[string]bool{}
+	for _, run := range runs {
+		for _, r := range runRecs(run) {
+			ids := hosts.hostsFor(r.SourceCandidateIDs, run.AnalysisID, r.StartMs, r.EndMs, -1)
+			if len(ids) > 0 {
+				fresh := false
+				for _, id := range ids {
+					fresh = fresh || !explained[id]
+				}
+				if !fresh {
+					continue // a newer review explained these candidates
+				}
+				for _, id := range ids {
+					explained[id] = true
+				}
+			} else if kept[r.ID] {
+				continue
+			}
+			kept[r.ID] = true
+			out.items = append(out.items, TimelineItem{ID: SourceAI + ":" + r.ID, Source: SourceAI, OriginID: r.ID,
+				AnchorMs: r.StartMs, ClipStartMs: r.StartMs, ClipEndMs: r.EndMs, Title: r.Title, Rationale: r.Rationale,
+				Uncertainty: r.Uncertainty, Priority: r.Priority, WatchURL: watch(r.StartMs), SourceCandidateIDs: ids})
+		}
 	}
 	return out, nil
 }

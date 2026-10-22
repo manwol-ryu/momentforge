@@ -241,8 +241,15 @@ func (s *Store) UpsertLiveCandidates(ctx context.Context, sid string, cands []do
 }
 
 // LiveCandidates returns candidates changed after afterRevision (0: all),
-// ordered by clip start, and the latest revision.
+// ordered by clip start, and the latest revision. The revision is read
+// first: every change up to it is among the rows (a change committed
+// meanwhile comes too, and again after it), so a caller asking from it
+// next never misses one.
 func (s *Store) LiveCandidates(ctx context.Context, sid string, afterRevision int64) ([]domain.Candidate, int64, error) {
+	var rev int64
+	if err := s.db.QueryRowContext(ctx, `SELECT revision FROM live_state WHERE session_id=?`, sid).Scan(&rev); err != nil {
+		return nil, 0, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT body_json FROM live_candidates WHERE session_id=? AND revision>?
 		ORDER BY clip_start_ms, id`, sid, afterRevision)
 	if err != nil {
@@ -260,10 +267,6 @@ func (s *Store) LiveCandidates(ctx context.Context, sid string, afterRevision in
 			return nil, 0, err
 		}
 		out = append(out, c)
-	}
-	var rev int64
-	if err := s.db.QueryRowContext(ctx, `SELECT revision FROM live_state WHERE session_id=?`, sid).Scan(&rev); err != nil {
-		return nil, 0, err
 	}
 	return out, rev, rows.Err()
 }

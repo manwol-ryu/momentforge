@@ -26,8 +26,16 @@ const (
 
 // AI run kinds.
 const (
-	AIKindExplain = "explain" // recommendations from chunks (the first-generation review)
-	AIKindCut     = "cut"     // cut plans, one per candidate (docs/AI-CUT-ANALYSIS.md)
+	AIKindExplain    = "explain"    // recommendations from chunks (the first-generation review)
+	AIKindCut        = "cut"        // cut plans, one per candidate (docs/AI-CUT-ANALYSIS.md)
+	AIKindTranscript = "transcript" // fixes of a recognised transcript (its utterances keep what was heard)
+)
+
+// Who started a run: the user confirming a preview or pressing a button,
+// or the automatic work turned on in 일반 설정.
+const (
+	AIOriginUser = "user"
+	AIOriginAuto = "auto"
 )
 
 // AIRun is one confirmed AI review. JSON fields are owned by the caller.
@@ -38,7 +46,8 @@ type AIRun struct {
 	Model               string
 	Fingerprint         string
 	State               string
-	Kind                string // explain | cut
+	Kind                string // explain | cut | transcript
+	Origin              string // user | auto
 	Delivery            string // single | batch
 	AnalysisID          string // the rule analysis whose candidate IDs the inputs name ("" none)
 	BatchID             string // provider batch ID once submitted
@@ -71,13 +80,16 @@ func (s *Store) CreateAIRun(ctx context.Context, r AIRun) (AIRun, error) {
 	if r.Kind == "" {
 		r.Kind = AIKindExplain
 	}
+	if r.Origin == "" {
+		r.Origin = AIOriginUser
+	}
 	r.CreatedAt = time.Now().UTC()
 	r.UpdatedAt = r.CreatedAt
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_runs (id, session_id, provider, model, fingerprint, state, kind, delivery,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_runs (id, session_id, provider, model, fingerprint, state, kind, origin, delivery,
 		analysis_id, request_count, cost_cap_usd, plan_json, recommendations_json, usage_json, sent_log_json, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]','[]',?,?)`,
-		r.ID, r.SessionID, r.Provider, r.Model, r.Fingerprint, r.State, r.Kind, r.Delivery, r.AnalysisID, r.RequestCount, r.CostCapUSD,
-		string(r.PlanJSON), r.CreatedAt.Format(time.RFC3339Nano), r.UpdatedAt.Format(time.RFC3339Nano))
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]','[]',?,?)`,
+		r.ID, r.SessionID, r.Provider, r.Model, r.Fingerprint, r.State, r.Kind, r.Origin, r.Delivery, r.AnalysisID, r.RequestCount,
+		r.CostCapUSD, string(r.PlanJSON), r.CreatedAt.Format(time.RFC3339Nano), r.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return r, fmt.Errorf("create AI run: %w", err)
 	}
@@ -98,7 +110,7 @@ func (s *Store) SaveAIRun(ctx context.Context, r AIRun) error {
 const aiColumns = `id, session_id, provider, model, fingerprint, state, kind, delivery, analysis_id, COALESCE(batch_id,''), request_count,
 	plan_json, recommendations_json, usage_json, sent_log_json, completed_requests, attempts, rejected, input_tokens, cache_read_tokens,
 	cache_write_tokens, output_tokens, cost_usd, cost_cap_usd, COALESCE(error_code,''), COALESCE(error_message,''),
-	created_at, updated_at`
+	created_at, updated_at, origin`
 
 // aiListColumns leaves out the plan and the sent log, which hold every chat sent.
 var aiListColumns = strings.NewReplacer("plan_json", "''", "sent_log_json", "'[]'").Replace(aiColumns)
@@ -110,7 +122,7 @@ func scanAIRun(row interface{ Scan(...any) error }) (AIRun, error) {
 	err := row.Scan(&r.ID, &r.SessionID, &r.Provider, &r.Model, &r.Fingerprint, &r.State, &r.Kind, &r.Delivery, &r.AnalysisID, &r.BatchID,
 		&r.RequestCount, &plan, &recs, &usage, &sent, &r.CompletedRequests, &r.Attempts, &r.Rejected, &r.InputTokens,
 		&r.CacheReadTokens, &r.CacheWriteTokens, &r.OutputTokens, &cost, &limit, &r.ErrorCode, &r.ErrorMessage,
-		&created, &updated)
+		&created, &updated, &r.Origin)
 	r.PlanJSON, r.RecommendationsJSON, r.UsageJSON, r.SentLogJSON = []byte(plan), []byte(recs), []byte(usage), []byte(sent)
 	if cost.Valid {
 		r.CostUSD = &cost.Float64
@@ -180,6 +192,41 @@ func (s *Store) LatestAIRun(ctx context.Context, sid string) (AIRun, bool, error
 		return r, false, nil
 	}
 	return r, err == nil, err
+}
+
+// ExplainRuns are a session's reviews of recommendations that have a
+// result (completed or partial), newest first, with their recommendations.
+func (s *Store) ExplainRuns(ctx context.Context, sid string) ([]AIRun, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+aiListColumns+` FROM ai_runs WHERE session_id=? AND state IN (?,?)
+		AND kind=? ORDER BY created_at DESC LIMIT 200`, sid, AICompleted, AIPartial, AIKindExplain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AIRun
+	for rows.Next() {
+		r, err := scanAIRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// AIUsage is what a session's runs of one origin have used: requests sent
+// (attempts) and their cost where it is known.
+type AIUsage struct {
+	Requests int
+	CostUSD  float64
+}
+
+// AIUsageOf sums the requests and costs of a session's runs started by origin.
+func (s *Store) AIUsageOf(ctx context.Context, sid, origin string) (AIUsage, error) {
+	var u AIUsage
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(attempts),0), COALESCE(SUM(cost_usd),0) FROM ai_runs
+		WHERE session_id=? AND origin=?`, sid, origin).Scan(&u.Requests, &u.CostUSD)
+	return u, err
 }
 
 // CompletedAIRun returns a completed run of the same plan, if any.

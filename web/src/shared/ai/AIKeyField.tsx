@@ -86,7 +86,7 @@ export function AIKeyField({ provider: p, extra, onChanged }: Props) {
       {keep && (
         <p className="field-help">키를 데이터 폴더의 .env에 평문으로 저장합니다. 이 폴더를 다른 사람과 공유하거나 동기화하지 마세요.</p>
       )}
-      <p className="actions">
+      <div className="actions">
         <button type="button" className="button button-quiet" onClick={() => save.mutate(key)} disabled={!key.trim() || save.isPending}>
           키 저장
         </button>
@@ -101,7 +101,7 @@ export function AIKeyField({ provider: p, extra, onChanged }: Props) {
           />
         )}
         {extra}
-      </p>
+      </div>
       {p.configured && <p className="field-help">{sourceText(p)}</p>}
       {save.isError && (
         <p className="error" role="alert">

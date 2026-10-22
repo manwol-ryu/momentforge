@@ -54,8 +54,8 @@ def test_candidates_by_strength(page: Page, base_url: str) -> None:
     """The sample is analyzed as a whole broadcast, so its candidates are ranked:
     each row shows its timeline number, strength and what stood out against the
     usual; the list sorts by strength and hides weak ones (the timeline marks what
-    the list shows, and the choice is remembered); the strong and medium ones
-    can be picked for the AI review at once; the bars read against the usual."""
+    the list shows, and the choice is remembered); the AI line says the sample
+    is not sent by itself; the bars read against the usual."""
     open_sample(page, base_url)
     rows = page.locator("ol.candidates > li")
     expect(rows).to_have_count(3)
@@ -80,11 +80,9 @@ def test_candidates_by_strength(page: Page, base_url: str) -> None:
     page.get_by_role("radio", name="모든 강도").check()
     expect(rows).to_have_count(3)
 
-    page.get_by_role("button", name=f"강함·보통 {kept}개 AI 검토에 고르기").click()
-    expect(page.get_by_text(f"AI 검토에 고른 후보 {kept}개")).to_be_visible()
-    expect(page.get_by_role("button", name="강함·보통 후보를 모두 골랐습니다")).to_be_disabled()
-    page.get_by_role("button", name="고른 후보 비우기").click()
-    expect(page.locator(".pick-bar")).to_have_count(0)
+    # No picking for the AI review any more: the AI line above the list says what happens.
+    expect(page.locator("ol.candidates input[type=checkbox]")).to_have_count(0)
+    expect(page.locator(".ai-bar")).to_contain_text("샘플은 저절로 AI로 보내지 않습니다.")
 
     graph = page.get_by_role("img", name=re.compile("반응 밀도 그래프"))
     expect(graph).to_have_attribute("data-scale", "score")

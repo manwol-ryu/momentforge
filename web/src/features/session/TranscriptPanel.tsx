@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Session } from "../../api/types";
 import { timecode } from "../../shared/format";
@@ -28,7 +28,12 @@ const sourceText = { asr: "이 컴퓨터에서 인식", file: "자막 파일", d
  */
 export function TranscriptPanel({ s, busy, playhead, durationMs, onPick }: Props) {
   const queryClient = useQueryClient();
-  const transcript = useQuery({ queryKey: ["transcript", s.id, s.updatedAt], queryFn: () => api.transcript(s.id) });
+  // A job that ends changes the session's updatedAt: the panel keeps showing (and keeps an open caption form) while it asks again.
+  const transcript = useQuery({
+    queryKey: ["transcript", s.id, s.updatedAt],
+    queryFn: () => api.transcript(s.id),
+    placeholderData: keepPreviousData,
+  });
   const [page, setPage] = useState<number | null>(null); // null: follow the playhead
   const playheadPage = usePlayhead(playhead, (ms) => Math.floor(ms / WINDOW_MS));
   const current = page ?? playheadPage;
@@ -93,6 +98,11 @@ export function TranscriptPanel({ s, busy, playhead, durationMs, onPick }: Props
           </span>
         )}
       </div>
+      {t && t.fixed > 0 && (
+        <p className="field-help transcript-fixed">
+          AI가 앞뒤 맥락으로 {t.fixed.toLocaleString("ko-KR")}줄을 다듬었습니다. 다듬은 줄에 마우스를 올리면 인식한 원문이 보입니다.
+        </p>
+      )}
       {transcript.isPending ? (
         <p className="empty">확인하는 중</p>
       ) : working && !t ? (
@@ -151,12 +161,22 @@ export function TranscriptPanel({ s, busy, playhead, durationMs, onPick }: Props
             <ol className="chatlog transcript-lines" aria-label="발언 목록" data-pickable>
               {shown.map((u) => (
                 <li key={u.id} data-current={sayingIds.has(u.id) || undefined}>
-                  <button type="button" className="chat-row" title="이 발언으로 이동" onClick={() => onPick(u.startMs)}>
+                  <button
+                    type="button"
+                    className="chat-row"
+                    title={u.rawText ? `인식한 원문: ${u.rawText}` : "이 발언으로 이동"}
+                    onClick={() => onPick(u.startMs)}
+                  >
                     <span className="chat-time timecode">{timecode(u.startMs, longForm)}</span>
                     <span className="chat-author" data-tone={3}>
                       {u.speaker}
                     </span>
                     <span className="chat-text">{u.text}</span>
+                    {u.rawText && (
+                      <span className="chat-fixed" aria-label={`AI가 다듬음. 인식한 원문: ${u.rawText}`}>
+                        다듬음
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}

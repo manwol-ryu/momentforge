@@ -35,6 +35,12 @@ func (s *Store) queryChats(ctx context.Context, q string, args ...any) ([]domain
 	return out, rows.Err()
 }
 
+// ChatsIn returns a session's chat with offsets in [from, to), in time order.
+func (s *Store) ChatsIn(ctx context.Context, sid string, from, to int64) ([]domain.ChatEvent, error) {
+	return s.queryChats(ctx, "SELECT "+chatColumns+" FROM chat_events WHERE session_id=? AND offset_ms>=? AND offset_ms<? ORDER BY offset_ms, seq",
+		sid, from, to)
+}
+
 // Chats returns a session's chat with seq <= maxSeq, in time order
 // (byArrival: in arrival order, as chat.received.txt).
 func (s *Store) Chats(ctx context.Context, sid string, maxSeq int64, byArrival bool) ([]domain.ChatEvent, error) {

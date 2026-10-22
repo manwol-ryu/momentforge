@@ -34,11 +34,27 @@ const (
 	envSensitive        = "COLLECT_SENSITIVE"
 	envIncludeComments  = "COLLECT_COMMENTS"
 	envViewerAdaptive   = "LIVE_VIEWER_ADAPTIVE"
-	envCutSearchRounds  = "AI_CUT_SEARCH_ROUNDS" // cut analysis: analyze rounds after the first (0 = no searching)
-	envCutSearchKB      = "AI_CUT_SEARCH_KB"     // cut analysis: text searches may add per candidate
-	envBackupDir        = "BACKUP_DIR"           // where session backup bundles go ("" = <data>/backups)
-	envBackupVideo      = "BACKUP_VIDEO"         // a new bundle includes the video by default
-	envBackupHeight     = "BACKUP_VIDEO_HEIGHT"  // the tallest video rendition a bundle downloads
+	envCutSearchRounds  = "AI_CUT_SEARCH_ROUNDS"    // cut analysis: analyze rounds after the first (0 = no searching)
+	envCutSearchKB      = "AI_CUT_SEARCH_KB"        // cut analysis: text searches may add per candidate
+	envCutConfirm       = "AI_CUT_CONFIRM_SEARCHES" // cut analysis: each search round's results wait for the user
+	envBackupDir        = "BACKUP_DIR"              // where session backup bundles go ("" = <data>/backups)
+	envBackupVideo      = "BACKUP_VIDEO"            // a new bundle includes the video by default
+	envBackupHeight     = "BACKUP_VIDEO_HEIGHT"     // the tallest video rendition a bundle downloads
+	// 일반 설정 (docs/REDESIGN.md 15, 2026-10-22): what runs by itself once candidates are found.
+	envAutoAI            = "AUTO_AI_REVIEW"         // send to AI without a preview (the user agreed when turning it on)
+	envAutoAIRequests    = "AUTO_AI_MAX_REQUESTS"   // requests one session's automatic AI work may send at most
+	envAutoAICost        = "AUTO_AI_COST_CAP_USD"   // and what it may cost, for models with a known price
+	envAutoFix           = "AUTO_AI_TRANSCRIPT_FIX" // with auto AI: fix a recognised transcript from its context first
+	envAutoTranscribe    = "AUTO_TRANSCRIBE"        // a collected VOD is transcribed right after its analysis
+	envLiveAudio         = "LIVE_RECORD_AUDIO"      // a LIVE capture keeps the broadcast's audio to transcribe its candidates
+	envAITaskModelPrefix = "AI_TASK_MODEL_"         // + task + "_" + provider: the model one task uses
+)
+
+// Limits of the automatic AI work per session (일반 설정).
+const (
+	defaultAutoAIRequests = 60
+	maxAutoAIRequests     = 500
+	defaultAutoAICostUSD  = 3.0
 )
 
 // BackupHeights are the video qualities a bundle can download (docs/AI-CUT-ANALYSIS.md 2.5).
@@ -76,12 +92,31 @@ type Settings struct {
 	// evidence they may bring in.
 	CutSearchRounds int
 	CutSearchKB     int
+	// CutConfirmSearches makes each search round's results wait for the
+	// user (send or go on without them) before they are sent.
+	CutConfirmSearches bool
 	// Session backup bundles (docs/AI-CUT-ANALYSIS.md 2.5): the folder they
 	// go in ("" for <data>/backups), whether a new bundle includes the
 	// video, and the tallest rendition it downloads.
 	BackupDir         string
 	BackupVideo       bool
 	BackupVideoHeight int
+	// 일반 설정: AutoAI sends to AI without a preview once candidates are
+	// found (explaining every candidate, after fixing a fresh transcript when
+	// AutoTranscriptFix), within AutoAIMaxRequests requests and, for a model
+	// with a known price, AutoAICostCapUSD per session. AutoTranscribe
+	// transcribes a collected VOD right after its analysis; LiveAudio keeps a
+	// LIVE capture's audio to transcribe its candidates.
+	AutoAI            bool
+	AutoAIMaxRequests int
+	AutoAICostCapUSD  float64
+	AutoTranscriptFix bool
+	AutoTranscribe    bool
+	LiveAudio         bool
+	// AITaskModels: provider ID → task (ai.Tasks) → the model that task
+	// uses; a missing one is the provider's recommendation for the task,
+	// else the provider's model in AIModels, else its default.
+	AITaskModels map[string]map[string]string
 }
 
 // SettingsInfo is Settings with the files that keep them and the keys.
@@ -138,17 +173,33 @@ func (a *App) Settings() SettingsInfo {
 		}
 		return def
 	}
+	dollars := func(name string, def float64) float64 {
+		if v, ok := lookupEnv(raw, name); ok {
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && validCostCap(f) {
+				return f
+			}
+		}
+		return def
+	}
 	s := Settings{
-		AIModels:          map[string]string{},
-		AIEndpoints:       map[string]string{},
-		ASRPaths:          map[string]map[string]string{},
-		Sensitive:         flag(envSensitive, false),
-		IncludeComments:   flag(envIncludeComments, true),
-		ViewerAdaptive:    flag(envViewerAdaptive, true),
-		CutSearchRounds:   number(envCutSearchRounds, cut.DefaultSearchRounds, 0, cut.MaxSearchRounds),
-		CutSearchKB:       number(envCutSearchKB, cut.DefaultSearchKB, 0, cut.MaxSearchKB),
-		BackupVideo:       flag(envBackupVideo, true),
-		BackupVideoHeight: number(envBackupHeight, defaultBackupHeight, 1, 4320),
+		AIModels:           map[string]string{},
+		AIEndpoints:        map[string]string{},
+		ASRPaths:           map[string]map[string]string{},
+		Sensitive:          flag(envSensitive, false),
+		IncludeComments:    flag(envIncludeComments, true),
+		ViewerAdaptive:     flag(envViewerAdaptive, true),
+		CutSearchRounds:    number(envCutSearchRounds, cut.DefaultSearchRounds, 0, cut.MaxSearchRounds),
+		CutSearchKB:        number(envCutSearchKB, cut.DefaultSearchKB, 0, cut.MaxSearchKB),
+		CutConfirmSearches: flag(envCutConfirm, false),
+		BackupVideo:        flag(envBackupVideo, true),
+		BackupVideoHeight:  number(envBackupHeight, defaultBackupHeight, 1, 4320),
+		AutoAI:             flag(envAutoAI, false),
+		AutoAIMaxRequests:  number(envAutoAIRequests, defaultAutoAIRequests, 1, maxAutoAIRequests),
+		AutoAICostCapUSD:   dollars(envAutoAICost, defaultAutoAICostUSD),
+		AutoTranscriptFix:  flag(envAutoFix, true),
+		AutoTranscribe:     flag(envAutoTranscribe, true),
+		LiveAudio:          flag(envLiveAudio, true),
+		AITaskModels:       map[string]map[string]string{},
 	}
 	if !slices.Contains(BackupHeights, s.BackupVideoHeight) {
 		s.BackupVideoHeight = defaultBackupHeight
@@ -168,6 +219,14 @@ func (a *App) Settings() SettingsInfo {
 	for _, p := range a.cfg.AI.All() {
 		if m, _ := lookupEnv(raw, envAIModelPrefix+envName(p.ID())); m != "" && validModel(m) {
 			s.AIModels[p.ID()] = m
+		}
+		for _, task := range ai.Tasks {
+			if m, _ := lookupEnv(raw, taskModelEnv(task, p.ID())); m != "" && validModel(m) {
+				if s.AITaskModels[p.ID()] == nil {
+					s.AITaskModels[p.ID()] = map[string]string{}
+				}
+				s.AITaskModels[p.ID()][task] = m
+			}
 		}
 		if _, ok := p.(ai.Endpointed); ok {
 			if u, _ := lookupEnv(raw, envAIEndpointPrefix+envName(p.ID())); u != "" {
@@ -202,6 +261,32 @@ func (a *App) Settings() SettingsInfo {
 
 func asrEnvName(engine, key string) string {
 	return envASRPrefix + envName(engine) + "_" + envName(key)
+}
+
+func taskModelEnv(task, provider string) string {
+	return envAITaskModelPrefix + envName(task) + "_" + envName(provider)
+}
+
+// validCostCap is a positive limit up to the largest cost cap a review takes.
+func validCostCap(f float64) bool { return f > 0 && f <= aiMaxCostCapUSD }
+
+// TaskModel is the model a task uses with a provider: the one set for the
+// task, else the provider's recommendation for it, else the provider's
+// model in the settings, else its default.
+func (a *App) TaskModel(p ai.Provider, task string) string {
+	s := a.Settings()
+	if m := s.AITaskModels[p.ID()][task]; m != "" {
+		return m
+	}
+	if tm, ok := p.(ai.TaskModeler); ok {
+		if m := tm.TaskModel(task); m != "" {
+			return m
+		}
+	}
+	if m := s.AIModels[p.ID()]; m != "" {
+		return m
+	}
+	return p.DefaultModel()
 }
 
 // validPath is a non-empty path without control characters, up to 1024 bytes.
@@ -252,6 +337,29 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 	for _, p := range a.cfg.AI.All() {
 		if u := endpoints[p.ID()]; u != "" {
 			entries = append(entries, envEntry{envAIEndpointPrefix + envName(p.ID()), u})
+		}
+	}
+	for id, tasks := range s.AITaskModels {
+		if _, ok := a.cfg.AI.Get(id); !ok {
+			return SettingsInfo{}, domain.NewUserError("INPUT", "작업별 모델을 정할 AI 제공자를 목록에서 골라 주세요.")
+		}
+		for task := range tasks {
+			if !slices.Contains(ai.Tasks, task) {
+				return SettingsInfo{}, domain.NewUserError("INPUT", "모델을 정할 수 없는 작업입니다: "+task)
+			}
+		}
+	}
+	for _, p := range a.cfg.AI.All() { // registration and task order keep the file stable
+		for _, task := range ai.Tasks {
+			m := strings.TrimSpace(s.AITaskModels[p.ID()][task])
+			if m == "" {
+				continue
+			}
+			if !validModel(m) {
+				return SettingsInfo{}, domain.NewUserError("INPUT",
+					p.Name()+" 작업별 모델 ID를 확인해 주세요. 줄바꿈 없이 "+strconv.Itoa(aiMaxModelLength)+"자까지 쓸 수 있습니다.")
+			}
+			entries = append(entries, envEntry{taskModelEnv(task, p.ID()), m})
 		}
 	}
 	if s.ASREngine != "" {
@@ -308,14 +416,34 @@ func (a *App) SaveSettings(s Settings) (SettingsInfo, error) {
 	if !slices.Contains(BackupHeights, s.BackupVideoHeight) {
 		return SettingsInfo{}, domain.NewUserError("INPUT", "백업 묶음의 영상 화질을 목록에서 골라 주세요.")
 	}
+	// Zero limits are the defaults (a caller that predates them).
+	if s.AutoAIMaxRequests == 0 {
+		s.AutoAIMaxRequests = defaultAutoAIRequests
+	}
+	if s.AutoAICostCapUSD == 0 {
+		s.AutoAICostCapUSD = defaultAutoAICostUSD
+	}
+	if s.AutoAIMaxRequests < 1 || s.AutoAIMaxRequests > maxAutoAIRequests {
+		return SettingsInfo{}, domain.NewUserError("INPUT", fmt.Sprintf("자동 AI 검토의 요청 한도는 1~%d회로 정해 주세요.", maxAutoAIRequests))
+	}
+	if !validCostCap(s.AutoAICostCapUSD) {
+		return SettingsInfo{}, domain.NewUserError("INPUT", fmt.Sprintf("자동 AI 검토의 비용 한도는 0보다 크고 %d달러 이하로 정해 주세요.", aiMaxCostCapUSD))
+	}
 	entries = append(entries,
 		envEntry{envSensitive, strconv.FormatBool(s.Sensitive)},
 		envEntry{envIncludeComments, strconv.FormatBool(s.IncludeComments)},
 		envEntry{envViewerAdaptive, strconv.FormatBool(s.ViewerAdaptive)},
 		envEntry{envCutSearchRounds, strconv.Itoa(s.CutSearchRounds)},
 		envEntry{envCutSearchKB, strconv.Itoa(s.CutSearchKB)},
+		envEntry{envCutConfirm, strconv.FormatBool(s.CutConfirmSearches)},
 		envEntry{envBackupVideo, strconv.FormatBool(s.BackupVideo)},
 		envEntry{envBackupHeight, strconv.Itoa(s.BackupVideoHeight)},
+		envEntry{envAutoAI, strconv.FormatBool(s.AutoAI)},
+		envEntry{envAutoAIRequests, strconv.Itoa(s.AutoAIMaxRequests)},
+		envEntry{envAutoAICost, strconv.FormatFloat(s.AutoAICostCapUSD, 'f', -1, 64)},
+		envEntry{envAutoFix, strconv.FormatBool(s.AutoTranscriptFix)},
+		envEntry{envAutoTranscribe, strconv.FormatBool(s.AutoTranscribe)},
+		envEntry{envLiveAudio, strconv.FormatBool(s.LiveAudio)},
 	)
 	a.settings.mu.Lock()
 	err := writeEnvFile(a.settingsPath(), settingsHeader, entries)

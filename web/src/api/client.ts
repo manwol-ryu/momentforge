@@ -4,15 +4,11 @@ import type {
   BundleView,
   TranscriptInfo,
   Utterance,
-  AIComparison,
-  AIDelivery,
   AIKeySource,
   AIModel,
-  AIPreview,
   AIProvider,
   AIRun,
   AIService,
-  AITokenCount,
   Analysis,
   ApiErrorBody,
   Candidate,
@@ -111,31 +107,7 @@ export const api = {
   aiService: (provider: string) => getJSON<AIService>(`/api/ai/service?provider=${enc(provider)}`),
   aiServiceControl: (provider: string, action: "start" | "stop") =>
     postJSON<AIService>("/api/ai/service", { provider, action }),
-  aiPreview: (req: {
-    sessionId: string;
-    provider: string;
-    model: string;
-    /** explain (default) or cut: the cut analysis of the picked candidates. */
-    kind?: "explain" | "cut";
-    mode: "candidates" | "all" | "range";
-    itemIds?: string[];
-    startMs?: number;
-    endMs?: number;
-    /** Range up to where the session offers (a VOD's end, a LIVE capture's analysed point) instead of endMs. */
-    toEnd?: boolean;
-    delivery: AIDelivery;
-    costCapUsd?: number;
-    /** Cut analysis: each search round's results wait for the user before they are sent. */
-    confirmSearches?: boolean;
-    /** Cut analysis: item ID → the plan whose versions the new analysis continues. */
-    continuePlans?: Record<string, string>;
-  }) => postJSON<AIPreview>("/api/ai/preview", req),
-  aiCount: (previewId: string, fingerprint: string) =>
-    postJSON<AITokenCount>("/api/ai/preview/count", { previewId, fingerprint }),
   aiRuns: (sessionId: string) => getJSON<{ runs: AIRun[] }>(`/api/sessions/${enc(sessionId)}/ai/runs`),
-  aiCompare: (a: string, b: string) => getJSON<AIComparison>(`/api/ai/compare?a=${enc(a)}&b=${enc(b)}`),
-  aiStart: (previewId: string, fingerprint: string, regenerate = false) =>
-    postJSON<{ id: string }>("/api/ai/runs", { previewId, fingerprint, regenerate }),
   aiRun: (id: string) => getJSON<AIRun>(`/api/ai/runs/${enc(id)}`),
   cutPlans: (sessionId: string) => getJSON<{ plans: CutPlanSummary[] }>(`/api/sessions/${enc(sessionId)}/cuts`),
   cutPlan: (id: string) => getJSON<{ summary: CutPlanSummary; detail: CutDetail; plan: unknown }>(`/api/cuts/${enc(id)}`),
@@ -152,6 +124,11 @@ export const api = {
   importBackup: (req: { path: string; transcribe: boolean; sensitive: boolean }) => postJSON<JobStatus>("/api/import/backup", req),
   asrEngines: () => getJSON<{ engines: ASREngine[] }>("/api/asr"),
   transcribe: (sessionId: string) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/transcribe`),
+  /** The automatic AI work for one session now ("AI 장면 설명 받기"): the transcript fix and the explanations. */
+  startAIReview: (sessionId: string) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/ai/review`),
+  /** One candidate's cut analysis now ("AI 컷 분석", or a result box's "다시 분석" continuing planId). */
+  startCut: (sessionId: string, itemId: string, planId?: string) =>
+    postJSON<{ id: string }>(`/api/sessions/${enc(sessionId)}/cuts`, { itemId, planId }),
   bundle: (sessionId: string) => getJSON<BundleView>(`/api/sessions/${enc(sessionId)}/bundle`),
   startBundle: (sessionId: string, video: boolean) => postJSON<JobStatus>(`/api/sessions/${enc(sessionId)}/bundle`, { video }),
   transcript: (sessionId: string) => getJSON<TranscriptInfo | null>(`/api/sessions/${enc(sessionId)}/transcript`),

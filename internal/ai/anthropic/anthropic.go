@@ -73,6 +73,19 @@ func (*Claude) KeyEnv() string       { return "ANTHROPIC_API_KEY" }
 func (*Claude) DefaultModel() string { return DefaultModel }
 func (*Claude) MaxOutputTokens() int { return maxOutput }
 
+// taskModels are the models each task starts with: fixing a transcript is
+// many short, simple requests (the fastest, cheapest model), a scene
+// explanation weighs chat and speech (a balanced one), and the cut analysis
+// reasons over steps and evidence (the strongest).
+var taskModels = map[string]string{
+	ai.TaskTranscript: "claude-haiku-5-5",
+	ai.TaskExplain:    "claude-sonnet-5-5",
+	ai.TaskCut:        DefaultModel,
+}
+
+// TaskModel recommends a model for a task ("" for an unknown task).
+func (*Claude) TaskModel(task string) string { return taskModels[task] }
+
 // Price returns a model's list price.
 func (*Claude) Price(model string) (ai.Price, bool) {
 	p, ok := prices[model]

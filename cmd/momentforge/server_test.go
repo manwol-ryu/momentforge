@@ -202,6 +202,10 @@ func TestCollectThroughAPIWithFakeChzzk(t *testing.T) {
 	ts := fakeChzzk(t)
 	u, _ := url.Parse(ts.URL)
 	dir := t.TempDir()
+	// The fake serves no audio: the collection stops after its analysis instead of transcribing.
+	if err := os.WriteFile(filepath.Join(dir, "settings.env"), []byte("AUTO_TRANSCRIBE=false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s, err := start(context.Background(), options{Port: 0, DataDir: dir, Version: "test", Assets: testAssets,
 		Platforms: []platform.Platform{chzzk.New(chzzk.WithAPIBase(ts.URL, u.Hostname()), chzzk.WithInterval(0))}})
 	if err != nil {

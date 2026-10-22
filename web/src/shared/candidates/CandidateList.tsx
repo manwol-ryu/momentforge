@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { Candidate, CandidateState } from "../../api/types";
+import type { Candidate, CandidateState, CandidateTier } from "../../api/types";
 import { timecode } from "../format";
 import { measureParts, strengthLabel, topMeasures } from "./strength";
 
@@ -8,7 +8,27 @@ const stateText: Record<CandidateState, string> = {
   waiting_context: "뒤 채팅 기다리는 중",
   confirmed: "확정",
   partial: "부분 문맥으로 마감",
+  dropped: "판정에서 빠짐",
 };
+
+/** A LIVE capture's tiers (REDESIGN 6.2.3), and what each one means. */
+export const tierText: Record<CandidateTier, string> = { early: "예비", judged: "5분 판정", final: "확정" };
+const tierHelp: Record<CandidateTier, string> = {
+  early: "채팅이 몰리자마자 민감한 기준으로 먼저 띄운 후보입니다. 반응 5분 뒤 다시보기와 같은 기준으로 다시 판정합니다.",
+  judged: "반응 뒤 5분 채팅까지 보고 다시보기와 같은 기준으로 판정했습니다. 30분 뒤에 확정합니다.",
+  final: "반응 뒤 30분 채팅까지 보고(또는 수집을 마치며) 확정했습니다.",
+};
+
+/**
+ * What a candidate's state badge says and how it looks: with tiers, only
+ * what the tier does not ("5분 판정 대기" for an early one that stopped growing).
+ */
+function stateBadge(c: Candidate): { text: string; look: CandidateState } | null {
+  if (!c.state) return null;
+  if (!c.tier || c.state === "generating" || c.state === "waiting_context") return { text: stateText[c.state], look: c.state };
+  if (c.tier === "early") return { text: "5분 판정 대기", look: "waiting_context" };
+  return c.state === "partial" ? { text: "부분 문맥", look: "partial" } : null;
+}
 
 const usualFormat = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 });
 
@@ -57,6 +77,7 @@ export function CandidateItem({
   renderDetail,
 }: ItemProps) {
   const topCount = Math.max(1, ...c.evidence.map((e) => e.count));
+  const state = stateBadge(c);
   const measures = topMeasures(c.measures);
   const seconds = (measures[0]?.windowMs ?? 10_000) / 1000;
   const scoreFacts = [
@@ -89,10 +110,15 @@ export function CandidateItem({
         </span>
         <span className="candidate-line">
           {badge}
+          {c.tier && (
+            <span className="candidate-tier" data-tier={c.tier} title={tierHelp[c.tier]}>
+              {tierText[c.tier]}
+            </span>
+          )}
           <span className="candidate-reasons">{c.reasons.join(", ")}</span>
-          {c.state && (
-            <span className="candidate-state" data-state={c.state}>
-              {stateText[c.state]}
+          {state && (
+            <span className="candidate-state" data-state={state.look}>
+              {state.text}
             </span>
           )}
         </span>

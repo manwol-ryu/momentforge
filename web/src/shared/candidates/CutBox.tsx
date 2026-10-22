@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { CutBoundaryName, CutDetail, CutEvidence, TimelineItem, TimelineSpan } from "../../api/types";
@@ -52,8 +52,8 @@ interface Props {
   onPlay?: (ms: number) => void;
   /** Play spans one after another. */
   onPlaySpans?: (spans: TimelineSpan[]) => void;
-  /** Ask for a new cut analysis of this candidate (it plans with the notes). */
-  onReanalyze?: () => void;
+  /** The way to analyse this candidate again (it plans with the notes): a "다시 분석" button. */
+  reanalyze?: ReactNode;
 }
 
 /**
@@ -67,7 +67,7 @@ interface Props {
 // line, so the box unmounts; a draft waits here until the row opens again.
 const drafts = new Map<string, { text: string; open: boolean }>();
 
-export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, onReanalyze }: Props) {
+export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, reanalyze }: Props) {
   const c = it.cut;
   const queryClient = useQueryClient();
   const draftKey = c?.planId ?? it.id;
@@ -396,11 +396,7 @@ export function CutBox({ it, longForm, choice, onChoose, onPlay, onPlaySpans, on
             컷 확정
           </button>
         )}
-        {onReanalyze && (
-          <button type="button" className="link-button" onClick={onReanalyze}>
-            다시 분석
-          </button>
-        )}
+        {reanalyze}
       </div>
       {noteOpen && (
         <form

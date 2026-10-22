@@ -1,6 +1,9 @@
 """Phase 3: LIVE capture against the synthetic platform of the E2E binary
 (build tag e2efake, https://live.e2e.test/{channel}). Its broadcast sends 20
-minutes of chat on connect with a laugh burst, then one message per 500 ms."""
+minutes of chat on connect with a laugh burst, then one message per 500 ms,
+and its audio as segments on the same clock. Candidates come in tiers
+(REDESIGN 6.2.3): early at once, judged once five minutes of chat followed
+the burst (at once here), final when the capture stops."""
 from __future__ import annotations
 
 import re
@@ -62,16 +65,22 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     expect(screen.get_by_text("재생하면 영상을 받기 시작합니다.", exact=False)).to_be_hidden()
     expect(screen.get_by_role("alert")).to_have_count(0)
 
-    # The laugh burst becomes a confirmed candidate once the chat after it arrives.
-    expect(page.get_by_role("heading", name="편집 후보 1개")).to_be_visible(timeout=20_000)
+    # The laugh burst is judged once five minutes of chat followed it; the early candidate gives way to it.
+    expect(page.locator(".tier-legend")).to_contain_text("5분 판정")
     cand = page.locator("ol.candidates > li").first
+    expect(cand.locator(".candidate-tier")).to_have_text("5분 판정", timeout=20_000)
+    expect(page.get_by_role("heading", name="편집 후보 1개")).to_be_visible()
     expect(cand).to_contain_text("웃음 증가")
-    expect(cand.locator(".candidate-state")).to_have_text("확정")
+    expect(cand.locator(".candidate-strength")).to_be_visible()  # judged like a VOD: strength and rank
     timeline = page.get_by_role("img", name=re.compile("반응 밀도 그래프"))
     expect(timeline).to_have_attribute("aria-label", re.compile("채팅을 받지 못한 구간 1개"))  # before the capture started
     cand.get_by_role("button").first.click()
     expect(cand.locator(".evidence li").first).to_contain_text("ㅋㅋㅋㅋㅋ")
     expect(cand.get_by_role("list", name="편집 구간 채팅").locator("li[data-evidence]").first).to_be_visible()
+    # Its range was recognised from the audio recorded meanwhile (일반 설정, on by default).
+    speech = cand.get_by_role("list", name="편집 구간 발언")
+    expect(speech.locator("li").first).to_contain_text("방송자", timeout=20_000)
+    expect(cand).to_contain_text(re.compile(r"편집 구간 방송 내용 \d+줄 \(이 컴퓨터에서 인식\)"))
     expect(page.locator(".timeline-gap")).to_have_count(1)
     # The capture joined the broadcast late: the timeline starts where the chat does, the whole broadcast a click away.
     expect(page.get_by_role("radio", name="수집한 구간")).to_be_checked()
@@ -100,6 +109,7 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
     expect(page.get_by_text("수집을 중단했습니다.")).to_be_visible()
+    expect(cand.locator(".candidate-tier")).to_have_text("확정")  # stopping settles what was judged
     expect(page.get_by_role("button", name="현재까지 저장")).to_have_count(0)  # a stopped capture has saved everything
     expect(screen.get_by_label("생방송 영상")).to_have_count(0)
     expect(screen).to_contain_text("생방송 영상은 수집하는 동안에만 보여 줍니다. 이어 기록하면 다시 불러옵니다.")
@@ -108,6 +118,8 @@ def test_live_capture_review_save_stop_resume(page: Page, base_url: str) -> None
     page.get_by_role("button", name="이어 기록").click()
     expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
     page.get_by_role("tab", name="수집 상태").click()
+    expect(page.locator(".facts")).to_contain_text("반응 5분 뒤 다시보기와 같은 기준")
+    expect(page.locator(".facts")).to_contain_text("받는 중 (가장 낮은 화질, 최근 25분만")
     expect(page.locator(".facts")).to_contain_text("연결 복구 1회")
     expect(page.locator(".facts")).to_contain_text("2개")  # the stop became a second gap
     stop_capture(page)
@@ -139,73 +151,54 @@ test_live_rejects_offline_and_wrong_form.allow_console = ["status of 400"]
 
 
 def test_live_review_by_ai_while_capturing(page: Page, base_url: str) -> None:
-    """AI review of a running capture (REDESIGN 15): a confirmed candidate is
-    ticked, the plan is previewed and confirmed, and the synthetic provider's
-    recommendations join the candidates and the reaction timeline."""
-    open_home(page, base_url)
-    row = page.locator(".session-row", has=page.get_by_role("link", name="E2E 가짜 생방송 alpha"))
-    if row.count() == 0:  # running this test alone: make a capture first
-        live_form(page).get_by_label("치지직 생방송 주소").fill(LIVE_URL)
-        live_form(page).get_by_role("button", name="수집 시작").click()
-    else:
-        row.get_by_role("link").click()
-    page.wait_for_selector(READY, timeout=10_000)
-    if page.get_by_role("button", name="이어 기록").count():
-        page.get_by_role("button", name="이어 기록").click()
-    expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
-    confirmed = page.locator("ol.candidates > li", has=page.locator(".candidate-state", has_text="확정"))
-    expect(confirmed.first).to_be_visible(timeout=20_000)
-    confirmed.first.get_by_label("AI 검토에 포함").check()
-    expect(page.get_by_text("AI 검토에 고른 후보 1개")).to_be_visible()
-    page.get_by_role("button", name="AI 검토로 이동").click()
-    expect(page.get_by_role("tab", name="AI 검토")).to_have_attribute("aria-selected", "true")
-    expect(page.get_by_text("미리보기를 만든 순간까지 저장된 채팅만 보내고", exact=False)).to_be_visible()
+    """AI review of a running capture (REDESIGN 6.2.3, 15): only judged
+    candidates go; the AI line sends them on request, with the speech
+    recognised in their range, and a judged candidate offers its cut analysis."""
+    from test_phase4 import use_claude, use_provider
 
-    # Same provider, key and cost cap controls as a VOD.
-    page.get_by_label("AI 제공자").select_option(label="E2E 가짜 AI")
-    page.get_by_label(re.compile("E2E 가짜 AI API 키")).fill("test-key")
-    page.get_by_role("button", name="키 저장").click()
-    expect(page.get_by_label(re.compile("E2E 가짜 AI API 키 \\(있음\\)"))).to_be_visible()
-    expect(page.get_by_role("textbox", name=re.compile("^비용 한도"))).to_be_visible()
+    use_provider(page, base_url, "E2E 가짜 AI")
+    try:
+        open_home(page, base_url)
+        row = page.locator(".session-row", has=page.get_by_role("link", name="E2E 가짜 생방송 alpha"))
+        if row.count() == 0:  # running this test alone: make a capture first
+            live_form(page).get_by_label("치지직 생방송 주소").fill(LIVE_URL)
+            live_form(page).get_by_role("button", name="수집 시작").click()
+        else:
+            row.get_by_role("link").click()
+        page.wait_for_selector(READY, timeout=10_000)
+        if page.get_by_role("button", name="이어 기록").count():
+            page.get_by_role("button", name="이어 기록").click()
+        expect(page.locator(".live-state")).to_have_text("채팅 수신 중", timeout=10_000)
+        judged = page.locator("ol.candidates > li", has=page.locator(".candidate-tier:not([data-tier='early'])"))
+        expect(judged.first).to_be_visible(timeout=20_000)
 
-    # A range with no end runs up to the analysed point; previewing sends nothing.
-    page.get_by_label("채팅 구간 직접 지정", exact=False).check()
-    # The burst is at 42:00 of the broadcast; once resumed, the analysis soon passes it.
-    expect(page.get_by_text(re.compile(r"끝 시각을 비우면 분석을 마친 0:[45]\d:\d\d까지 보냅니다"))).to_be_visible(timeout=10_000)
-    page.get_by_label("시작 시각").fill("0:40:00")
-    page.get_by_role("button", name="보낼 내용 미리보기").click()
-    preview = page.locator(".ai-preview")
-    expect(preview).to_contain_text(re.compile(r"요청 \d+회"))
+        bar = page.locator(".ai-bar")
+        expect(bar).to_contain_text("AI 장면 설명은 자동으로 받지 않습니다.")
+        bar.get_by_role("button", name="AI 장면 설명 받기").click()
+        question = page.get_by_role("group", name="AI 장면 설명 받기 확인")
+        expect(question).to_contain_text("E2E 가짜 AI로 보내")
+        question.get_by_role("button", name="AI 장면 설명 받기").click()
 
-    page.get_by_label("후보 목록에서 고른 1개", exact=False).check()
-    expect(preview).to_have_count(0)  # a changed selection drops the preview
-    page.get_by_role("button", name="보낼 내용 미리보기").click()
-    expect(preview).to_contain_text(re.compile(r"요청 \d+회, 입력 추정 약 [\d,]+토큰"))
-    preview.get_by_text("보낼 내용 전체").click()
-    expect(preview.locator("pre")).to_contain_text('"source_type": "rule"')
-    expect(preview.locator("pre")).to_contain_text("ㅋㅋㅋㅋㅋ")
-    page.locator("section", has=page.get_by_role("heading", name="AI 검토", exact=True)).screenshot(path=str(SHOTS / "live-ai-panel.png"))
-    page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
-    expect(page.locator(".ai-status")).to_contain_text("AI 완료", timeout=15_000)
+        # The synthetic provider explains the candidate it was sent: the answer sits under that candidate,
+        # in full once the row is chosen.
+        select_row(judged.first)
+        note = judged.first.locator(".ai-note")
+        expect(note).to_contain_text("가짜 AI 추천", timeout=15_000)
+        expect(note).to_contain_text("AI 설명")
+        expect(page.locator("ol.candidates > li[data-source='ai']")).to_have_count(0)
+        expect(judged.first.locator(".cut-start").get_by_role("button", name="AI 컷 분석")).to_be_visible()
+        # The summary counts the rows, as the list does.
+        shown = page.locator("ol.candidates > li").count()
+        expect(page.locator(".stat", has_text="편집 후보").locator("dd")).to_have_text(f"{shown}개")
+        page.wait_for_timeout(100)  # a shown tab replays its rows' entrance; let the frame settle for the picture
+        page.screenshot(path=str(SHOTS / "live-ai.png"), full_page=True)
+        page.get_by_role("tab", name="파일").click()
+        expect(page.get_by_role("button", name="AI 추천 TXT")).to_be_visible()
 
-    page.get_by_role("tab", name=re.compile("^후보")).click()
-    # The synthetic provider explains the candidate it was sent: the answer sits under that candidate,
-    # in full once the row is chosen.
-    select_row(confirmed.first)
-    note = confirmed.first.locator(".ai-note")
-    expect(note).to_contain_text("AI 설명")
-    expect(note).to_contain_text("가짜 AI 추천")
-    expect(page.locator("ol.candidates > li[data-source='ai']")).to_have_count(0)
-    # The summary counts the rows, as the list does.
-    shown = page.locator("ol.candidates > li").count()
-    expect(page.locator(".stat", has_text="편집 후보").locator("dd")).to_have_text(f"{shown}개")
-    page.wait_for_timeout(100)  # a shown tab replays its rows' entrance; let the frame settle for the picture
-    page.screenshot(path=str(SHOTS / "live-ai.png"), full_page=True)
-    page.get_by_role("tab", name="파일").click()
-    expect(page.get_by_role("button", name="AI 추천 TXT")).to_be_visible()
-
-    stop_capture(page)
-    expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
+        stop_capture(page)
+        expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)
+    finally:
+        use_claude(page, base_url)
 
 
 def test_live_view_dark_and_mobile(page: Page, base_url: str) -> None:
@@ -242,6 +235,9 @@ def test_live_without_stream_keeps_chat_and_platform_link(page: Page, base_url: 
     expect(screen.get_by_role("button", name="다시 불러오기")).to_be_visible()
     expect(page.get_by_role("link", name="E2E 가짜 방송에서 열기")).to_be_visible()
     expect(page.get_by_role("list", name="실시간 채팅").locator("li").first).to_be_visible()
+    # Without a stream there is no audio to recognise either; the capture state says why.
+    page.get_by_role("tab", name="수집 상태").click()
+    expect(page.locator(".facts")).to_contain_text("방송 영상 주소를 확인하지 못했습니다.")
     page.screenshot(path=str(SHOTS / "live-no-stream.png"), full_page=True)
     stop_capture(page)
     expect(page.locator(".live-state")).to_have_text("중단됨", timeout=10_000)

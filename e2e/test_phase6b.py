@@ -3,7 +3,8 @@ session. The fixture is synthetic; the E2E binary's fake speech engine
 returns a fixed transcript, so nothing is read from real audio. Phase 6-C:
 the fake transcript's promise is at 1:05, before the first candidate's
 window, so the cut analysis searches for it, asks before sending what it
-found, and links it as the story's origin."""
+found (the setting "검색 결과를 보내기 전에 매번 확인"), and links it as the
+story's origin."""
 from __future__ import annotations
 
 import re
@@ -16,7 +17,29 @@ READY = 'body[data-app-state="ready"]'
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backup" / "26" / "10"
 
 
+def set_confirm_searches(page: Page, base_url: str, on: bool) -> None:
+    from test_phase4 import open_ai_settings, save_defaults
+
+    open_ai_settings(page, base_url)
+    box = page.get_by_role("checkbox", name=re.compile("^검색 결과를 보내기 전에 매번 확인"))
+    if box.is_checked() != on:
+        box.click()
+        save_defaults(page)
+
+
 def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) -> None:
+    from test_phase4 import use_claude, use_provider
+
+    use_provider(page, base_url, "E2E 가짜 AI")
+    set_confirm_searches(page, base_url, True)
+    try:
+        import_backup(page, base_url)
+    finally:
+        set_confirm_searches(page, base_url, False)
+        use_claude(page, base_url)
+
+
+def import_backup(page: Page, base_url: str) -> None:
     page.goto(base_url)
     page.wait_for_selector(READY, timeout=10_000)
     page.get_by_role("tab", name="NAS 백업").click()
@@ -59,38 +82,24 @@ def test_backup_import_with_transcript_and_donations(page: Page, base_url: str) 
     page.screenshot(path=str(SHOTS / "backup-transcript.png"))
 
     # The cut analysis reads the transcript, but the promise is before the first
-    # candidate's window: the preview does not hold it, the search finds it.
+    # candidate's window: the first request does not hold it, the search finds it.
     page.get_by_role("tab", name=re.compile("^후보")).click()
-    first = page.locator("ol.candidates > li").first
-    first.get_by_label("AI 검토에 포함").check()
-    page.get_by_role("button", name="AI 검토로 이동").click()
-    page.get_by_role("radio", name="컷 분석").check()
-    page.get_by_label("검색 결과를 보내기 전에 매번 확인").check()
-    from test_phase6 import pick_provider, select_row
+    from test_phase6 import select_row, send
 
-    pick_provider(page, "E2E 가짜 AI")
-    page.get_by_role("button", name="보낼 내용 미리보기").click()
-    preview = page.locator(".ai-preview[data-kind='cut']")
-    expect(preview).to_contain_text(re.compile(r"발언 \d+건과 채팅 \d+건"))
-    expect(preview).to_contain_text("(보내기 전에 매번 확인)")
-    preview.get_by_text("보낼 내용 전체").click()
-    expect(preview.locator("pre")).to_contain_text(re.compile(r'"kind":\s*"chat"'))
-    expect(preview.locator("pre")).not_to_contain_text("벌칙으로 노래")
-    page.get_by_role("button", name="확인한 내용으로 AI 실행").click()
-    # The run stops with what the search found and waits for the user.
-    pending = page.locator(".ai-pending")
+    first = page.locator("ol.candidates > li").first
+    select_row(first)
+    first.locator(".cut-start").get_by_role("button", name="AI 컷 분석").click()
+    send(page, "AI 컷 분석")
+    # The run stops with what the search found and waits for the user, in the AI line above the candidates.
+    pending = page.locator(".ai-bar .ai-pending")
     expect(pending).to_contain_text("검색 결과를 보낼까요?", timeout=15_000)
     expect(pending).to_contain_text("발언 1건")
     expect(pending.locator("li")).to_contain_text(["벌칙으로 노래"])
+    expect(first.locator(".cut-running")).to_contain_text("AI 컷 분석 중")
     pending.screenshot(path=str(SHOTS / "cut-search-consent.png"))
     pending.get_by_role("button", name="보내고 계속").click()
-    status = page.locator(".ai-status")
-    expect(status).to_contain_text("AI 완료", timeout=15_000)
-    expect(status).to_contain_text("5/11회 완료")  # analyze twice, plan, two checks
-    page.locator(".ai-done").get_by_role("button", name="후보 보기").click()
-    select_row(first)
     note = first.locator(".cut-note")
-    expect(note).to_contain_text("검수 통과")
+    expect(note).to_contain_text("검수 통과", timeout=15_000)
     expect(note.locator(".cut-search")).to_contain_text("검색 1단계로 근거 1건을 더 읽음")
     expect(note.locator(".cut-search")).to_contain_text("이야기 시작 01:05")
     expect(note.locator(".cut-spans li").first).to_contain_text("01:04")  # the found promise (01:05) is the setup span, from 0.3 s before
@@ -114,19 +123,31 @@ CAPTION = Path(__file__).resolve().parent / "fixtures" / "caption" / "e2e.srt"
 RUNTIME_AUDIO = Path(__file__).resolve().parent / ".data" / "runtime" / "audio"
 
 
+def open_caption_form(panel) -> None:
+    """With a transcript the caption form is folded under "자막 파일로 바꾸기"; it stays open after an import."""
+    details = panel.locator("details.caption-form")
+    if not details.evaluate("d => d.open"):
+        details.locator("summary").click()
+
+
 def test_caption_file_then_stream_audio_on_a_vod(page: Page, base_url: str) -> None:
-    """A VOD without a backup (6-B ⑤⑥): a caption file becomes the transcript
-    with its offset applied, and the fake platform's stream is downloaded,
-    transcribed by the fake engine and deleted."""
+    """A VOD without a backup (6-B ⑤⑥): the fake platform's stream is
+    downloaded, transcribed by the fake engine and deleted once the collection
+    ends (일반 설정); a caption file replaces it with its offset applied; and
+    recognising again brings the stream's transcript back."""
     from test_phase4 import open_video
 
     open_video(page, base_url, "E2E 가짜 다시보기 61", "https://live.e2e.test/video/61")
     page.get_by_role("tab", name="대본").click()
     panel = page.locator("section", has=page.get_by_role("heading", name="대본"))
-    expect(panel).to_contain_text("다시보기의 음성을 받아")
-    expect(panel.get_by_role("button", name="방송 내용 인식")).to_be_enabled()
+    # 일반 설정 transcribes a collected VOD by itself: the stream was downloaded to runtime/audio, recognised, deleted.
+    expect(panel).to_contain_text("이 컴퓨터에서 인식", timeout=30_000)
+    expect(panel).to_contain_text("발언 40건")
+    expect(page.locator(".job")).to_have_attribute("data-phase", "done", timeout=30_000)
+    assert not RUNTIME_AUDIO.exists() or not any(RUNTIME_AUDIO.iterdir()), list(RUNTIME_AUDIO.iterdir())
 
-    # A caption file, shifted by two seconds: the 3:33 line lands at 3:35.
+    # A caption file instead, shifted by two seconds: the 3:33 line lands at 3:35.
+    open_caption_form(panel)
     form = panel.get_by_role("form", name="자막 파일 넣기")
     form.get_by_label("자막 파일 (SRT·VTT)").set_input_files(str(CAPTION))
     form.get_by_label("시간 오프셋 (초)").fill("2")
@@ -144,19 +165,20 @@ def test_caption_file_then_stream_audio_on_a_vod(page: Page, base_url: str) -> N
     page.get_by_role("tab", name="파일").click()
     expect(page.get_by_role("button", name=re.compile("대본 SRT"))).to_be_visible()
 
-    # The stream: downloaded to runtime/audio, recognised, deleted.
+    # The stream again: downloaded, recognised, deleted.
     page.get_by_role("tab", name="대본").click()
     panel.get_by_role("button", name="다시 인식").click()
     job = page.locator(".job")
     expect(job).to_contain_text(re.compile("방송 음성 받기|방송 내용 인식"), timeout=10_000)
     expect(job).to_contain_text(re.compile(r"발언 \d+건을 인식했습니다"), timeout=30_000)
+    expect(job).to_have_attribute("data-phase", "done", timeout=30_000)
     expect(panel).to_contain_text("이 컴퓨터에서 인식", timeout=10_000)
     expect(panel).to_contain_text("발언 40건")
     assert not RUNTIME_AUDIO.exists() or not any(RUNTIME_AUDIO.iterdir()), list(RUNTIME_AUDIO.iterdir())
     page.screenshot(path=str(SHOTS / "stream-transcript.png"))
 
     # A file that is not a caption is refused with a reason, and the transcript stays.
-    page.get_by_text("자막 파일로 바꾸기").click()
+    open_caption_form(panel)
     form = panel.get_by_role("form", name="자막 파일 넣기")
     form.get_by_label("자막 파일 (SRT·VTT)").set_input_files(
         {"name": "note.srt", "mimeType": "text/plain", "buffer": "그냥 메모입니다\n".encode()}

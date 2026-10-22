@@ -127,7 +127,11 @@ func (a *App) importBackup(ctx context.Context, h job, b backup.Broadcast, req I
 			if _, has, err := st.LatestTranscript(ctx, s.ID); err != nil {
 				return err
 			} else if req.Transcribe && !has {
-				return a.transcribe(ctx, h, s.ID, b.AudioPath)
+				if err := a.transcribe(ctx, h, s.ID, b.AudioPath); err != nil {
+					return err
+				}
+				return a.runAfter(ctx, h, s.ID, autoSteps{ai: a.Settings().AutoAI},
+					fmt.Sprintf("발언 %d건을 인식했습니다.", h.status().Utterances))
 			}
 			h.update(func(js *JobStatus) { js.Message = "이미 불러온 방송입니다." })
 			return nil
@@ -207,11 +211,15 @@ func (a *App) importBackup(ctx context.Context, h job, b backup.Broadcast, req I
 		return err
 	}
 	h.update(func(s *JobStatus) { s.AnalysisID, s.Candidates = an.ID, len(an.Candidates) })
+	message := "불러오기와 분석이 끝났습니다."
 	if req.Transcribe {
-		return a.transcribe(ctx, h, sess.ID, b.AudioPath)
+		if err := a.transcribe(ctx, h, sess.ID, b.AudioPath); err != nil {
+			return err
+		}
+		message += fmt.Sprintf(" 발언 %d건을 인식했습니다.", h.status().Utterances)
 	}
-	h.update(func(s *JobStatus) { s.Message = "불러오기와 분석이 끝났습니다." })
-	return nil
+	// The import chose for itself whether to transcribe; the AI steps follow 일반 설정.
+	return a.runAfter(ctx, h, sess.ID, autoSteps{ai: a.Settings().AutoAI}, message)
 }
 
 // backupEvents pseudonymises the recorder's records: authors become
@@ -302,10 +310,18 @@ func (a *App) StartTranscribe(ctx context.Context, sid string) (JobStatus, error
 	}
 	return a.jobs.start(a.ctx, "transcribe", func(ctx context.Context, h job) error {
 		h.update(func(js *JobStatus) { js.SessionID, js.Title, js.DurationMs = s.ID, s.Title, s.DurationMs })
+		var err error
 		if stream != nil {
-			return a.transcribeStream(ctx, h, s, stream)
+			err = a.transcribeStream(ctx, h, s, stream)
+		} else {
+			err = a.transcribe(ctx, h, s.ID, path)
 		}
-		return a.transcribe(ctx, h, s.ID, path)
+		if err != nil {
+			return err
+		}
+		// A new transcript is fixed, and explains candidates further, when 일반 설정 says so.
+		return a.runAfter(ctx, h, s.ID, autoSteps{ai: a.Settings().AutoAI},
+			fmt.Sprintf("발언 %d건을 인식했습니다.", h.status().Utterances))
 	})
 }
 
@@ -407,6 +423,9 @@ type TranscriptView struct {
 	Utterances int          `json:"utterances"`
 	Coverage   []domain.Gap `json:"coverage"`
 	CreatedAt  time.Time    `json:"createdAt"`
+	// FixedBy is the AI run that fixed its text ("" none), and Fixed the lines it changed.
+	FixedBy string `json:"fixedBy,omitempty"`
+	Fixed   int    `json:"fixed"`
 }
 
 // Transcript returns the newest transcript, ok false when there is none.
@@ -419,7 +438,12 @@ func (a *App) Transcript(ctx context.Context, sid string) (TranscriptView, bool,
 	if err != nil {
 		return TranscriptView{}, false, err
 	}
-	return TranscriptView{ID: t.ID, Source: t.Source, Engine: t.Engine, Utterances: n, Coverage: t.Coverage, CreatedAt: t.CreatedAt}, true, nil
+	fixed, err := a.cfg.Store.FixedUtteranceCount(ctx, t.ID)
+	if err != nil {
+		return TranscriptView{}, false, err
+	}
+	return TranscriptView{ID: t.ID, Source: t.Source, Engine: t.Engine, Utterances: n, Coverage: t.Coverage, CreatedAt: t.CreatedAt,
+		FixedBy: t.FixedBy, Fixed: fixed}, true, nil
 }
 
 // Utterances returns the newest transcript's utterances in [from, to).

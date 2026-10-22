@@ -13,13 +13,6 @@ SHOTS = Path(__file__).resolve().parent / ".data" / "screenshots"
 READY = 'body[data-app-state="ready"]'
 
 
-def open_destination(page: Page) -> None:
-    """The AI tab folds the provider block once it can send; open it to reach its fields."""
-    dest = page.locator(".ai-dest")
-    if dest.count() and not dest.evaluate("d => d.open"):
-        dest.locator("summary").click()
-
-
 def open_sample(page: Page, base_url: str) -> None:
     page.goto(base_url)
     page.wait_for_selector(READY, timeout=10_000)
@@ -106,12 +99,13 @@ def test_next_candidate_keys_and_timeline_zoom(page: Page, base_url: str) -> Non
 
 def test_tabs_keep_their_state(page: Page, base_url: str) -> None:
     open_sample(page, base_url)
-    page.get_by_role("tab", name="AI 검토").click()
-    open_destination(page)
-    page.get_by_label("모델 ID").fill("my-model")
+    # The workbench's tabs: no AI review tab (it is the line above the candidates now).
+    expect(page.get_by_role("tab")).to_have_text([re.compile("^후보"), "대본", "댓글", "파일"])
+    page.get_by_role("tab", name="대본").click()
+    page.get_by_label("대본 찾기").fill("벌칙")
     page.get_by_role("tab", name=re.compile("^후보")).click()
-    page.get_by_role("tab", name="AI 검토").click()
-    expect(page.get_by_label("모델 ID")).to_have_value("my-model")
+    page.get_by_role("tab", name="대본").click()
+    expect(page.get_by_label("대본 찾기")).to_have_value("벌칙")
 
 
 def test_phone_list_is_a_drawer(page: Page, base_url: str) -> None:

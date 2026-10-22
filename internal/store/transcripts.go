@@ -21,6 +21,7 @@ type Transcript struct {
 	Engine    string
 	Model     string
 	Coverage  []domain.Gap // transcribed spans
+	FixedBy   string       // the AI run that fixed its text ("" none)
 	CreatedAt time.Time
 }
 
@@ -57,12 +58,49 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, utts []domain.
 	return t, tx.Commit()
 }
 
+// AppendUtterances adds utterances to a transcript (a LIVE capture's grows
+// as its candidates' ranges are transcribed), their IDs continuing its
+// numbering, and sets its coverage. It returns them with their IDs.
+func (s *Store) AppendUtterances(ctx context.Context, t Transcript, utts []domain.Utterance, coverage []domain.Gap) ([]domain.Utterance, error) {
+	if coverage == nil {
+		coverage = []domain.Gap{}
+	}
+	cov, _ := json.Marshal(coverage)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var last int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM utterances WHERE transcript_id=?`, t.ID).Scan(&last); err != nil {
+		return nil, err
+	}
+	out := slices.Clone(utts)
+	for i, u := range out {
+		seq := last + i + 1
+		out[i].ID = fmt.Sprintf("%s-%d", t.ID, seq)
+		var conf any
+		if u.Confidence > 0 {
+			conf = u.Confidence
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO utterances (id, transcript_id, session_id, seq, start_ms, end_ms, speaker_role, text, confidence)
+			VALUES (?,?,?,?,?,?,?,?,?)`, out[i].ID, t.ID, t.SessionID, seq, u.StartMs, u.EndMs, u.Speaker, u.Text, conf); err != nil {
+			return nil, fmt.Errorf("insert utterance: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE transcripts SET coverage_json=? WHERE id=?`, string(cov), t.ID); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit()
+}
+
 // LatestTranscript is the session's newest transcript, if any.
 func (s *Store) LatestTranscript(ctx context.Context, sid string) (Transcript, bool, error) {
 	var t Transcript
 	var cov, created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, source, engine, model, coverage_json, created_at FROM transcripts
-		WHERE session_id=? ORDER BY created_at DESC LIMIT 1`, sid).Scan(&t.ID, &t.SessionID, &t.Source, &t.Engine, &t.Model, &cov, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id, session_id, source, engine, model, coverage_json, fixed_by, created_at FROM transcripts
+		WHERE session_id=? ORDER BY created_at DESC LIMIT 1`, sid).Scan(&t.ID, &t.SessionID, &t.Source, &t.Engine, &t.Model, &cov,
+		&t.FixedBy, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, false, nil
 	}
@@ -74,18 +112,44 @@ func (s *Store) LatestTranscript(ctx context.Context, sid string) (Transcript, b
 	return t, true, nil
 }
 
-const utteranceColumns = `id, start_ms, end_ms, speaker_role, text, COALESCE(confidence, 0)`
+const utteranceColumns = `id, start_ms, end_ms, speaker_role, text, COALESCE(confidence, 0), COALESCE(raw_text, '')`
 
 func scanUtterances(rows *sql.Rows) ([]domain.Utterance, error) {
 	var out []domain.Utterance
 	for rows.Next() {
 		var u domain.Utterance
-		if err := rows.Scan(&u.ID, &u.StartMs, &u.EndMs, &u.Speaker, &u.Text, &u.Confidence); err != nil {
+		if err := rows.Scan(&u.ID, &u.StartMs, &u.EndMs, &u.Speaker, &u.Text, &u.Confidence, &u.RawText); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// FixUtterances replaces the text of a transcript's utterances (ID → text)
+// with an AI run's corrections, keeping what was first recognised, and
+// records the run on the transcript. It returns how many lines changed.
+func (s *Store) FixUtterances(ctx context.Context, transcriptID, runID string, fixes map[string]string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	n := 0
+	for id, text := range fixes {
+		res, err := tx.ExecContext(ctx, `UPDATE utterances SET raw_text=COALESCE(raw_text, text), text=?
+			WHERE id=? AND transcript_id=? AND text<>?`, text, id, transcriptID, text)
+		if err != nil {
+			return 0, fmt.Errorf("fix utterance: %w", err)
+		}
+		if k, _ := res.RowsAffected(); k > 0 {
+			n++
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE transcripts SET fixed_by=? WHERE id=?`, runID, transcriptID); err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }
 
 // UtterancesBetween returns a transcript's utterances starting in [from, to), in time order.
@@ -103,6 +167,13 @@ func (s *Store) UtterancesBetween(ctx context.Context, transcriptID string, from
 func (s *Store) UtteranceCount(ctx context.Context, transcriptID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM utterances WHERE transcript_id=?", transcriptID).Scan(&n)
+	return n, err
+}
+
+// FixedUtteranceCount is how many of a transcript's utterances AI fixed.
+func (s *Store) FixedUtteranceCount(ctx context.Context, transcriptID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM utterances WHERE transcript_id=? AND raw_text IS NOT NULL", transcriptID).Scan(&n)
 	return n, err
 }
 

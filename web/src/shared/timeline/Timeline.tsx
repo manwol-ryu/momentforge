@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Candidate, DetectWindow, Gap, TimelineSpan } from "../../api/types";
+import { tierText } from "../candidates/CandidateList";
 import { strengthLabel } from "../candidates/strength";
 import { tickStep, timecode } from "../format";
 import { columnsOf, type Column } from "./columns";
@@ -291,6 +292,7 @@ const Spans = memo(function Spans({ gaps, candidates, cutSpans, selectedId, from
             className="timeline-band"
             data-selected={c.id === selectedId || undefined}
             data-strength={c.strength}
+            data-tier={c.tier}
             style={{ left: left(c.reactionStartMs), width: width(c.reactionStartMs, c.reactionEndMs) }}
           />
         ))}
@@ -330,6 +332,7 @@ const Markers = memo(function Markers({ candidates, extraMarkers, numbers, selec
       {candidates.map((c, i) => {
         if (!inView(c.peakMs)) return null;
         const words = [`후보 ${numbers?.get(c.id) ?? i + 1}`, timecode(c.reactionStartMs, longForm)];
+        if (c.tier) words.push(tierText[c.tier]);
         if (c.strength) words.push(strengthLabel[c.strength]);
         if (c.reasons.length) words.push(c.reasons.join(", "));
         return (
@@ -338,6 +341,7 @@ const Markers = memo(function Markers({ candidates, extraMarkers, numbers, selec
             type="button"
             className="timeline-marker"
             data-strength={c.strength}
+            data-tier={c.tier}
             style={place(c.peakMs)}
             aria-pressed={c.id === selectedId}
             aria-label={words.join(", ")}

@@ -192,6 +192,17 @@ func (f *Fake) Step(ctx context.Context, key, model string, step ai.StepRequest)
 	case "verify_source":
 		out = map[string]any{"pass": true, "mixed_attempt": false, "cut_condition": false, "missed_correction": false,
 			"ended_early": false, "notes": []string{}}
+	case "transcript_fix":
+		// The fake recogniser's filler lines ("가짜 발언 …") come back as "가짜 발화 …";
+		// the planted promise stays as it was, so the cut analysis still finds it.
+		in := step.Input.(ai.TranscriptChunk)
+		fixes := []any{}
+		for _, line := range in.Utterances {
+			if strings.Contains(line.Text, "가짜 발언") {
+				fixes = append(fixes, map[string]any{"id": line.ID, "text": strings.Replace(line.Text, "가짜 발언", "가짜 발화", 1)})
+			}
+		}
+		out = map[string]any{"fixes": fixes}
 	default:
 		return f.Review(ctx, key, model, step.Input.(ai.Chunk))
 	}

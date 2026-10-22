@@ -109,7 +109,22 @@ type (
 		BatchResults(ctx context.Context, key, batchID string) ([]BatchResult, error)
 		CancelBatch(ctx context.Context, key, batchID string) error
 	}
+	// TaskModeler providers recommend a model per task (Tasks): a light,
+	// fast one to fix a transcript, the strongest for a cut analysis.
+	TaskModeler interface {
+		TaskModel(task string) string // "" when the provider's default fits
+	}
 )
+
+// Tasks MomentForge sends to AI. Each may use its own model.
+const (
+	TaskTranscript = "transcript" // fix a recognised transcript from its context
+	TaskExplain    = "explain"    // explain what each candidate's scene is
+	TaskCut        = "cut"        // the cut analysis (internal/ai/cut)
+)
+
+// Tasks lists the tasks in the order screens show them.
+var Tasks = []string{TaskTranscript, TaskExplain, TaskCut}
 
 // ServiceStatus is how a provider's local program stands.
 type ServiceStatus struct {
@@ -202,11 +217,13 @@ type Candidate struct {
 	Statistics map[string]any `json:"statistics"` // the rule candidate's peak numbers; null otherwise
 }
 
-// Evidence is one thing the model may cite: a chat message or a comment.
+// Evidence is one thing the model may cite: a chat message, a comment or
+// something the broadcaster said (recognised speech).
 type Evidence struct {
-	Ref     string  `json:"ref"` // chat:<event id> | comment:<recommendation id>
+	Ref     string  `json:"ref"` // chat:<event id> | comment:<recommendation id> | utt:<utterance id>
 	TimeMs  int64   `json:"time_ms"`
-	Author  *string `json:"author,omitempty"` // pseudonym; absent for comments
+	Author  *string `json:"author,omitempty"`  // pseudonym; absent for comments and speech
+	Speaker string  `json:"speaker,omitempty"` // speech only: a role such as 방송자, never a name
 	Content string  `json:"content"`
 }
 
@@ -301,6 +318,10 @@ type PlanInput struct {
 	Candidates      []Candidate
 	Comments        map[string]Evidence // viewer candidates' comments by candidate ID
 	Chats           func(from, to int64) ([]domain.ChatEvent, error)
+	// Utterances returns what the broadcaster said in [from, to), in time
+	// order; nil when the session has no transcript. Speech and chat are
+	// sent together, so the model sees what viewers reacted to.
+	Utterances func(from, to int64) ([]domain.Utterance, error)
 }
 
 // Encode is the compact JSON sent to providers (UTF-8, no HTML escaping).
@@ -376,23 +397,18 @@ func Prepare(in PlanInput) (Plan, error) {
 				p.Omitted = append(p.Omitted, Omitted{lo, hi, "comment_input_too_large"})
 				continue
 			}
-			chats, err := in.Chats(lo, hi)
+			evs, err := windowEvidence(in, lo, hi)
 			if err != nil {
 				return p, err
 			}
-			// The window's chat, cut into pieces of at most maxChunkBytes.
+			// The window's chat and speech, cut into pieces of at most maxChunkBytes.
 			empty := Chunk{StartMs: lo, EndMs: hi, Candidates: []Candidate{}, Evidence: []Evidence{}}
 			pieces := []Chunk{cloneChunk(empty)}
 			size := baseBytes
-			for _, c := range chats {
-				author := c.AuthorKey
-				ev := Evidence{Ref: "chat:" + c.ID, TimeMs: c.OffsetMs, Content: c.Text}
-				if author != "" {
-					ev.Author = &author
-				}
+			for _, ev := range evs {
 				evBytes := len(Encode(ev))
 				if evBytes > maxMessageBytes {
-					p.Omitted = append(p.Omitted, Omitted{c.OffsetMs, c.OffsetMs + 1, "message_too_large"})
+					p.Omitted = append(p.Omitted, Omitted{ev.TimeMs, ev.TimeMs + 1, "message_too_large"})
 					continue
 				}
 				if size+evBytes+1 > maxChunkBytes {
@@ -401,7 +417,7 @@ func Prepare(in PlanInput) (Plan, error) {
 					}
 					size = baseBytes
 					if size+evBytes+1 > maxChunkBytes {
-						p.Omitted = append(p.Omitted, Omitted{c.OffsetMs, c.OffsetMs + 1, "input_budget"})
+						p.Omitted = append(p.Omitted, Omitted{ev.TimeMs, ev.TimeMs + 1, "input_budget"})
 						continue
 					}
 				}
@@ -458,6 +474,38 @@ func Prepare(in PlanInput) (Plan, error) {
 	p.OutputTokenLimit = p.RequestCount * outLimit
 	p.Fingerprint = digest(p)
 	return p, nil
+}
+
+// windowEvidence is a window's chat and, when there is a transcript, what
+// was said in it, as evidence in time order (speech first at the same time:
+// chat answers it).
+func windowEvidence(in PlanInput, lo, hi int64) ([]Evidence, error) {
+	chats, err := in.Chats(lo, hi)
+	if err != nil {
+		return nil, err
+	}
+	var utts []domain.Utterance
+	if in.Utterances != nil {
+		if utts, err = in.Utterances(lo, hi); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]Evidence, 0, len(chats)+len(utts))
+	for _, u := range utts {
+		if u.StartMs >= lo && u.StartMs < hi && u.Text != "" {
+			out = append(out, Evidence{Ref: "utt:" + u.ID, TimeMs: u.StartMs, Speaker: u.Speaker, Content: u.Text})
+		}
+	}
+	for _, c := range chats {
+		ev := Evidence{Ref: "chat:" + c.ID, TimeMs: c.OffsetMs, Content: c.Text}
+		if c.AuthorKey != "" {
+			author := c.AuthorKey
+			ev.Author = &author
+		}
+		out = append(out, ev)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].TimeMs < out[j].TimeMs })
+	return out, nil
 }
 
 func cloneChunk(c Chunk) Chunk {

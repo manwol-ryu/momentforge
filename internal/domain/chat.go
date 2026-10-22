@@ -120,9 +120,14 @@ type Candidate struct {
 	Measures []Measure `json:"measures,omitempty"` // what stood out at the peak, strongest first
 
 	// LIVE only.
-	State              string       `json:"state,omitempty"` // generating | waiting_context | confirmed | partial
+	State              string       `json:"state,omitempty"` // generating | waiting_context | confirmed | partial | dropped
 	Viewer             *ViewerState `json:"viewerBaseline,omitempty"`
 	BaselineTransition bool         `json:"baselineTransition,omitempty"`
+	// Tier is how far a LIVE capture judged the moment (captures from rules
+	// 3.1.0 on; "" before): early | judged | final. ReplacedBy is the judged
+	// candidate that took a dropped one's place ("" none).
+	Tier       string `json:"tier,omitempty"`
+	ReplacedBy string `json:"replacedBy,omitempty"`
 }
 
 // LIVE candidate states.
@@ -131,6 +136,14 @@ const (
 	CandidateWaitingContext = "waiting_context"
 	CandidateConfirmed      = "confirmed"
 	CandidatePartial        = "partial"
+	CandidateDropped        = "dropped" // a judgment did not keep it (screens hide it)
+)
+
+// LIVE candidate tiers (REDESIGN 6.2.3).
+const (
+	TierEarly  = "early"  // the incremental engine with its gate eased: seconds after the reaction (예비)
+	TierJudged = "judged" // the whole-broadcast analysis with LocalMs of chat after it (5분 판정)
+	TierFinal  = "final"  // with TrendMs after it, or the capture ended: never revised (확정)
 )
 
 // Utterance is one thing the broadcaster (or a guest) said, from local
@@ -143,4 +156,5 @@ type Utterance struct {
 	Speaker    string
 	Text       string
 	Confidence float64 // 0 when the source gives none
+	RawText    string  // what speech recognition heard, when AI fixed Text ("" unchanged)
 }

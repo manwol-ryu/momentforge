@@ -211,11 +211,24 @@ func TestLiveCaptureStoresAnalyzesStopsAndExports(t *testing.T) {
 	if len(v.Gaps) == 0 || v.Gaps[0].StartMs != 0 || v.Gaps[0].EndMs < 10*minute-1000 {
 		t.Fatalf("gaps = %+v (want the unobserved start)", v.Gaps)
 	}
+	// The last judgment settles the burst and drops the early candidate it replaces (REDESIGN 6.2.3).
 	final, _, _ := a.LiveCandidates(ctx, info.ID, 0)
+	settled := map[string]bool{}
 	for _, c := range final {
-		if c.State != domain.CandidateConfirmed && c.State != domain.CandidatePartial {
-			t.Fatalf("%s left %s after stop", c.ID, c.State)
+		if c.State != domain.CandidateDropped {
+			if (c.State != domain.CandidateConfirmed && c.State != domain.CandidatePartial) || c.Tier != domain.TierFinal {
+				t.Fatalf("%s left %s/%s after stop", c.ID, c.State, c.Tier)
+			}
+			settled[c.ID] = true
 		}
+	}
+	for _, c := range final {
+		if c.Tier == domain.TierEarly && (c.State != domain.CandidateDropped || !settled[c.ReplacedBy]) {
+			t.Fatalf("early %s: %s, replaced by %q (settled %v)", c.ID, c.State, c.ReplacedBy, settled)
+		}
+	}
+	if len(settled) != 1 {
+		t.Fatalf("settled = %v, want the laugh burst", settled)
 	}
 	if !v.Session.CanResume {
 		t.Fatal("a stopped capture of an open broadcast can resume")

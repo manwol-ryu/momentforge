@@ -31,6 +31,8 @@ func (h *handler) aiProviders(w http.ResponseWriter, r *http.Request) {
 		DefaultEndpoint string `json:"defaultEndpoint,omitempty"`
 		EndpointHelp    string `json:"endpointHelp,omitempty"`
 		HasService      bool   `json:"hasService"`
+		// The model the provider recommends per task (transcript, explain, cut).
+		TaskModels map[string]string `json:"taskModels"`
 	}
 	out := []providerJSON{}
 	for _, p := range h.cfg.Core.AIProviders() {

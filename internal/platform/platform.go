@@ -318,3 +318,26 @@ type VideoSource interface {
 type AudioSource interface {
 	VODAudio(ctx context.Context, t Target, dst string, progress func(AudioProgress)) (AudioFile, error)
 }
+
+// LiveAudioSegment is one piece of a broadcast's audio recorded while a
+// LIVE capture runs.
+type LiveAudioSegment struct {
+	Path  string    // the segment's own file
+	Init  string    // the init section's file it needs (fragmented MP4), "" for MPEG-TS or packed audio
+	At    time.Time // when it starts: the playlist's program date-time, else when it appeared less its length
+	DurMs int64
+}
+
+// LiveAudioSource records the lightest rendition of a channel's current
+// broadcast (audio-only when the platform offers one) while a LIVE capture
+// runs, one file per segment in dir, so the app can transcribe its
+// candidates on this computer. RecordLiveAudio returns when ctx ends, the
+// broadcast ends (nil) or the stream stays unreachable (an error).
+// AssembleAudio joins recorded segments of one unbroken stretch, in order,
+// into one playable file at dst plus an extension, starting at 0 s. The
+// files are temporary: the app deletes them when the capture ends, and
+// never plays or keeps them.
+type LiveAudioSource interface {
+	RecordLiveAudio(ctx context.Context, t Target, dir string, onSegment func(LiveAudioSegment)) error
+	AssembleAudio(segs []LiveAudioSegment, dst string) (AudioFile, error)
+}

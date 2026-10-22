@@ -13,9 +13,8 @@ import type {
   TimelineSpan,
   UnifiedTimeline,
 } from "../../api/types";
-import { AIComparePanel } from "../../shared/ai/AIComparePanel";
-import { AIPanel } from "../../shared/ai/AIPanel";
-import { useAIReview } from "../../shared/ai/useAIReview";
+import { AIReviewBar } from "../../shared/ai/AIReviewBar";
+import { useAIEvents } from "../../shared/ai/useAIEvents";
 import { useAppState } from "../../shared/appState";
 import { foldAI } from "../../shared/candidates/foldAI";
 import { ListTools } from "../../shared/candidates/ListTools";
@@ -29,9 +28,10 @@ import {
   type StrengthFilter,
 } from "../../shared/candidates/strength";
 import { sourceLabel, UnifiedList } from "../../shared/candidates/UnifiedList";
+import { CutRequest } from "../../shared/candidates/CutRequest";
 import { useCutView } from "../../shared/candidates/useCutView";
 import { ChatList, currentChat } from "../../shared/chat/ChatList";
-import { aiGroup, cutGroups, entriesIn, ExportFiles, fileName, olderCutFolders, type FileGroup } from "../../shared/files/ExportFiles";
+import { aiGroup, cutGroups, entriesIn, ExportFiles, olderCutFolders, transcriptGroup, type FileGroup } from "../../shared/files/ExportFiles";
 import { timecode } from "../../shared/format";
 import { JobPanel } from "../../shared/job/JobPanel";
 import { RollingNumber } from "../../shared/motion/RollingNumber";
@@ -81,18 +81,9 @@ export function SessionView({ id }: { id: string }) {
   });
   const isVOD = session.data?.kind === "vod";
   const timeline = useQuery({ queryKey: ["timeline", id, analysisId], queryFn: () => api.timeline(id), enabled: isVOD });
-  // Candidate IDs follow time, so a new analysis starts the picks over.
-  const review = useAIReview(analysisId);
   const [tab, setTab] = useState<PanelTab>("candidates");
-  const askPicks = () => {
-    review.askPicks();
-    setTab("ai");
-  };
-  // A cut box's "다시 분석": that candidate alone, as a cut analysis (its notes go along); the picks stay.
-  const reanalyzeCut = (itemId: string, label: string, planId?: string) => {
-    review.askReanalysis({ itemId, planId, label });
-    setTab("ai");
-  };
+  // AI runs (automatic, or asked for) refresh what they change when they end.
+  useAIEvents(id);
   const job = useJob();
   // The job that was already there when the page opened (null: none); later jobs are news.
   const [openedJobId, setOpenedJobId] = useState<string | null | undefined>(undefined);
@@ -143,7 +134,6 @@ export function SessionView({ id }: { id: string }) {
     jobHere &&
     (jobHere.busy || jobHere.phase !== "done" || sawJobRun || (openedJobId !== undefined && jobHere.id !== openedJobId));
   const busy = job.data?.busy ?? false;
-  const hasResult = !!a || items.length > 0;
   const itemCount = folded.rows.length;
   // A ranked analysis says how many candidates stand out; an older one, how busy the busiest window was.
   const ranked = hasStrengths(a?.candidates ?? []);
@@ -151,25 +141,6 @@ export function SessionView({ id }: { id: string }) {
   const peak = ranked ? 0 : (a?.windows ?? []).reduce((m, w) => Math.max(m, w.n), 0);
   const tools: Tab<PanelTab>[] = [];
   if (isVOD) {
-    tools.push({
-      id: "ai",
-      label: "AI 검토",
-      content: hasResult ? (
-        <>
-          <AIPanel
-            s={s}
-            selection={review.picked}
-            reanalysis={review.reanalysis}
-            onEndReanalysis={review.endReanalysis}
-            previewAsk={review.asked}
-            onShowCandidates={() => setTab("candidates")}
-          />
-          <AIComparePanel s={s} />
-        </>
-      ) : (
-        <p className="empty">편집 후보가 생기면 고른 후보를 AI로 검토할 수 있습니다.</p>
-      ),
-    });
     tools.push({ id: "transcript", label: "대본", content: null }); // filled in Review, which owns the playhead
     tools.push({ id: "comments", label: "댓글", content: <CommentsPanel s={s} busy={busy} /> });
   }
@@ -225,12 +196,6 @@ export function SessionView({ id }: { id: string }) {
         rows={folded.rows}
         aiFor={folded.aiFor}
         busy={busy}
-        aiSelection={review.selection}
-        onToggleAI={review.toggle}
-        onPickAI={review.pick}
-        onClearAI={review.clear}
-        onAskAI={askPicks}
-        onReanalyzeCut={reanalyzeCut}
         tab={tab}
         onTab={setTab}
         tools={tools}
@@ -295,15 +260,6 @@ interface ReviewProps {
   rows: TimelineItem[];
   aiFor: Map<string, TimelineItem[]>;
   busy: boolean;
-  aiSelection: Set<string>;
-  onToggleAI: (itemId: string) => void;
-  /** Add these items to the AI review's selection. */
-  onPickAI: (itemIds: string[]) => void;
-  onClearAI: () => void;
-  /** Open the AI tab and preview a review of the picked candidates. */
-  onAskAI: () => void;
-  /** Open the AI tab and preview a new cut analysis of one candidate. */
-  onReanalyzeCut: (itemId: string, label: string, planId?: string) => void;
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
   /** The panel's other tabs, after the candidates. */
@@ -317,12 +273,6 @@ function Review({
   rows,
   aiFor,
   busy,
-  aiSelection,
-  onToggleAI,
-  onPickAI,
-  onClearAI,
-  onAskAI,
-  onReanalyzeCut,
   tab,
   onTab,
   tools,
@@ -462,15 +412,7 @@ function Review({
   const noResult = s.state === "comments_only"
     ? "영상 댓글에서 시각을 찾지 못했습니다. 위의 채팅 수집을 누르면 채팅으로 편집 후보를 찾습니다."
     : "아직 분석 결과가 없습니다. 수집을 마치면 편집 후보를 찾습니다.";
-  const canAsk = tools.some((t) => t.id === "ai");
-  // Strong and medium candidates the list shows, for picking them all for the AI review at once.
-  const strongShown = ranked && canAsk
-    ? shown.filter((i) => {
-        const st = i.source === "rule" ? candidates.get(i.originId)?.strength : undefined;
-        return st === "strong" || st === "medium";
-      })
-    : [];
-  const unpicked = strongShown.filter((i) => !aiSelection.has(i.id));
+  const isVOD = s.kind === "vod";
 
   const candidatesPanel: ReactNode = (
     <>
@@ -493,16 +435,8 @@ function Review({
             />
           )}
         </div>
-        {ranked && (
-          <ListTools
-            counts={counts}
-            sort={sort}
-            onSort={setSort}
-            filter={strength}
-            onFilter={setStrength}
-            pick={canAsk ? { total: strongShown.length, unpicked: unpicked.length, onPick: () => onPickAI(unpicked.map((i) => i.id)) } : undefined}
-          />
-        )}
+        {ranked && <ListTools counts={counts} sort={sort} onSort={setSort} filter={strength} onFilter={setStrength} />}
+        {isVOD && <AIReviewBar s={s} hasCandidates={rows.some((i) => i.source !== "ai")} busy={busy} />}
         {shown.length > 0 && (
           <p className="section-hint">
             {s.canPlay ? "후보를 고르면 영상이 그 구간부터 재생되고 근거 채팅이 펼쳐집니다." : "후보를 고르면 그 구간의 채팅과 근거가 펼쳐집니다."}
@@ -532,27 +466,18 @@ function Review({
             onPlaySpans={playSpans}
             cutChoice={cut.choice}
             onCutChoice={chooseCut}
-            onReanalyzeCut={onReanalyzeCut}
-            aiSelection={aiSelection}
-            onToggleAI={onToggleAI}
+            renderCut={
+              isVOD
+                ? (it, name, planId) => (
+                    <CutRequest sessionId={s.id} itemId={it.id} name={name} planId={planId} label={planId ? "다시 분석" : "AI 컷 분석"} />
+                  )
+                : undefined
+            }
             renderRuleDetail={(c) => (a ? <CandidateContext analysisId={a.id} c={c} longForm={longForm} onPick={goTo} /> : null)}
           />
         )}
         {a && <Reanalyze s={s} a={a} busy={busy} />}
       </section>
-      {aiSelection.size > 0 && canAsk && (
-        <p className="pick-bar">
-          <span>AI 검토에 고른 후보 {aiSelection.size}개</span>
-          <span className="pick-bar-actions">
-            <button type="button" className="pick-bar-clear" onClick={onClearAI}>
-              고른 후보 비우기
-            </button>
-            <button type="button" className="link-button" onClick={onAskAI}>
-              AI 검토로 이동
-            </button>
-          </span>
-        </p>
-      )}
     </>
   );
 
@@ -900,7 +825,6 @@ const commentText: Record<string, string> = {
   "comments.jsonl": "영상 댓글 JSONL",
   "manifest.json": "댓글 수집 기록 JSON",
 };
-const transcriptText: Record<string, string> = { srt: "대본 SRT", vtt: "대본 VTT", json: "대본 JSON" };
 
 interface FilesProps {
   sessionId: string;
@@ -932,9 +856,7 @@ function Files({ sessionId, analysisId, timeline, updatedAt, longForm }: FilesPr
     enabled: older.length > 0,
   });
   const [confirmed, ...plans] = cutGroups(all, items, longForm, saved.data?.plans);
-  const transcripts = all
-    .filter((f) => /^transcript\/[^/]+$/.test(f.path) && transcriptText[fileName(f).split(".").pop() ?? ""])
-    .map((f) => ({ file: f, label: transcriptText[fileName(f).split(".").pop()!]! }));
+  const transcript = useQuery({ queryKey: ["transcript", sessionId], queryFn: () => api.transcript(sessionId) });
   const groups: FileGroup[] = [
     confirmed!,
     {
@@ -951,7 +873,7 @@ function Files({ sessionId, analysisId, timeline, updatedAt, longForm }: FilesPr
     },
     aiGroup(all, timeline?.aiRunId),
     ...plans,
-    { id: "transcript", title: "대본", entries: transcripts },
+    transcriptGroup(all, transcript.data?.id),
     { id: "record", title: "수집 기록", entries: entriesIn(all, "", { "manifest.json": "수집 기록 JSON" }) },
   ];
   return (

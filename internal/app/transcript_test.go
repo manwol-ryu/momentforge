@@ -134,6 +134,10 @@ func TestTranscribeStreamDownloadsThenDeletes(t *testing.T) {
 	a, _ := newTestApp(t, src)
 	engine := &fakeEngine{id: "fake", ready: true}
 	a.cfg.ASR.Register(engine)
+	// Collected without transcribing by itself (일반 설정 off), so the button's job does it.
+	if _, err := a.SaveSettings(Settings{}); err != nil {
+		t.Fatal(err)
+	}
 	s := collected(t, a, "fake:2")
 	if s.TranscribeSource != "stream" {
 		t.Fatalf("TranscribeSource = %q", s.TranscribeSource)

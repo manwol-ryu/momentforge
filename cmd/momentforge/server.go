@@ -112,7 +112,7 @@ func start(ctx context.Context, opt options) (s *server, err error) {
 	core := app.New(app.Config{
 		Version: opt.Version, DataDir: dataDir, Store: st, Bus: bus,
 		Params: detect.DefaultParams(), Rules: rules.All(), Platforms: registerPlatforms(opt.Platforms),
-		AI: registerAI(opt.AI), AIBatchPoll: extraBatchPoll,
+		AI: registerAI(opt.AI), AIBatchPoll: extraBatchPoll, LiveAutoEvery: extraLiveAutoEvery,
 		ASR: registerASR(dataDir, opt.Version),
 	})
 	if err := core.RecoverLive(ctx); err != nil {
@@ -164,10 +164,11 @@ func (s *server) Shutdown(ctx context.Context) error {
 // registerPlatforms is where adapters are registered (REDESIGN.md 4).
 // extraPlatforms and extraAI are added by build-tagged files (e2efake.go for make e2e).
 var (
-	extraPlatforms []platform.Platform
-	extraAI        []ai.Provider
-	extraASR       []asr.Engine
-	extraBatchPoll time.Duration // 0: the app's default
+	extraPlatforms     []platform.Platform
+	extraAI            []ai.Provider
+	extraASR           []asr.Engine
+	extraBatchPoll     time.Duration // 0: the app's default
+	extraLiveAutoEvery time.Duration // 0: the app's default
 	// opencodeOptions, codexOptions, cliproxyOptions and opencodexOptions
 	// configure the providers that use programs on this computer (the E2E
 	// binary points them at missing ones so a test can never reach a real

@@ -37,6 +37,14 @@ type LiveView struct {
 	ClosedReason     string
 	Gaps             []domain.Gap
 	LastWindow       *domain.Window
+	// Tiered captures judge their candidates in tiers (REDESIGN 6.2.3).
+	// While one runs: its audio recording ("" none, recording, ended,
+	// failed) and why it stopped, and the last automatic step that could
+	// not run.
+	Tiered    bool
+	Audio     string
+	AudioNote string
+	AutoNote  string
 }
 
 func (a *App) liveSession(ctx context.Context, sid string) (store.Session, store.LiveState, error) {
@@ -68,7 +76,20 @@ func (a *App) LiveStatus(ctx context.Context, sid string) (LiveView, error) {
 		Running: ok && running.sid == sid, Sensitive: p.Sensitive, AdaptiveGate: p.GateBusyRatio > 0, ViewerAdaptive: ls.ViewerAdaptive,
 		WatermarkMs: ls.WatermarkMs, Generation: ls.Generation, ViewerCount: ls.ViewerCount, ViewerStatus: ls.ViewerStatus,
 		LateCount: ls.LateCount, DuplicateCount: ls.DuplicateCount, InvalidTimeCount: ls.InvalidTimeCount,
-		Revision: ls.Revision, ClosedReason: ls.ClosedReason, Gaps: gaps}
+		Revision: ls.Revision, ClosedReason: ls.ClosedReason, Gaps: gaps, Tiered: p.LiveTiers()}
+	if v.Running {
+		a.live.mu.Lock()
+		audio, auto := running.audio, running.auto
+		a.live.mu.Unlock()
+		if audio != nil {
+			v.Audio, v.AudioNote = audio.status()
+		} else if auto != nil {
+			v.Audio = "off" // 일반 설정 turned it off, or the platform cannot give its audio
+		}
+		if auto != nil {
+			v.AutoNote = auto.status()
+		}
+	}
 	if len(ls.LastWindowJSON) > 0 {
 		var w domain.Window
 		if json.Unmarshal(ls.LastWindowJSON, &w) == nil {
@@ -130,6 +151,11 @@ func (a *App) LiveCandidates(ctx context.Context, sid string, afterRev int64) ([
 		out[i] = CandidateView{Candidate: c, EvidenceTotal: len(c.EvidenceIDs), Evidence: summarize(c.EvidenceIDs, byID)}
 	}
 	return out, rev, nil
+}
+
+// shownLive drops the candidates a judgment did not keep (REDESIGN 6.2.3).
+func shownLive(cands []domain.Candidate) []domain.Candidate {
+	return slices.DeleteFunc(cands, func(c domain.Candidate) bool { return c.State == domain.CandidateDropped })
 }
 
 // LiveCandidateChats pages through the chat of a LIVE candidate's clip range.
@@ -247,6 +273,7 @@ func (a *App) checkpoint(ctx context.Context, sid, state string) (Checkpoint, er
 	if err != nil {
 		return Checkpoint{}, err
 	}
+	cands = shownLive(cands)
 	gaps, err := st.Gaps(ctx, sid)
 	if err != nil {
 		return Checkpoint{}, err

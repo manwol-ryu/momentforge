@@ -140,8 +140,8 @@ func (a *App) previewCut(ctx context.Context, req AIPreviewRequest, provider ai.
 	for _, id := range req.ItemIDs {
 		it, ok := byID[id]
 		if !ok {
-			if src.pending[id] {
-				return ai.Plan{}, nil, domain.NewUserError("INPUT", "아직 반응이 이어지는 후보는 보낼 수 없습니다. 후보가 확정되면 다시 미리보기를 만들어 주세요.")
+			if why := src.pending[id]; why != "" {
+				return ai.Plan{}, nil, domain.NewUserError("INPUT", why)
 			}
 			return ai.Plan{}, nil, domain.NewUserError("INPUT", "선택한 원본 후보를 찾을 수 없습니다.")
 		}

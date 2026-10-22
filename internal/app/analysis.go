@@ -70,7 +70,8 @@ func (a *App) StartAnalyze(sid string, sensitive bool) (JobStatus, error) {
 		h.update(func(js *JobStatus) {
 			js.AnalysisID, js.Candidates, js.Message = an.ID, len(an.Candidates), "분석이 끝났습니다."
 		})
-		return nil
+		// New candidates get their explanation when 일반 설정 says so (explained moments keep theirs).
+		return a.runAfter(ctx, h, sid, autoSteps{ai: a.Settings().AutoAI}, "분석이 끝났습니다.")
 	})
 }
 

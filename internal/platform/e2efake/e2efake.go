@@ -30,6 +30,7 @@ type Fake struct {
 	mu      sync.Mutex
 	started time.Time // broadcast start, 30 minutes before first use
 	clock   time.Time // synthetic now; zero until the first connection
+	first   time.Time // the first connection, where the synthetic broadcast's chat and audio begin
 	seq     int
 
 	mediaOnce sync.Once // starts the stream server (media.go)
@@ -122,6 +123,9 @@ func (f *Fake) LiveStream(ctx context.Context, t platform.Target, room string, s
 	}
 	f.clock = later(f.clock, time.Now())
 	at := f.clock
+	if first {
+		f.first = at
+	}
 	f.mu.Unlock()
 	sink.Connected(at)
 

@@ -26,6 +26,15 @@ type settingsJSON struct {
 	File            string                       `json:"file"`
 	KeyFile         string                       `json:"keyFile"`
 	AIProviderAuto  bool                         `json:"aiProviderAuto"`
+	// 일반 설정: what runs by itself once candidates are found, and its limits.
+	AutoAI            bool                         `json:"autoAI"`
+	AutoAIMaxRequests int                          `json:"autoAIMaxRequests"`
+	AutoAICostCapUSD  float64                      `json:"autoAICostCapUsd"`
+	AutoTranscriptFix bool                         `json:"autoTranscriptFix"`
+	AutoTranscribe    bool                         `json:"autoTranscribe"`
+	LiveAudio         bool                         `json:"liveAudio"`
+	AITaskModels      map[string]map[string]string `json:"aiTaskModels"`
+	CutConfirm        bool                         `json:"cutConfirmSearches"`
 }
 
 func toSettingsJSON(s app.SettingsInfo) settingsJSON {
@@ -40,12 +49,19 @@ func toSettingsJSON(s app.SettingsInfo) settingsJSON {
 	if paths == nil {
 		paths = map[string]map[string]string{}
 	}
+	taskModels := s.AITaskModels
+	if taskModels == nil {
+		taskModels = map[string]map[string]string{}
+	}
 	return settingsJSON{AIProvider: s.AIProvider, AIModels: models, AIEndpoints: endpoints, Sensitive: s.Sensitive,
 		IncludeComments: s.IncludeComments, ViewerAdaptive: s.ViewerAdaptive, ASREngine: s.ASREngine, ASRPaths: paths,
 		CutSearchRounds: s.CutSearchRounds, CutSearchKB: s.CutSearchKB,
 		BackupDir: s.BackupDir, BackupVideo: s.BackupVideo, BackupHeight: s.BackupVideoHeight, BackupHeights: app.BackupHeights,
 		BackupDefault: s.BackupDefaultDir,
-		File:          s.File, KeyFile: s.KeyFile, AIProviderAuto: s.AIProviderAuto}
+		File:          s.File, KeyFile: s.KeyFile, AIProviderAuto: s.AIProviderAuto,
+		AutoAI: s.AutoAI, AutoAIMaxRequests: s.AutoAIMaxRequests, AutoAICostCapUSD: s.AutoAICostCapUSD,
+		AutoTranscriptFix: s.AutoTranscriptFix, AutoTranscribe: s.AutoTranscribe, LiveAudio: s.LiveAudio,
+		AITaskModels: taskModels, CutConfirm: s.CutConfirmSearches}
 }
 
 // settings returns the defaults the screens start from (nothing secret).
@@ -70,6 +86,15 @@ func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		BackupDir    *string `json:"backupDir"`
 		BackupVideo  *bool   `json:"backupVideo"`
 		BackupHeight int     `json:"backupVideoHeight"`
+		// So did 일반 설정 and the models per task.
+		AutoAI            *bool                        `json:"autoAI"`
+		AutoAIMaxRequests *int                         `json:"autoAIMaxRequests"`
+		AutoAICostCapUSD  *float64                     `json:"autoAICostCapUsd"`
+		AutoTranscriptFix *bool                        `json:"autoTranscriptFix"`
+		AutoTranscribe    *bool                        `json:"autoTranscribe"`
+		LiveAudio         *bool                        `json:"liveAudio"`
+		AITaskModels      map[string]map[string]string `json:"aiTaskModels"`
+		CutConfirm        *bool                        `json:"cutConfirmSearches"`
 	}
 	if !readBody(w, r, &body) {
 		return
@@ -90,10 +115,33 @@ func (h *handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if body.BackupHeight != 0 {
 		backupHeight = body.BackupHeight
 	}
+	next := cur.Settings
+	pick := func(dst *bool, v *bool) {
+		if v != nil {
+			*dst = *v
+		}
+	}
+	pick(&next.AutoAI, body.AutoAI)
+	pick(&next.AutoTranscriptFix, body.AutoTranscriptFix)
+	pick(&next.AutoTranscribe, body.AutoTranscribe)
+	pick(&next.LiveAudio, body.LiveAudio)
+	pick(&next.CutConfirmSearches, body.CutConfirm)
+	if body.AutoAIMaxRequests != nil {
+		next.AutoAIMaxRequests = *body.AutoAIMaxRequests
+	}
+	if body.AutoAICostCapUSD != nil {
+		next.AutoAICostCapUSD = *body.AutoAICostCapUSD
+	}
+	if body.AITaskModels != nil {
+		next.AITaskModels = body.AITaskModels
+	}
 	s, err := h.cfg.Core.SaveSettings(app.Settings{AIProvider: *body.AIProvider, AIModels: body.AIModels, AIEndpoints: body.AIEndpoints,
 		Sensitive: *body.Sensitive, IncludeComments: *body.IncludeComments, ViewerAdaptive: *body.ViewerAdaptive,
 		ASREngine: body.ASREngine, ASRPaths: body.ASRPaths, CutSearchRounds: *body.CutSearchRounds, CutSearchKB: *body.CutSearchKB,
-		BackupDir: backupDir, BackupVideo: backupVideo, BackupVideoHeight: backupHeight})
+		BackupDir: backupDir, BackupVideo: backupVideo, BackupVideoHeight: backupHeight,
+		AutoAI: next.AutoAI, AutoAIMaxRequests: next.AutoAIMaxRequests, AutoAICostCapUSD: next.AutoAICostCapUSD,
+		AutoTranscriptFix: next.AutoTranscriptFix, AutoTranscribe: next.AutoTranscribe, LiveAudio: next.LiveAudio,
+		AITaskModels: next.AITaskModels, CutConfirmSearches: next.CutConfirmSearches})
 	if err != nil {
 		writeAppError(w, err)
 		return

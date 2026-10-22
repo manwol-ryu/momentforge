@@ -77,6 +77,10 @@ type liveJSON struct {
 	ClosedReason     string         `json:"closedReason,omitempty"`
 	Gaps             []gapJSON      `json:"gaps"`
 	LastWindow       *domain.Window `json:"lastWindow"`
+	Tiered           bool           `json:"tiered"`
+	Audio            string         `json:"audio,omitempty"`
+	AudioNote        string         `json:"audioNote,omitempty"`
+	AutoNote         string         `json:"autoNote,omitempty"`
 }
 
 func (h *handler) liveStatus(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +97,8 @@ func (h *handler) liveStatus(w http.ResponseWriter, r *http.Request) {
 		TimeBasis: v.TimeBasis, Running: v.Running, Sensitive: v.Sensitive, AdaptiveGate: v.AdaptiveGate, ViewerAdaptive: v.ViewerAdaptive,
 		WatermarkMs: v.WatermarkMs, Generation: v.Generation, ViewerCount: viewers, ViewerStatus: v.ViewerStatus,
 		LateCount: v.LateCount, DuplicateCount: v.DuplicateCount, InvalidTimeCount: v.InvalidTimeCount,
-		Revision: v.Revision, ClosedReason: v.ClosedReason, Gaps: toGapsJSON(v.Gaps), LastWindow: v.LastWindow})
+		Revision: v.Revision, ClosedReason: v.ClosedReason, Gaps: toGapsJSON(v.Gaps), LastWindow: v.LastWindow,
+		Tiered: v.Tiered, Audio: v.Audio, AudioNote: v.AudioNote, AutoNote: v.AutoNote})
 }
 
 type gapJSON struct {

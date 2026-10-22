@@ -102,6 +102,13 @@ func (j *jobs) start(parent context.Context, kind string, fn func(ctx context.Co
 	return s, nil
 }
 
+// status is the job's state as last reported.
+func (h job) status() JobStatus {
+	h.j.mu.Lock()
+	defer h.j.mu.Unlock()
+	return h.j.status
+}
+
 func (j *jobs) current() JobStatus {
 	j.mu.Lock()
 	defer j.mu.Unlock()

@@ -12,8 +12,10 @@ import (
 // 1.0.0 reproduces CzzEdit 0.3.2 rules 0.1.0.
 // 2.0.0: adaptive gate (REDESIGN 6.2.1). 3.0.0: stored timelines are
 // analyzed as a whole (AnalyzeBroadcast, REDESIGN 6.2.2); both engines skip
-// hidden messages and subscription/system notices.
-const RulesVersion = "3.0.0"
+// hidden messages and subscription/system notices. 3.1.0: LIVE captures
+// judge in tiers (REDESIGN 6.2.3): early candidates with an eased gate,
+// then the whole-broadcast analysis of the chat stored so far.
+const RulesVersion = "3.1.0"
 
 // Result is one analysis of a finished timeline.
 type Result struct {
